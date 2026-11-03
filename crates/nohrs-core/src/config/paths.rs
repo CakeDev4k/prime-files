@@ -104,11 +104,14 @@ mod tests {
     fn absolute_xdg_var_is_honoured() {
         let _guard = env_lock();
         // TODO: Audit that the environment access only happens in single-threaded code.
-        unsafe { std::env::set_var("XDG_CONFIG_HOME", "/tmp/xdg-test-abs") };
+        // From `temp_dir` rather than a literal `/tmp/...`: on Windows that has no
+        // drive, so it is not absolute and is rightly ignored.
+        let absolute = std::env::temp_dir().join("xdg-test-abs");
+        unsafe { std::env::set_var("XDG_CONFIG_HOME", &absolute) };
         let dir = config_dir();
         // TODO: Audit that the environment access only happens in single-threaded code.
         unsafe { std::env::remove_var("XDG_CONFIG_HOME") };
-        assert_eq!(dir, PathBuf::from("/tmp/xdg-test-abs/nohrs"));
+        assert_eq!(dir, absolute.join("nohrs"));
     }
 
     #[test]
@@ -127,14 +130,16 @@ mod tests {
     #[test]
     fn each_home_honours_its_own_xdg_var() {
         let _guard = env_lock();
+        // Absolute on every platform; see `absolute_xdg_var_is_honoured`.
+        let temp = std::env::temp_dir();
         // TODO: Audit that the environment access only happens in single-threaded code.
-        unsafe { std::env::set_var("XDG_CONFIG_HOME", "/tmp/cfg") };
+        unsafe { std::env::set_var("XDG_CONFIG_HOME", temp.join("cfg")) };
         // TODO: Audit that the environment access only happens in single-threaded code.
-        unsafe { std::env::set_var("XDG_DATA_HOME", "/tmp/data") };
+        unsafe { std::env::set_var("XDG_DATA_HOME", temp.join("data")) };
         // TODO: Audit that the environment access only happens in single-threaded code.
-        unsafe { std::env::set_var("XDG_CACHE_HOME", "/tmp/cache") };
+        unsafe { std::env::set_var("XDG_CACHE_HOME", temp.join("cache")) };
         // TODO: Audit that the environment access only happens in single-threaded code.
-        unsafe { std::env::set_var("XDG_STATE_HOME", "/tmp/state") };
+        unsafe { std::env::set_var("XDG_STATE_HOME", temp.join("state")) };
         let (config, data, cache, state) = (config_home(), data_home(), cache_home(), state_home());
         for key in [
             "XDG_CONFIG_HOME",
@@ -145,10 +150,10 @@ mod tests {
             // TODO: Audit that the environment access only happens in single-threaded code.
             unsafe { std::env::remove_var(key) };
         }
-        assert_eq!(config, PathBuf::from("/tmp/cfg"));
-        assert_eq!(data, PathBuf::from("/tmp/data"));
-        assert_eq!(cache, PathBuf::from("/tmp/cache"));
-        assert_eq!(state, PathBuf::from("/tmp/state"));
+        assert_eq!(config, temp.join("cfg"));
+        assert_eq!(data, temp.join("data"));
+        assert_eq!(cache, temp.join("cache"));
+        assert_eq!(state, temp.join("state"));
     }
 
     #[test]

@@ -1380,7 +1380,9 @@ mod tests {
     #[test]
     fn committed_schema_is_up_to_date() {
         let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../../docs/config.schema.json");
-        let committed = std::fs::read_to_string(path).unwrap();
+        // Git may check the file out with CRLF (`core.autocrlf` on Windows);
+        // the generator always writes LF.
+        let committed = std::fs::read_to_string(path).unwrap().replace("\r\n", "\n");
         let generated = json_schema_string().unwrap();
         assert_eq!(
             committed.trim_end(),

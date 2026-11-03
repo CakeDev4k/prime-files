@@ -33,6 +33,7 @@ impl ExplorerPane {
                 self.preview_path = None;
                 self.preview_editor = None;
                 self.preview_image_path = None;
+                self.preview_markdown = None;
                 self.preview_message = None;
                 self.clear_status();
             }

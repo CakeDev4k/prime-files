@@ -114,9 +114,9 @@ fn render_header_row(
         .h(px(HEADER_HEIGHT))
         .pl(px(24.0))
         .pr(px(24.0))
-        .bg(rgb(theme::BG))
+        .bg(rgb(theme::bg()))
         .border_b_1()
-        .border_color(rgb(theme::BORDER))
+        .border_color(rgb(theme::border()))
         .child(
             div()
                 .flex()
@@ -221,7 +221,13 @@ fn render_resizable_column_header(
                         cx.stop_propagation();
                     }),
                 )
-                .child(div().w(px(1.0)).h_full().ml(px(3.5)).bg(rgb(theme::BORDER))),
+                .child(
+                    div()
+                        .w(px(1.0))
+                        .h_full()
+                        .ml(px(3.5))
+                        .bg(rgb(theme::border())),
+                ),
         )
 }
 
@@ -265,14 +271,18 @@ fn render_column_header(
                             .text_xs()
                             .font_weight(gpui::FontWeight::SEMIBOLD)
                             .text_color(if is_active {
-                                rgb(theme::FG)
+                                rgb(theme::fg())
                             } else {
-                                rgb(theme::FG_SECONDARY)
+                                rgb(theme::fg_secondary())
                             })
                             .child(label_str),
                     )
                     .when(is_active, |this| {
-                        this.child(Icon::new(sort_icon).size_3().text_color(rgb(theme::ACCENT)))
+                        this.child(
+                            Icon::new(sort_icon)
+                                .size_3()
+                                .text_color(rgb(theme::accent())),
+                        )
                     }),
             ),
     )

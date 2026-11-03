@@ -36,7 +36,9 @@ impl PreviewEditor {
                 .code_editor("plain")
                 .searchable(true)
                 .line_number(true)
-                .soft_wrap(false) // Enable horizontal scrolling
+                // Wrapped: the pane is narrow, and a minified file is one line
+                // that would otherwise run off its right edge.
+                .soft_wrap(true)
         });
         Self { editor_state }
     }

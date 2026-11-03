@@ -7,6 +7,7 @@
 //! (search). The binary just opens a window hosting this view; the future
 //! launcher window will be a symmetric root in `nohrs-launcher`.
 
+use crate::explorer;
 use crate::explorer::ExplorerPage;
 use crate::explorer::StatusLevel;
 use crate::{
@@ -17,6 +18,7 @@ use gpui::{
     InteractiveElement, Render, WeakEntity, Window, div, prelude::*, px, rgb,
 };
 use gpui_component::resizable::ResizableState;
+use gpui_component::slider::{Slider, SliderEvent, SliderState};
 use gpui_component::{Icon, Root, Theme, ThemeMode as GpuiThemeMode};
 use nohrs_core::config::{self, Config, ConfigOverride, ConfigWatcher};
 use nohrs_core::telemetry::LogErr;
@@ -53,6 +55,9 @@ pub struct RootView {
     focus_handle: FocusHandle,
     // Page entities
     explorer: Entity<ExplorerPage>,
+    // The footer's zoom slider, in percent. The active pane owns the zoom; this
+    // only mirrors it, so Ctrl+wheel and the keyboard move the slider too.
+    zoom_slider: Entity<SliderState>,
     git: Entity<GitPage>,
     s3: Entity<S3Page>,
     extensions: Entity<ExtensionsPage>,
@@ -105,6 +110,23 @@ impl RootView {
                 cx,
             )
         });
+        let zoom_slider = cx.new(|_| {
+            SliderState::new()
+                .min(0.0)
+                .max(100.0)
+                .step(1.0)
+                .default_value(0.0)
+        });
+        cx.subscribe_in(
+            &zoom_slider,
+            window,
+            |this, _slider, event: &SliderEvent, _window, cx| {
+                let SliderEvent::Change(value) = event;
+                let zoom = value.start() / 100.0;
+                this.explorer.update(cx, |page, cx| page.set_zoom(zoom, cx));
+            },
+        )
+        .detach();
         let git = cx.new(|_cx| GitPage::new());
         let s3 = cx.new(|_cx| S3Page::new());
         let extensions = cx.new(|_cx| ExtensionsPage::new());
@@ -114,6 +136,7 @@ impl RootView {
             current_page: PageKind::Explorer,
             focus_handle,
             explorer,
+            zoom_slider,
             git,
             s3,
             extensions,
@@ -144,15 +167,19 @@ impl RootView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if config.theme.mode != self.config.theme.mode {
-            let mode = match config.theme.mode {
-                config::ThemeMode::Light => GpuiThemeMode::Light,
-                config::ThemeMode::Dark => GpuiThemeMode::Dark,
-                // `system` follows the OS appearance reported by the window.
-                config::ThemeMode::System => GpuiThemeMode::from(window.appearance()),
-            };
-            Theme::change(mode, Some(window), cx);
-        }
+        // Resolved on every apply rather than only when the setting changed:
+        // the starting `Config::default()` is already `system`, so on a dark OS
+        // the first apply would otherwise find nothing to do and leave both
+        // palettes light.
+        let mode = match config.theme.mode {
+            config::ThemeMode::Light => GpuiThemeMode::Light,
+            config::ThemeMode::Dark => GpuiThemeMode::Dark,
+            // `system` follows the OS appearance reported by the window.
+            config::ThemeMode::System => GpuiThemeMode::from(window.appearance()),
+        };
+        // Before `restyle_components`, which reads these tokens.
+        theme::set_dark(mode.is_dark());
+        Theme::change(mode, Some(window), cx);
 
         // Applied unconditionally: `Theme::change` restores the shipped palette,
         // and on the first call the mode often already matches, so this cannot
@@ -195,10 +222,54 @@ impl RootView {
             a: theme::MODAL_SCRIM_ALPHA,
         }
         .into();
-        palette.primary = rgb(theme::ACCENT).into();
-        palette.primary_hover = rgb(theme::ACCENT_HOVER).into();
-        palette.primary_active = rgb(theme::ACCENT_HOVER).into();
-        palette.primary_foreground = rgb(theme::ACCENT_FG).into();
+        palette.primary = rgb(theme::accent()).into();
+        palette.primary_hover = rgb(theme::accent_hover()).into();
+        palette.primary_active = rgb(theme::accent_hover()).into();
+        palette.primary_foreground = rgb(theme::accent_fg()).into();
+
+        // The shipped dark palette is near-black, and its code-editor style
+        // paints the line-number gutter in its own editor background: the
+        // preview showed a black strip down the side of every text file. Both
+        // follow this app's surfaces instead.
+        palette.background = rgb(theme::bg()).into();
+        palette.foreground = rgb(theme::fg()).into();
+        palette.border = rgb(theme::border()).into();
+        palette.muted_foreground = rgb(theme::fg_secondary()).into();
+        let editor = &mut Arc::make_mut(&mut palette.highlight_theme).style;
+        editor.editor_background = Some(rgb(theme::bg()).into());
+        editor.editor_active_line = Some(rgb(theme::bg_hover()).into());
+        editor.editor_line_number = Some(rgb(theme::muted()).into());
+        editor.editor_active_line_number = Some(rgb(theme::fg_secondary()).into());
+    }
+
+    /// The footer's zoom control: the zoom's name, a slider and its percentage,
+    /// the way File Pilot shows it.
+    fn render_zoom_control(&mut self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
+        let zoom = self.explorer.read(cx).zoom(cx);
+        let percent = (zoom * 100.0).round();
+        // Follow a zoom changed elsewhere (Ctrl+wheel, the keyboard, switching
+        // tabs) without echoing back a value the slider itself just sent.
+        if (self.zoom_slider.read(cx).value().start() - percent).abs() >= 1.0 {
+            self.zoom_slider
+                .update(cx, |slider, cx| slider.set_value(percent, window, cx));
+        }
+        div()
+            .id("footer-zoom")
+            .h(px(24.0))
+            .px(px(8.0))
+            .flex()
+            .items_center()
+            .gap_2()
+            .text_xs()
+            .text_color(rgb(theme::gray_700()))
+            .child(explorer::zoom_label(zoom))
+            .child(
+                div()
+                    .w(px(110.0))
+                    .child(Slider::new(&self.zoom_slider).horizontal()),
+            )
+            .child(div().w(px(32.0)).text_right().child(format!("{percent}%")))
+            .into_any_element()
     }
 
     /// Watch `config.toml` and re-apply on change. The `notify` callback runs on
@@ -313,6 +384,7 @@ impl Render for RootView {
                 account_name: "syuya2036".to_string(),
                 account_plan: "Free".to_string(),
             },
+            window,
             cx,
         );
 
@@ -320,7 +392,7 @@ impl Render for RootView {
             .size_full()
             .flex()
             .flex_col()
-            .bg(rgb(theme::BG))
+            .bg(rgb(theme::bg()))
             .relative()
             .track_focus(&self.focus_handle)
             .on_action(cx.listener(Self::handle_account_action))
@@ -369,7 +441,9 @@ impl Render for RootView {
                         status_tone,
                         ..Default::default()
                     };
-                    footer(props, cx)
+                    let zoom_control = (self.current_page == PageKind::Explorer)
+                        .then(|| self.render_zoom_control(window, cx));
+                    footer(props, zoom_control, cx)
                 },
             )
             .children(Root::render_dialog_layer(window, cx))
@@ -412,9 +486,9 @@ impl RootView {
             .flex()
             .flex_col()
             .items_center()
-            .bg(rgb(theme::TOOLBAR_BG))
+            .bg(rgb(theme::toolbar_bg()))
             .border_r_1()
-            .border_color(rgb(theme::TOOLBAR_BORDER))
+            .border_color(rgb(theme::toolbar_border()))
             .py(px(16.0))
             .child(
                 // Page navigation buttons
@@ -443,10 +517,10 @@ impl RootView {
             .rounded(px(8.0))
             .cursor_pointer()
             .when(active, |this| {
-                this.bg(rgb(theme::TOOLBAR_ACTIVE_BG)).shadow_sm()
+                this.bg(rgb(theme::toolbar_active_bg())).shadow_sm()
             })
             .when(!active, |this| {
-                this.hover(|style| style.bg(rgb(theme::TOOLBAR_HOVER)))
+                this.hover(|style| style.bg(rgb(theme::toolbar_hover())))
             })
             .on_click(cx.listener(move |view, _event, _window, cx| {
                 view.set_page(page, cx);
@@ -456,9 +530,9 @@ impl RootView {
                     .path(page.icon_path())
                     .size_5()
                     .text_color(rgb(if active {
-                        theme::TOOLBAR_ACTIVE_TEXT
+                        theme::toolbar_active_text()
                     } else {
-                        theme::TOOLBAR_TEXT
+                        theme::toolbar_text()
                     })),
             )
     }

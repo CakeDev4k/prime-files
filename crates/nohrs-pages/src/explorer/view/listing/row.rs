@@ -30,8 +30,8 @@ pub fn render(
         _ => IconName::File,
     };
     let icon_color = match item.kind.as_str() {
-        "dir" => rgb(theme::ACCENT),
-        _ => rgb(theme::GRAY_500),
+        "dir" => rgb(theme::accent()),
+        _ => rgb(theme::gray_500()),
     };
 
     let is_selected = page.is_selected(ix);
@@ -125,18 +125,18 @@ pub fn render(
                 // former zebra striping, which fought with the selected color.
                 .border_l_2()
                 .border_color(rgb(if is_selected {
-                    theme::ACCENT
+                    theme::accent()
                 } else {
-                    theme::BG
+                    theme::bg()
                 }))
                 .pl(px(22.0))
                 // `ListItem` paints its own hover fill, which also covers a
                 // selected row's tint; the accent bar above is what keeps the
                 // selection legible while the pointer is over it.
                 .bg(rgb(if is_selected {
-                    theme::ACCENT_SUBTLE
+                    theme::accent_subtle()
                 } else {
-                    theme::BG
+                    theme::bg()
                 }))
                 .on_click(
                     cx.listener(move |this, event: &gpui::ClickEvent, window, cx| {
@@ -191,7 +191,9 @@ pub fn render(
                                             .items_center()
                                             .justify_center()
                                             .cursor_pointer()
-                                            .hover(|s| s.bg(rgb(theme::BG_HOVER)).rounded(px(4.0)))
+                                            .hover(|s| {
+                                                s.bg(rgb(theme::bg_hover())).rounded(px(4.0))
+                                            })
                                             .on_mouse_down(
                                                 gpui::MouseButton::Left,
                                                 cx.listener({
@@ -215,7 +217,7 @@ pub fn render(
                                             .child(
                                                 Icon::new(expand_icon)
                                                     .size_3()
-                                                    .text_color(rgb(theme::GRAY_600)),
+                                                    .text_color(rgb(theme::gray_600())),
                                             ),
                                     )
                                 })
@@ -238,7 +240,7 @@ pub fn render(
                                                 .px(px(0.0))
                                                 .text_sm()
                                                 .font_weight(gpui::FontWeight::MEDIUM)
-                                                .text_color(rgb(theme::FG)),
+                                                .text_color(rgb(theme::fg())),
                                         )
                                         .into_any_element(),
                                     // `flex_1` + `min_w(0)` give the ellipsis a
@@ -249,7 +251,7 @@ pub fn render(
                                         .min_w(px(0.0))
                                         .text_sm()
                                         .font_weight(gpui::FontWeight::MEDIUM)
-                                        .text_color(rgb(theme::FG))
+                                        .text_color(rgb(theme::fg()))
                                         .overflow_hidden()
                                         .text_ellipsis()
                                         .whitespace_nowrap()
@@ -262,7 +264,7 @@ pub fn render(
                                 .w(px(page.col_type_width))
                                 .flex_shrink_0()
                                 .text_sm()
-                                .text_color(rgb(theme::FG_SECONDARY))
+                                .text_color(rgb(theme::fg_secondary()))
                                 .overflow_hidden()
                                 .text_ellipsis()
                                 .whitespace_nowrap()
@@ -273,7 +275,7 @@ pub fn render(
                                 .w(px(page.col_size_width))
                                 .flex_shrink_0()
                                 .text_sm()
-                                .text_color(rgb(theme::FG_SECONDARY))
+                                .text_color(rgb(theme::fg_secondary()))
                                 .child(match item.kind.as_str() {
                                     "file" => human_bytes(item.size),
                                     "dir" => "-".to_string(),
@@ -285,7 +287,7 @@ pub fn render(
                                 .w(px(page.col_modified_width))
                                 .flex_shrink_0()
                                 .text_sm()
-                                .text_color(rgb(theme::FG_SECONDARY))
+                                .text_color(rgb(theme::fg_secondary()))
                                 .overflow_hidden()
                                 .text_ellipsis()
                                 .whitespace_nowrap()
@@ -313,21 +315,21 @@ pub fn render(
                         .h(px(24.0))
                         .pl(px(48.0))
                         .pr(px(24.0))
-                        .bg(rgb(theme::GRAY_50))
+                        .bg(rgb(theme::gray_50()))
                         .flex()
                         .items_center()
                         .gap_2()
                         .child(
                             div()
                                 .text_xs()
-                                .text_color(rgb(theme::MUTED))
+                                .text_color(rgb(theme::muted()))
                                 .w(px(32.0))
                                 .child(format!("{}", line_num)),
                         )
                         .child(
                             div()
                                 .text_xs()
-                                .text_color(rgb(theme::FG_SECONDARY))
+                                .text_color(rgb(theme::fg_secondary()))
                                 .flex_1()
                                 .overflow_hidden()
                                 .whitespace_nowrap()

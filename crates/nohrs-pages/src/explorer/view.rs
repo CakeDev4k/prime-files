@@ -31,7 +31,7 @@ pub fn render(
         .size_full()
         .flex()
         .flex_col()
-        .bg(rgb(theme::BG))
+        .bg(rgb(theme::bg()))
         .relative()
         .track_focus(&page.focus_handle)
         .on_key_down(cx.listener(|this, event: &gpui::KeyDownEvent, window, cx| {
@@ -107,6 +107,23 @@ pub fn render(
                     cx.stop_propagation();
                     return;
                 }
+                // Zoom, as in browsers and Explorer. `+` because on most layouts
+                // it is Shift+= and some report it under that name.
+                "=" | "+" if with_modifier => {
+                    this.set_zoom(super::zoom::step(this.zoom, super::zoom::STEP), cx);
+                    cx.stop_propagation();
+                    return;
+                }
+                "-" if with_modifier => {
+                    this.set_zoom(super::zoom::step(this.zoom, -super::zoom::STEP), cx);
+                    cx.stop_propagation();
+                    return;
+                }
+                "0" if with_modifier => {
+                    this.set_zoom(super::zoom::DEFAULT_GRID, cx);
+                    cx.stop_propagation();
+                    return;
+                }
                 _ => {}
             }
             // Selection model (§5). Escape while searching is handled above, so
@@ -126,12 +143,24 @@ pub fn render(
                     cx.stop_propagation();
                     cx.notify();
                 }
+                // In the grid Up/Down cross a row and Left/Right step along
+                // it; in the list a row is a single entry.
                 "up" => {
-                    this.move_active(-1, modifiers.shift);
+                    this.move_active(-this.row_stride(), modifiers.shift);
                     cx.stop_propagation();
                     cx.notify();
                 }
                 "down" => {
+                    this.move_active(this.row_stride(), modifiers.shift);
+                    cx.stop_propagation();
+                    cx.notify();
+                }
+                "left" if this.view_mode == super::types::ViewMode::Grid => {
+                    this.move_active(-1, modifiers.shift);
+                    cx.stop_propagation();
+                    cx.notify();
+                }
+                "right" if this.view_mode == super::types::ViewMode::Grid => {
                     this.move_active(1, modifiers.shift);
                     cx.stop_propagation();
                     cx.notify();
@@ -176,7 +205,7 @@ pub fn render(
                                         .size_full()
                                         .overflow_hidden()
                                         .border_r_1()
-                                        .border_color(rgb(theme::BORDER))
+                                        .border_color(rgb(theme::border()))
                                         .child(sidebar::render(page, window, cx)),
                                 )
                             }),
@@ -201,8 +230,8 @@ pub fn render(
                                     .size_full()
                                     .overflow_hidden()
                                     .border_l_1()
-                                    .border_color(rgb(theme::BORDER))
-                                    .child(preview::render(page, window)),
+                                    .border_color(rgb(theme::border()))
+                                    .child(preview::render(page, window, cx)),
                             ),
                     )
                     .into_any_element(),

@@ -65,12 +65,12 @@ pub fn render(
     let entry_count = page.filtered_entries.len();
 
     div()
-        .bg(rgb(theme::BG))
+        .bg(rgb(theme::bg()))
         .border_b_1()
-        .border_color(rgb(theme::BORDER))
+        .border_color(rgb(theme::border()))
         .flex()
         .items_center()
-        .text_color(rgb(theme::FG))
+        .text_color(rgb(theme::fg()))
         .px(px(16.0))
         .py(px(10.0))
         .gap_2()
@@ -94,7 +94,7 @@ pub fn render(
                         .child(
                             Icon::new(IconName::ArrowLeft)
                                 .size_4()
-                                .text_color(rgb(theme::GRAY_600)),
+                                .text_color(rgb(theme::gray_600())),
                         ),
                 )
                 .child(
@@ -111,14 +111,14 @@ pub fn render(
                         .child(
                             Icon::new(IconName::ArrowRight)
                                 .size_4()
-                                .text_color(rgb(theme::GRAY_600)),
+                                .text_color(rgb(theme::gray_600())),
                         ),
                 )
                 .child(
                     div()
                         .w(px(1.0))
                         .h(px(20.0))
-                        .bg(rgb(theme::BORDER))
+                        .bg(rgb(theme::border()))
                         .mx(px(6.0)),
                 ),
         )
@@ -138,7 +138,7 @@ pub fn render(
                 .child(
                     div()
                         .text_xs()
-                        .text_color(rgb(theme::FG_SECONDARY))
+                        .text_color(rgb(theme::fg_secondary()))
                         .whitespace_nowrap()
                         .mr(px(4.0))
                         .child(format!("{} items", entry_count)),
@@ -154,9 +154,9 @@ pub fn render(
                         }))
                         .child(Icon::new(IconName::Search).size_4().text_color(
                             if search_visible {
-                                rgb(theme::ACCENT)
+                                rgb(theme::accent())
                             } else {
-                                rgb(theme::GRAY_600)
+                                rgb(theme::gray_600())
                             },
                         )),
                 ),
@@ -173,9 +173,9 @@ fn render_view_mode_toggle(
         .gap_1()
         .p(px(2.0))
         .rounded(px(8.0))
-        .bg(rgb(theme::BG_SECONDARY))
+        .bg(rgb(theme::bg_secondary()))
         .border_1()
-        .border_color(rgb(theme::BORDER))
+        .border_color(rgb(theme::border()))
         // `list.svg` ships with this crate but has no `IconName` variant, so it
         // is loaded by asset path.
         .child(view_mode_button(
@@ -211,7 +211,7 @@ fn view_mode_button(
         .px(px(8.0))
         .py(px(4.0))
         .rounded(px(6.0))
-        .when(is_active, |this| this.bg(rgb(theme::BG)).shadow_sm())
+        .when(is_active, |this| this.bg(rgb(theme::bg())).shadow_sm())
         .on_click(cx.listener(move |this, _, _, cx| this.set_view_mode(mode, cx)))
         .child(
             div()
@@ -219,18 +219,18 @@ fn view_mode_button(
                 .items_center()
                 .gap_1p5()
                 .child(icon.size_4().text_color(if is_active {
-                    rgb(theme::ACCENT)
+                    rgb(theme::accent())
                 } else {
-                    rgb(theme::GRAY_500)
+                    rgb(theme::gray_500())
                 }))
                 .child(
                     div()
                         .text_xs()
                         .when(is_active, |this| this.font_weight(gpui::FontWeight::MEDIUM))
                         .text_color(if is_active {
-                            rgb(theme::FG)
+                            rgb(theme::fg())
                         } else {
-                            rgb(theme::FG_SECONDARY)
+                            rgb(theme::fg_secondary())
                         })
                         .child(label),
                 ),
@@ -238,12 +238,46 @@ fn view_mode_button(
 }
 
 fn path_parts(path: &str) -> Vec<String> {
+    use std::path::Component;
     let mut parts: Vec<String> = Vec::new();
+    let mut after_prefix = false;
     for c in std::path::Path::new(path).components() {
-        parts.push(c.as_os_str().to_string_lossy().to_string());
+        match (c, parts.last_mut()) {
+            // Windows splits `C:\` (and `\\server\share\`) into a prefix and a
+            // `\` root. Shown apart they are two crumbs where the user sees one
+            // drive, and the first navigates to `C:`, which Windows reads as the
+            // current directory on that drive rather than its root.
+            (Component::RootDir, Some(prefix)) if after_prefix => {
+                prefix.push(std::path::MAIN_SEPARATOR);
+            }
+            _ => parts.push(c.as_os_str().to_string_lossy().to_string()),
+        }
+        after_prefix = matches!(c, Component::Prefix(_));
     }
     if parts.is_empty() {
         parts.push(path.to_string());
     }
     parts
+}
+
+#[cfg(test)]
+mod tests {
+    use super::path_parts;
+
+    #[cfg(windows)]
+    #[test]
+    fn drive_and_root_are_one_crumb() {
+        assert_eq!(path_parts(r"C:\Users\ada"), ["C:\\", "Users", "ada"]);
+        assert_eq!(path_parts(r"C:\"), ["C:\\"]);
+        assert_eq!(
+            path_parts(r"\\server\share\docs"),
+            [r"\\server\share\", "docs"]
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn root_stays_its_own_crumb() {
+        assert_eq!(path_parts("/tmp/ada"), ["/", "tmp", "ada"]);
+    }
 }

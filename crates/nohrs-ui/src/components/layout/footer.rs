@@ -1,5 +1,5 @@
 use crate::theme::theme;
-use gpui::{Context, IntoElement, div, prelude::*, px, rgb};
+use gpui::{AnyElement, Context, IntoElement, div, prelude::*, px, rgb};
 use gpui_component::{Icon, IconName};
 
 /// What a footer status message is claiming, which decides the color it is
@@ -23,9 +23,9 @@ pub enum StatusTone {
 impl StatusTone {
     fn color(self) -> u32 {
         match self {
-            Self::Normal => theme::GRAY_700,
-            Self::Warning => theme::WARNING,
-            Self::Error => theme::DANGER,
+            Self::Normal => theme::gray_700(),
+            Self::Warning => theme::warning(),
+            Self::Error => theme::danger(),
         }
     }
 }
@@ -70,9 +70,12 @@ impl Default for FooterProps {
     }
 }
 
-/// A VSCode-like footer (status bar)
+/// A VSCode-like footer (status bar). `trailing` is drawn at the right edge,
+/// before the path: a control the page hosting the footer owns, such as the
+/// explorer's zoom.
 pub fn footer<V: gpui::Render>(
     props: FooterProps,
+    trailing: Option<AnyElement>,
     cx: &mut Context<V>,
 ) -> impl IntoElement + use<V> {
     div()
@@ -82,9 +85,9 @@ pub fn footer<V: gpui::Render>(
         .items_center()
         .justify_between()
         .px(px(12.0))
-        .bg(rgb(theme::FOOTER_BG))
+        .bg(rgb(theme::footer_bg()))
         .border_t_1()
-        .border_color(rgb(theme::BORDER))
+        .border_color(rgb(theme::border()))
         .child(
             // Left section - Status items
             div()
@@ -189,6 +192,7 @@ pub fn footer<V: gpui::Render>(
                         cx,
                     ))
                 })
+                .children(trailing)
                 // Current path indicator
                 .child(footer_item(
                     ("footer-path", 5_usize),
@@ -218,7 +222,7 @@ fn footer_item<V: gpui::Render>(
         .items_center()
         .gap_1p5()
         .when_some(icon, |this, icon| {
-            this.child(icon.size_3().text_color(rgb(theme::GRAY_500)))
+            this.child(icon.size_3().text_color(rgb(theme::gray_500())))
         })
         .when(has_label, |this| {
             this.child(
@@ -232,7 +236,7 @@ fn footer_item<V: gpui::Render>(
                     .whitespace_nowrap()
                     .overflow_hidden()
                     .text_ellipsis()
-                    .text_color(rgb(theme::GRAY_600))
+                    .text_color(rgb(theme::gray_600()))
                     .child(label),
             )
         })
@@ -330,7 +334,7 @@ mod tests {
             cx: &mut gpui::Context<Self>,
         ) -> impl IntoElement {
             self.renders += 1;
-            footer(self.props.clone(), cx)
+            footer(self.props.clone(), None, cx)
         }
     }
 

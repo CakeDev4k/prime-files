@@ -4297,6 +4297,7 @@ name = "nohrs-pages"
 version = "0.0.1"
 dependencies = [
  "anyhow",
+ "async-channel 2.5.0",
  "gpui",
  "gpui-component",
  "image",
@@ -4310,6 +4311,7 @@ dependencies = [
  "tempfile",
  "time",
  "tracing",
+ "windows 0.61.3",
 ]
 
 [[package]]

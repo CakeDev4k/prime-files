@@ -8,15 +8,15 @@ pub fn tab_bar() -> impl IntoElement {
         .gap_2()
         .p_2()
         .border_1()
-        .border_color(rgb(theme::ACCENT))
-        .bg(rgb(theme::BG))
-        .text_color(rgb(theme::FG))
+        .border_color(rgb(theme::accent()))
+        .bg(rgb(theme::bg()))
+        .text_color(rgb(theme::fg()))
         .child(
             div()
                 .px_2()
                 .py_1()
                 .border_1()
-                .border_color(rgb(theme::ACCENT))
+                .border_color(rgb(theme::accent()))
                 .child("Tab 1"),
         )
         .child(
@@ -24,7 +24,7 @@ pub fn tab_bar() -> impl IntoElement {
                 .px_2()
                 .py_1()
                 .border_1()
-                .border_color(rgb(theme::ACCENT))
+                .border_color(rgb(theme::accent()))
                 .child("Tab 2"),
         )
 }
@@ -37,17 +37,17 @@ pub fn split_container<L: IntoElement, R: IntoElement>(left: L, right: R) -> imp
         .child(
             div()
                 .border_1()
-                .border_color(rgb(theme::ACCENT))
+                .border_color(rgb(theme::accent()))
                 .child(left),
         )
         .child(
             // Resize bar placeholder
-            div().w(px(4.0)).bg(rgb(theme::ACCENT)),
+            div().w(px(4.0)).bg(rgb(theme::accent())),
         )
         .child(
             div()
                 .border_1()
-                .border_color(rgb(theme::ACCENT))
+                .border_color(rgb(theme::accent()))
                 .child(right),
         )
 }

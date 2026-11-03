@@ -1,5 +1,5 @@
 use super::super::types::ViewMode;
-use crate::explorer::ExplorerPane;
+use crate::explorer::{ExplorerPane, zoom};
 use gpui::*;
 
 /// Grid-mode rendering of the listing.
@@ -19,11 +19,15 @@ pub fn render(
     cx: &mut Context<ExplorerPane>,
 ) -> AnyElement {
     page.ensure_list_initialized(window, cx);
+    // In both modes: the preview pane draws from the same cache, and the list
+    // has to release a folder's thumbnails on leaving it just as the grid does.
+    page.thumbnails.show_directory(&page.cwd, cx);
 
     let file_list = match page.view_mode {
         ViewMode::List => list::render(page, cx),
         ViewMode::Grid => grid::render(page, window, cx),
     };
+    let file_list = with_wheel_zoom(file_list, cx);
 
     if page.search_visible {
         div()
@@ -36,6 +40,58 @@ pub fn render(
     } else {
         file_list
     }
+}
+
+/// Makes Ctrl+wheel over the listing zoom it instead of scrolling it.
+///
+/// Caught in the capture phase: the virtual lists inside handle the wheel as it
+/// bubbles, so by the time a bubbling handler here ran they would already have
+/// scrolled.
+fn with_wheel_zoom(listing: AnyElement, cx: &mut Context<ExplorerPane>) -> AnyElement {
+    let entity = cx.entity();
+    div()
+        .relative()
+        .flex_1()
+        .flex()
+        .flex_col()
+        .min_h(px(0.0))
+        .child(listing)
+        .child(
+            canvas(
+                |_, _, _| {},
+                move |bounds, _, window, _cx| {
+                    let entity = entity.clone();
+                    window.on_mouse_event(move |event: &ScrollWheelEvent, phase, _window, cx| {
+                        if phase != DispatchPhase::Capture
+                            || !event.modifiers.secondary()
+                            || !bounds.contains(&event.position)
+                        {
+                            return;
+                        }
+                        let notches = match event.delta {
+                            // One event per wheel notch, already multiplied by
+                            // the system's lines-per-notch (3 by default), which
+                            // made each notch jump three steps.
+                            ScrollDelta::Lines(lines) => lines.y.signum(),
+                            // Touchpads report pixels in many small events;
+                            // about a notch's worth of travel per step keeps a
+                            // swipe from racing through the whole range.
+                            ScrollDelta::Pixels(pixels) => f32::from(pixels.y) / 60.0,
+                        };
+                        if notches != 0.0 {
+                            entity.update(cx, |page, cx| {
+                                let next = zoom::step(page.zoom, notches * zoom::STEP);
+                                page.set_zoom(next, cx);
+                            });
+                        }
+                        cx.stop_propagation();
+                    });
+                },
+            )
+            .absolute()
+            .size_full(),
+        )
+        .into_any_element()
 }
 
 /// Truncates `text` to at most `max_len` characters by eliding the middle,

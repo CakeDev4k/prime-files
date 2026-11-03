@@ -25,19 +25,19 @@ impl Render for SettingsPage {
             .flex_col()
             .items_center()
             .justify_center()
-            .bg(rgb(theme::BG))
+            .bg(rgb(theme::bg()))
             .child(
                 div()
                     .text_2xl()
                     .font_weight(gpui::FontWeight::BOLD)
-                    .text_color(rgb(theme::FG))
+                    .text_color(rgb(theme::fg()))
                     .child("⚙️ Settings"),
             )
             .child(
                 div()
                     .mt(px(16.0))
                     .text_base()
-                    .text_color(rgb(theme::FG_SECONDARY))
+                    .text_color(rgb(theme::fg_secondary()))
                     .child("Application settings to be implemented"),
             )
     }

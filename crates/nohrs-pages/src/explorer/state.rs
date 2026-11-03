@@ -130,6 +130,8 @@ pub struct ExplorerPane {
     // Preview State
     /// Path of the image currently shown in the preview pane.
     pub preview_image_path: Option<String>,
+    /// Markdown source shown rendered in the preview pane.
+    pub preview_markdown: Option<gpui::SharedString>,
     /// Message shown in the preview pane when a file cannot be previewed.
     pub preview_message: Option<String>,
     /// The editor entity backing a text preview.
@@ -147,6 +149,25 @@ pub struct ExplorerPane {
     pub(crate) renaming: Option<super::file_ops::RenameState>,
     /// In-progress paste whose name conflicts are being resolved via the dialog.
     pub(crate) paste_plan: Option<super::file_ops::PastePlan>,
+
+    // Zoom and the grid it drives
+    /// Listing zoom in 0..=1: the list table at the bottom, ever larger tiles
+    /// above (see `zoom.rs`). `view_mode` always follows it.
+    pub(crate) zoom: f32,
+    /// The grid zoom to return to when the grid is chosen again after the list.
+    pub(crate) last_grid_zoom: f32,
+    /// Tiles per grid row at the last render, for Up/Down to move by a row.
+    pub(crate) grid_columns: usize,
+    /// Width the grid had at the last paint; rows are laid out against it.
+    pub(crate) grid_width: f32,
+    /// Scroll position of the virtualized grid.
+    pub(crate) grid_scroll_handle: VirtualListScrollHandle,
+    /// Thumbnails of the directory on screen.
+    pub(crate) thumbnails: super::thumbnails::Thumbnails,
+    /// The GIF tile under the pointer, which plays while hovered.
+    pub(crate) hovered_gif: Option<String>,
+    /// Decoded frames of the GIFs playing in the grid, and which ones they are.
+    pub(crate) gif_cache: Option<(Vec<String>, Entity<gpui::RetainAllImageCache>)>,
 }
 
 impl Focusable for ExplorerPane {
@@ -250,11 +271,20 @@ impl ExplorerPane {
             syntax_service: Arc::new(SyntaxService::new()),
             preview_editor: None,
             preview_image_path: None,
+            preview_markdown: None,
             preview_message: None,
             status_message: None,
             trash_ledger,
             renaming: None,
             paste_plan: None,
+            zoom: 0.0,
+            last_grid_zoom: super::zoom::DEFAULT_GRID,
+            grid_columns: 1,
+            grid_width: 0.0,
+            grid_scroll_handle: VirtualListScrollHandle::new(),
+            thumbnails: Default::default(),
+            hovered_gif: None,
+            gif_cache: None,
         }
     }
 
@@ -308,9 +338,73 @@ impl ExplorerPane {
 
     pub(crate) fn set_view_mode(&mut self, mode: ViewMode, cx: &mut Context<Self>) {
         if self.view_mode != mode {
-            self.view_mode = mode;
-            cx.notify();
+            let zoom = match mode {
+                ViewMode::List => 0.0,
+                ViewMode::Grid => self.last_grid_zoom,
+            };
+            self.set_zoom(zoom, cx);
         }
+    }
+
+    /// The image cache to play the GIF at `path` from, or `None` when that GIF
+    /// should stay still.
+    ///
+    /// Only the selected GIF and the one under the pointer play. GPUI decodes
+    /// every frame at full size, so a folder of animated tiles would hold
+    /// hundreds of megabytes; and the cache is replaced whenever the playing set
+    /// changes, which releases the frames of a GIF the moment it stops.
+    pub(crate) fn gif_animation_cache(
+        &mut self,
+        path: &str,
+        cx: &mut Context<Self>,
+    ) -> Option<Entity<gpui::RetainAllImageCache>> {
+        let is_gif = |candidate: &&String| {
+            std::path::Path::new(candidate.as_str())
+                .extension()
+                .is_some_and(|extension| extension.eq_ignore_ascii_case("gif"))
+        };
+        let mut playing: Vec<String> = [self.active_path.as_ref(), self.hovered_gif.as_ref()]
+            .into_iter()
+            .flatten()
+            .filter(is_gif)
+            .cloned()
+            .collect();
+        playing.sort();
+        playing.dedup();
+        if !playing.iter().any(|candidate| candidate == path) {
+            return None;
+        }
+        match &self.gif_cache {
+            Some((held, cache)) if *held == playing => Some(cache.clone()),
+            _ => {
+                let cache = gpui::RetainAllImageCache::new(cx);
+                self.gif_cache = Some((playing, cache.clone()));
+                Some(cache)
+            }
+        }
+    }
+
+    /// How many entries Up/Down move by: a whole row of tiles in the grid.
+    pub(crate) fn row_stride(&self) -> isize {
+        match self.view_mode {
+            ViewMode::List => 1,
+            ViewMode::Grid => self.grid_columns.max(1) as isize,
+        }
+    }
+
+    /// Sets the listing zoom, switching between the list and the grid when it
+    /// crosses the threshold between them.
+    pub(crate) fn set_zoom(&mut self, zoom: f32, cx: &mut Context<Self>) {
+        let zoom = zoom.clamp(0.0, 1.0);
+        if zoom == self.zoom {
+            return;
+        }
+        self.zoom = zoom;
+        self.view_mode = super::zoom::view_mode(zoom);
+        if self.view_mode == ViewMode::Grid {
+            self.last_grid_zoom = zoom;
+        }
+        cx.notify();
     }
 
     pub(crate) fn record_click(&mut self, row: usize, click_count: usize) {
@@ -461,6 +555,11 @@ impl ExplorerPane {
             self.select_range_to(next);
         } else {
             self.select_single(next);
+        }
+        if self.view_mode == ViewMode::Grid {
+            let row = next / self.grid_columns.max(1);
+            self.grid_scroll_handle
+                .scroll_to_item(row, gpui::ScrollStrategy::Center);
         }
     }
 

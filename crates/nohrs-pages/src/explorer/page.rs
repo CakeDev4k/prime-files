@@ -511,6 +511,18 @@ impl ExplorerPage {
         (pane.selection.len(), pane.filtered_entries.len())
     }
 
+    /// Listing zoom of the active tab, for the footer's zoom control.
+    pub fn zoom(&self, cx: &App) -> f32 {
+        self.group.active_pane().read(cx).zoom
+    }
+
+    /// Sets the listing zoom of the active tab.
+    pub fn set_zoom(&self, zoom: f32, cx: &mut App) {
+        self.group
+            .active_pane()
+            .update(cx, |pane, cx| pane.set_zoom(zoom, cx));
+    }
+
     /// Absolute path of the active tab's current directory, for the footer.
     pub fn current_path(&self, cx: &App) -> String {
         self.group.active_pane().read(cx).cwd.clone()
@@ -604,7 +616,7 @@ impl Render for ExplorerPage {
             .size_full()
             .flex()
             .flex_col()
-            .bg(rgb(theme::BG))
+            .bg(rgb(theme::bg()))
             .key_context(PANES_CONTEXT)
             .track_focus(&self.focus_handle)
             .on_action(cx.listener(|this, _: &SplitVertical, window, cx| {

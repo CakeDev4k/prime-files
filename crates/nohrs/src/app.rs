@@ -8,10 +8,10 @@
 //! binary owns the keybinding that summons the launcher from anywhere.
 
 use crate::cli::{Cli, Command};
-use gpui::{App, AppContext, Application, Bounds, KeyBinding, px, size};
+use gpui::{App, AppContext, Application, Bounds, KeyBinding, WindowAppearance, px, size};
 use gpui_component::Root;
 use gpui_component::resizable::ResizableState;
-use nohrs_core::config::{self, ConfigOverride};
+use nohrs_core::config::{self, ConfigOverride, ThemeMode};
 use nohrs_core::telemetry::logging::{FileLogConfig, init_logging_with_file};
 use nohrs_launcher::{LauncherIndex, ToggleLauncher};
 use nohrs_pages::RootView;
@@ -56,6 +56,7 @@ impl NohrsApp {
 
         Application::new().with_assets(Assets).run(move |app: &mut App| {
             gpui_component::init(app);
+            apply_theme_mode(config.theme.mode, app);
 
             // The name index is built once for the whole run and shared by every
             // launcher window, so summoning the launcher never waits on a scan.
@@ -197,4 +198,28 @@ fn open_host_store() -> Option<Arc<dyn KvStore>> {
             None
         }
     }
+}
+
+/// Resolves `theme.mode` to light or dark and applies it to both palettes the
+/// UI draws from: nohrs's own tokens and gpui-component's widgets.
+///
+/// The Explorer window does this again, and on every config reload, in
+/// `RootView::apply_config`. This copy is for the launcher-only mode, which
+/// never builds that root and would otherwise always open light.
+fn apply_theme_mode(mode: ThemeMode, app: &mut App) {
+    let dark = match mode {
+        ThemeMode::Dark => true,
+        ThemeMode::Light => false,
+        ThemeMode::System => matches!(
+            app.window_appearance(),
+            WindowAppearance::Dark | WindowAppearance::VibrantDark
+        ),
+    };
+    nohrs_ui::theme::theme::set_dark(dark);
+    let widget_mode = if dark {
+        gpui_component::ThemeMode::Dark
+    } else {
+        gpui_component::ThemeMode::Light
+    };
+    gpui_component::Theme::change(widget_mode, None, app);
 }

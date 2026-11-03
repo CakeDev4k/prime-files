@@ -14,7 +14,7 @@ pub fn render(
         .size_full()
         .flex()
         .flex_col()
-        .bg(rgb(theme::BG))
+        .bg(rgb(theme::bg()))
         .py(px(12.0))
         .child(section_label("Library"))
         .child(
@@ -48,7 +48,7 @@ fn section_label(label: &'static str) -> impl IntoElement + use<> {
         .pb(px(6.0))
         .text_xs()
         .font_weight(gpui::FontWeight::SEMIBOLD)
-        .text_color(rgb(theme::MUTED))
+        .text_color(rgb(theme::muted()))
         .child(label)
 }
 
@@ -71,14 +71,14 @@ fn sidebar_item(icon: Icon, label: &str, active: bool) -> impl IntoElement + use
         .px(px(8.0))
         .rounded(px(6.0))
         .cursor_pointer()
-        .when(active, |this| this.bg(rgb(theme::ACCENT_SUBTLE)))
+        .when(active, |this| this.bg(rgb(theme::accent_subtle())))
         .when(!active, |this| {
-            this.hover(|this| this.bg(rgb(theme::BG_HOVER)))
+            this.hover(|this| this.bg(rgb(theme::bg_hover())))
         })
         .child(icon.size_4().flex_shrink_0().text_color(rgb(if active {
-            theme::ACCENT
+            theme::accent()
         } else {
-            theme::GRAY_500
+            theme::gray_500()
         })))
         .child(
             div()
@@ -87,7 +87,7 @@ fn sidebar_item(icon: Icon, label: &str, active: bool) -> impl IntoElement + use
                 .text_ellipsis()
                 .whitespace_nowrap()
                 .when(active, |this| this.font_weight(gpui::FontWeight::MEDIUM))
-                .text_color(rgb(theme::FG))
+                .text_color(rgb(theme::fg()))
                 .child(label),
         )
 }

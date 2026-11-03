@@ -22,21 +22,46 @@ fn detect_language(path: &str) -> String {
 
     match extension.as_str() {
         "rs" => "rust",
-        "md" => "markdown",
-        "json" => "json",
-        "js" => "javascript",
-        "ts" => "typescript",
-        "html" => "html",
+        "md" | "markdown" | "mdx" => "markdown",
+        "json" | "jsonc" | "json5" | "geojson" => "json",
+        "js" | "mjs" | "cjs" | "jsx" => "javascript",
+        "ts" | "mts" | "cts" => "typescript",
+        "tsx" => "tsx",
+        "html" | "htm" | "xml" | "svg" | "xaml" | "csproj" | "plist" => "html",
         "go" => "go",
         "zig" => "zig",
         "toml" => "toml",
         "yaml" | "yml" => "yaml",
-        "css" => "css",
-        "c" => "c",
-        "cpp" => "cpp",
+        "css" | "scss" => "css",
+        "c" | "h" => "c",
+        "cpp" | "cc" | "cxx" | "hpp" | "hh" => "cpp",
+        "cs" => "csharp",
+        "py" | "pyw" => "python",
+        "sh" | "bash" | "zsh" => "bash",
+        "java" => "java",
+        "rb" => "ruby",
+        "sql" => "sql",
+        "swift" => "swift",
+        "diff" | "patch" => "diff",
         _ => "plain",
     }
     .to_string()
+}
+
+/// Re-indents text that a machine wrote on one line so a person can read it.
+///
+/// Only JSON for now, and only when it parses: anything else, including JSON
+/// with comments, is shown as written rather than risk showing something that
+/// is not what the file says.
+fn prettify(language: &str, text: &str) -> Option<String> {
+    if language != "json" {
+        return None;
+    }
+    let value: serde_json::Value = serde_json::from_str(text).ok()?;
+    let pretty = serde_json::to_string_pretty(&value).ok()?;
+    // Already laid out by hand: keep the author's formatting (and key order
+    // `Value` would otherwise sort).
+    (pretty.lines().count() > text.lines().count()).then_some(pretty)
 }
 
 fn is_image_path(path: &str) -> bool {
@@ -78,13 +103,15 @@ fn read_preview(path: &str) -> PreviewOutcome {
     if !metadata.is_file() {
         return PreviewOutcome::Unsupported;
     }
-    if metadata.len() > config::PREVIEW_MAX_FILE_SIZE {
-        return PreviewOutcome::TooLarge;
-    }
     // Binary images are rendered from disk by path, so avoid reading the whole
-    // file and attempting a UTF-8 decode just to discover it is binary.
+    // file and attempting a UTF-8 decode just to discover it is binary. Ahead of
+    // the size cap, which is about how much text the editor can take: a 20 MB
+    // photo is an ordinary image, not too large to look at.
     if is_binary_image_path(path) {
         return PreviewOutcome::Image;
+    }
+    if metadata.len() > config::PREVIEW_MAX_FILE_SIZE {
+        return PreviewOutcome::TooLarge;
     }
     match std::fs::read(path) {
         Ok(bytes) => match String::from_utf8(bytes) {
@@ -127,6 +154,7 @@ impl ExplorerPane {
     ) {
         self.preview_editor = None;
         self.preview_image_path = None;
+        self.preview_markdown = None;
         self.preview_message = None;
         self.preview_text = None;
         // Record the path being loaded so that out-of-order async completions
@@ -183,10 +211,28 @@ impl ExplorerPane {
             }
             PreviewOutcome::Text(text) => {
                 self.preview_path = Some(path.clone());
+                let language = detect_language(&path);
+
+                // A file opened from a content-search hit is shown exactly as
+                // written: the hit is a line number in the file on disk, and
+                // re-indenting or rendering it would move that line.
+                let from_search = self
+                    .search_results
+                    .as_ref()
+                    .is_some_and(|results| results.iter().any(|result| result.path == path));
+                if !from_search && language == "markdown" {
+                    self.preview_text = Some(text.clone());
+                    self.preview_markdown = Some(text.into());
+                    cx.notify();
+                    return;
+                }
+                let text = match prettify(&language, &text) {
+                    Some(pretty) if !from_search => pretty,
+                    _ => text,
+                };
                 self.preview_text = Some(text.clone());
 
                 let editor_view = cx.new(|cx| PreviewEditor::new(window, cx));
-                let language = detect_language(&path);
                 editor_view.update(cx, |editor, cx| {
                     editor.set_text(text.clone(), window, cx);
                     if language != "plain" {
@@ -250,6 +296,19 @@ impl ExplorerPane {
 #[allow(clippy::disallowed_methods)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn prettify_reindents_minified_json_only() {
+        let pretty =
+            prettify("json", r#"{"a":{"b":[1,2]}}"#).expect("minified JSON is re-indented");
+        assert!(pretty.lines().count() > 1);
+        assert!(pretty.contains("\n  \"a\": {"));
+        // Already laid out: left as the author wrote it.
+        assert_eq!(prettify("json", "{\n  \"a\": 1\n}"), None);
+        // Not JSON, or JSON that does not parse: shown as written.
+        assert_eq!(prettify("json", "{\"a\": 1, // note\n}"), None);
+        assert_eq!(prettify("rust", "fn main(){}"), None);
+    }
 
     #[test]
     fn detect_language_maps_known_extensions() {

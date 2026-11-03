@@ -137,8 +137,8 @@ impl Render for TabDragPreview {
             .px(px(10.0))
             .py(px(4.0))
             .rounded(px(6.0))
-            .bg(rgb(theme::TOOLBAR_ACTIVE_BG))
-            .text_color(rgb(theme::TOOLBAR_ACTIVE_TEXT))
+            .bg(rgb(theme::toolbar_active_bg()))
+            .text_color(rgb(theme::toolbar_active_text()))
             .text_sm()
             .child(self.title.clone())
     }
@@ -503,10 +503,10 @@ impl<T: PaneItem> PaneGroup<T> {
             .min_w(px(0.0))
             .min_h(px(0.0))
             .when(is_active, |this| {
-                this.border_t_2().border_color(rgb(theme::ACCENT))
+                this.border_t_2().border_color(rgb(theme::accent()))
             })
             .when(split && !is_active, |this| {
-                this.border_t_2().border_color(rgb(theme::BG))
+                this.border_t_2().border_color(rgb(theme::bg()))
             })
             // Clicking anywhere in a pane makes it the active one.
             .on_mouse_down(
@@ -575,9 +575,9 @@ impl<T: PaneItem> PaneGroup<T> {
             .w_full()
             .px(px(6.0))
             .gap(px(4.0))
-            .bg(rgb(theme::TOOLBAR_BG))
+            .bg(rgb(theme::toolbar_bg()))
             .border_b_1()
-            .border_color(rgb(theme::BORDER))
+            .border_color(rgb(theme::border()))
             .children(tabs)
             // New-tab affordance (`Cmd/Ctrl+T`, §4 / §6).
             .child(
@@ -589,7 +589,7 @@ impl<T: PaneItem> PaneGroup<T> {
                     .size(px(20.0))
                     .rounded(px(4.0))
                     .cursor_pointer()
-                    .hover(|style| style.bg(rgb(theme::TOOLBAR_HOVER)))
+                    .hover(|style| style.bg(rgb(theme::toolbar_hover())))
                     // Swallow the press so the pane-wide `on_mouse_down` does not
                     // also fire (it would still activate the pane, which is fine,
                     // but keeps the interaction crisp).
@@ -600,7 +600,7 @@ impl<T: PaneItem> PaneGroup<T> {
                     .child(
                         Icon::new(IconName::Plus)
                             .size_4()
-                            .text_color(rgb(theme::MUTED)),
+                            .text_color(rgb(theme::muted())),
                     ),
             )
             .child(div().flex_grow())
@@ -614,7 +614,7 @@ impl<T: PaneItem> PaneGroup<T> {
                         .size(px(22.0))
                         .rounded(px(4.0))
                         .cursor_pointer()
-                        .hover(|style| style.bg(rgb(theme::TOOLBAR_HOVER)))
+                        .hover(|style| style.bg(rgb(theme::toolbar_hover())))
                         // Swallow the press so the pane-wide `on_mouse_down`
                         // doesn't activate the pane we're about to close.
                         .on_mouse_down(MouseButton::Left, |_, _window, cx| cx.stop_propagation())
@@ -624,7 +624,7 @@ impl<T: PaneItem> PaneGroup<T> {
                         .child(
                             Icon::new(IconName::Close)
                                 .size_4()
-                                .text_color(rgb(theme::TOOLBAR_TEXT)),
+                                .text_color(rgb(theme::toolbar_text())),
                         ),
                 )
             })
@@ -661,12 +661,12 @@ impl<T: PaneItem> PaneGroup<T> {
             .text_sm()
             .cursor_pointer()
             .when(is_active, |this| {
-                this.bg(rgb(theme::TOOLBAR_ACTIVE_BG))
-                    .text_color(rgb(theme::TOOLBAR_ACTIVE_TEXT))
+                this.bg(rgb(theme::toolbar_active_bg()))
+                    .text_color(rgb(theme::toolbar_active_text()))
             })
             .when(!is_active, |this| {
-                this.text_color(rgb(theme::TOOLBAR_TEXT))
-                    .hover(|style| style.bg(rgb(theme::TOOLBAR_HOVER)))
+                this.text_color(rgb(theme::toolbar_text()))
+                    .hover(|style| style.bg(rgb(theme::toolbar_hover())))
             })
             .on_click(cx.listener(move |this, _event, window, cx| {
                 on_activate_tab(this, pane_index, tab_index, window, cx)
@@ -702,7 +702,7 @@ impl<T: PaneItem> PaneGroup<T> {
                         .justify_center()
                         .size(px(16.0))
                         .rounded(px(4.0))
-                        .hover(|style| style.bg(rgb(theme::TOOLBAR_HOVER)))
+                        .hover(|style| style.bg(rgb(theme::toolbar_hover())))
                         // Swallow the press so closing a tab doesn't also activate
                         // it (or start a drag).
                         .on_mouse_down(MouseButton::Left, |_, _window, cx| cx.stop_propagation())

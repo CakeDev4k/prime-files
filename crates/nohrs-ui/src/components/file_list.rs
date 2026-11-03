@@ -70,9 +70,9 @@ impl ListDelegate for FileListDelegate {
 
         // Alternate row background for zebra striping
         let bg_color = if ix.row.is_multiple_of(2) {
-            theme::BG
+            theme::bg()
         } else {
-            theme::GRAY_50
+            theme::gray_50()
         };
 
         let file_type = get_file_type(&item.name, &item.kind);
@@ -97,13 +97,13 @@ impl ListDelegate for FileListDelegate {
                             .child(
                                 Icon::new(icon_name)
                                     .size_4()
-                                    .text_color(rgb(theme::GRAY_600)),
+                                    .text_color(rgb(theme::gray_600())),
                             )
                             .child(
                                 div()
                                     .text_sm()
                                     .font_weight(gpui::FontWeight::MEDIUM)
-                                    .text_color(rgb(theme::FG))
+                                    .text_color(rgb(theme::fg()))
                                     .overflow_hidden()
                                     .text_ellipsis()
                                     .whitespace_nowrap()
@@ -116,7 +116,7 @@ impl ListDelegate for FileListDelegate {
                             .w(px(70.0))
                             .flex_shrink_0()
                             .text_sm()
-                            .text_color(rgb(theme::FG_SECONDARY))
+                            .text_color(rgb(theme::fg_secondary()))
                             .overflow_hidden()
                             .text_ellipsis()
                             .whitespace_nowrap()
@@ -128,7 +128,7 @@ impl ListDelegate for FileListDelegate {
                             .w(px(70.0))
                             .flex_shrink_0()
                             .text_sm()
-                            .text_color(rgb(theme::FG_SECONDARY))
+                            .text_color(rgb(theme::fg_secondary()))
                             .text_ellipsis()
                             .whitespace_nowrap()
                             .child(match item.kind.as_str() {
@@ -143,7 +143,7 @@ impl ListDelegate for FileListDelegate {
                             .w(px(90.0))
                             .flex_shrink_0()
                             .text_sm()
-                            .text_color(rgb(theme::FG_SECONDARY))
+                            .text_color(rgb(theme::fg_secondary()))
                             .overflow_hidden()
                             .text_ellipsis()
                             .whitespace_nowrap()
@@ -159,7 +159,7 @@ impl ListDelegate for FileListDelegate {
                             .child(
                                 Icon::new(IconName::File)
                                     .size_4()
-                                    .text_color(rgb(theme::MUTED))
+                                    .text_color(rgb(theme::muted()))
                                     .cursor_pointer(),
                             ),
                     ),

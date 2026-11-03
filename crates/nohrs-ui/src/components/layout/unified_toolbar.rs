@@ -1,6 +1,7 @@
 use crate::theme::theme;
 use gpui::{
-    Action, Context, IntoElement, Pixels, Render, WindowControlArea, div, prelude::*, px, rgb,
+    Action, Context, IntoElement, Pixels, Render, Window, WindowControlArea, div, prelude::*, px,
+    rgb,
 };
 use gpui_component::{
     Icon, IconName, Sizable, Size,
@@ -36,6 +37,7 @@ impl Default for UnifiedToolbarProps {
 /// Build the unified toolbar element: a draggable window region plus an account button with menu.
 pub fn unified_toolbar<V: Render>(
     props: UnifiedToolbarProps,
+    window: &Window,
     _cx: &mut Context<V>,
 ) -> impl IntoElement + use<V> {
     let UnifiedToolbarProps {
@@ -53,7 +55,7 @@ pub fn unified_toolbar<V: Render>(
         .icon(
             Icon::new(IconName::CircleUser)
                 .size_5()
-                .text_color(rgb(theme::FG_SECONDARY)),
+                .text_color(rgb(theme::fg_secondary())),
         )
         .rounded(ButtonRounded::Large)
         .compact()
@@ -76,7 +78,7 @@ pub fn unified_toolbar<V: Render>(
                             .child(
                                 Icon::new(IconName::CircleUser)
                                     .size_4()
-                                    .text_color(rgb(theme::FG_SECONDARY)),
+                                    .text_color(rgb(theme::fg_secondary())),
                             )
                             .child(
                                 div()
@@ -86,14 +88,14 @@ pub fn unified_toolbar<V: Render>(
                                     .child(
                                         div()
                                             .text_sm()
-                                            .text_color(rgb(theme::FG))
+                                            .text_color(rgb(theme::fg()))
                                             .child(header_name.clone()),
                                     )
                                     .when(!header_plan.is_empty(), |this| {
                                         this.child(
                                             div()
                                                 .text_xs()
-                                                .text_color(rgb(theme::FG_SECONDARY))
+                                                .text_color(rgb(theme::fg_secondary()))
                                                 .child(header_plan.clone()),
                                         )
                                     }),
@@ -146,12 +148,69 @@ pub fn unified_toolbar<V: Render>(
         .flex_row()
         .items_center()
         .justify_between()
-        .px(px(16.0))
-        .bg(rgb(theme::BG))
+        .pl(px(16.0))
+        .pr(if cfg!(target_os = "windows") {
+            px(0.0)
+        } else {
+            px(16.0)
+        })
+        .bg(rgb(theme::bg()))
         .border_b_1()
-        .border_color(rgb(theme::BORDER))
+        .border_color(rgb(theme::border()))
         .child(drag_region)
         .child(account_button)
+        .when(cfg!(target_os = "windows"), |toolbar| {
+            toolbar.child(windows_caption_buttons(window.is_maximized()))
+        })
+}
+
+const CAPTION_BUTTON_WIDTH: Pixels = px(46.0);
+const CAPTION_CLOSE_HOVER: u32 = 0xC42B1C;
+
+// `appears_transparent` hides the native caption on Windows as well, but there
+// is no counterpart to the macOS traffic lights drawn over it: without these the
+// window has no way to be minimized, maximized or closed with the mouse. Marking
+// each one as a `WindowControlArea` makes gpui answer `WM_NCHITTEST` with
+// `HTMINBUTTON`/`HTMAXBUTTON`/`HTCLOSE`, so the clicks, snap layouts and
+// tooltips are the system's own rather than reimplemented here.
+fn windows_caption_buttons(maximized: bool) -> impl IntoElement {
+    // Glyphs from Segoe Fluent Icons, which ships with Windows 11. Windows 10
+    // has the same code points in Segoe MDL2 Assets instead.
+    let caption_button = |id: &'static str, glyph: &'static str, area: WindowControlArea| {
+        div()
+            .id(id)
+            .w(CAPTION_BUTTON_WIDTH)
+            .h_full()
+            .flex()
+            .items_center()
+            .justify_center()
+            .font_family("Segoe Fluent Icons")
+            .text_size(px(10.0))
+            .text_color(rgb(theme::fg()))
+            .window_control_area(area)
+            .child(glyph)
+    };
+
+    div()
+        .flex()
+        .flex_row()
+        .h_full()
+        .child(
+            caption_button("caption-minimize", "\u{e921}", WindowControlArea::Min)
+                .hover(|style| style.bg(rgb(theme::bg_hover()))),
+        )
+        .child(
+            caption_button(
+                "caption-maximize",
+                if maximized { "\u{e923}" } else { "\u{e922}" },
+                WindowControlArea::Max,
+            )
+            .hover(|style| style.bg(rgb(theme::bg_hover()))),
+        )
+        .child(
+            caption_button("caption-close", "\u{e8bb}", WindowControlArea::Close)
+                .hover(|style| style.bg(rgb(CAPTION_CLOSE_HOVER)).text_color(rgb(0xFFFFFF))),
+        )
 }
 
 /// Commands dispatched from the account menu in the unified toolbar.
@@ -307,11 +366,11 @@ mod tests {
     impl Render for ToolbarHost {
         fn render(
             &mut self,
-            _window: &mut Window,
+            window: &mut Window,
             cx: &mut gpui::Context<Self>,
         ) -> impl IntoElement {
             self.renders += 1;
-            unified_toolbar(self.props.clone(), cx)
+            unified_toolbar(self.props.clone(), window, cx)
         }
     }
 

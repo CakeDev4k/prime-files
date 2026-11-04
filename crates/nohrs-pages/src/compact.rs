@@ -204,12 +204,22 @@ pub fn slider(
         Edge::Left => inner.top_0().bottom_0().right_0().w(px(extent)),
         Edge::Right => inner.top_0().bottom_0().left_0().w(px(extent)),
     };
+    // The bar is clipped on its own past the lead band, so the band shows
+    // nothing of it: with the bar hidden, the band is just frame.
+    let bar = extent * amount;
+    let window = div().absolute().overflow_hidden().child(inner);
+    let window = match edge {
+        Edge::Top => window.left_0().right_0().top(px(lead)).h(px(bar)),
+        Edge::Bottom => window.left_0().right_0().bottom(px(lead)).h(px(bar)),
+        Edge::Left => window.top_0().bottom_0().left(px(lead)).w(px(bar)),
+        Edge::Right => window.top_0().bottom_0().right(px(lead)).w(px(bar)),
+    };
     let clip = div().relative().overflow_hidden().flex_shrink_0();
     match edge {
         Edge::Top | Edge::Bottom => clip.w_full().h(px(shown)),
         Edge::Left | Edge::Right => clip.h_full().w(px(shown)),
     }
-    .child(inner)
+    .child(window)
 }
 
 /// The strip along `edge` that calls the bars out: `thickness` deep, over

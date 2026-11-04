@@ -78,8 +78,12 @@ pub fn render(
         .id("quick-bar")
         .flex_shrink_0()
         .w_full()
-        .h(px(32.0))
-        .pl(px(6.0))
+        // Out of compact mode's frame it takes in the frame's band below it,
+        // and centres its contents in the whole.
+        .h(px(32.0 + if framed { page.compact.frame_px as f32 } else { 0.0 }))
+        // Out of compact mode's frame, the same room on both ends, clear of
+        // the frame's sides.
+        .pl(px(if framed { 8.0 } else { 6.0 }))
         .pr(px(8.0))
         .flex()
         .items_center()

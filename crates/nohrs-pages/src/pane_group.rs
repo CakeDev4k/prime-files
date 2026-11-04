@@ -619,6 +619,23 @@ impl<T: PaneItem> PaneGroup<T> {
             // With a frame the row is the frame's colour already and reads as
             // part of it, as the explorer's bars do; a shadow would lift it off.
             .when(overlay && amount > 0.0 && self.compact.frame_px == 0, |this| this.shadow_md());
+        // Out of the frame, a line along the row's foot from one side of the
+        // card to the other carries on the card's outline, which the row
+        // covers while it is out.
+        let frame = self.compact.frame_px as f32;
+        let sliding = if self.tabs_in_frame() {
+            sliding.child(
+                div()
+                    .absolute()
+                    .bottom_0()
+                    .left(px(frame))
+                    .right(px(frame))
+                    .h(px(1.0))
+                    .bg(rgb(theme::border())),
+            )
+        } else {
+            sliding
+        };
         let strip = compact::edge_strip(
             ("compact-tabs-edge", pane_index),
             Edge::Top,

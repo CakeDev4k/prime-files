@@ -351,8 +351,8 @@ fn render_body(
     // across the frame, so the window's edge still calls the bars.
     let frame = if page.compact.enabled { page.compact.frame_px as f32 } else { 0.0 };
     // With a frame, a bar comes out of it, as in Zen: the frame's colour, no
-    // shadow, its corners toward the listing rounded like the card's, so the
-    // frame looks to grow in on that side (see `frame_bar`). Without one, a
+    // shadow, square corners, so the frame looks to grow in on that side
+    // (see `frame_bar`). Without one, a
     // floating bar lies over the listing with a shadow, inside the pane.
     let framed = frame > 0.0;
     page.framed = FramedBars {
@@ -398,7 +398,7 @@ fn render_body(
                 // frame's top band; out of the band itself otherwise.
                 let lead = (frame - inset).max(0.0);
                 out_of_frame.push(
-                    frame_bar(compact::slider(Edge::Top, lead, height, amount, measure, header), Edge::Top)
+                    frame_bar(compact::slider(Edge::Top, lead, height, amount, measure, header), Edge::Top, amount)
                         .top(px(inset))
                         .left(px(frame))
                         .right(px(frame))
@@ -450,7 +450,7 @@ fn render_body(
             let width = panels::sidebar_width();
             if framed {
                 out_of_frame.push(
-                    frame_bar(compact::slider(Edge::Left, frame, width, amount, None, element), Edge::Left)
+                    frame_bar(compact::slider(Edge::Left, frame, width, amount, None, element), Edge::Left, amount)
                         .left_0()
                         .top(px(frame))
                         .bottom(px(frame))
@@ -487,7 +487,7 @@ fn render_body(
             let width = if room > 0.0 { width.min(room * 0.9) } else { width };
             if framed {
                 out_of_frame.push(
-                    frame_bar(compact::slider(Edge::Right, frame, width, amount, None, element), Edge::Right)
+                    frame_bar(compact::slider(Edge::Right, frame, width, amount, None, element), Edge::Right, amount)
                         .right_0()
                         .top(px(frame))
                         .bottom(px(frame))
@@ -544,7 +544,14 @@ fn render_body(
         );
         if overlay && framed {
             out_of_frame.push(
-                frame_bar(compact::slider(Edge::Bottom, frame, QUICK_BAR_HEIGHT, amount, None, quick), Edge::Bottom)
+                // The frame's band is part of the bar here, not a gap under
+                // it, so the bar's contents sit centred between the outline
+                // above and the window's edge (see `quick_bar`'s height).
+                frame_bar(
+                    compact::slider(Edge::Bottom, 0.0, QUICK_BAR_HEIGHT + frame, amount, None, quick),
+                    Edge::Bottom,
+                    amount,
+                )
                     .bottom_0()
                     .left(px(frame))
                     .right(px(frame))
@@ -616,19 +623,30 @@ fn frame_corners(frame: f32) -> [AnyElement; 2] {
 }
 
 // A bar out of compact mode's frame: the frame's colour (the bar itself
-// paints none, see `FramedBars`), and the two corners toward the listing
-// rounded like the card's. gpui clips to rectangles, which is why the bar's
-// own background must stay off: a square one would fill those corners in.
-fn frame_bar(slid: Div, edge: Edge) -> Div {
-    // `occlude`: what is behind a bar must not get its clicks.
-    let bar = slid.absolute().occlude().bg(rgb(theme::toolbar_bg()));
-    let radius = px(FRAME_RADIUS);
-    match edge {
-        Edge::Top => bar.rounded_b(radius),
-        Edge::Bottom => bar.rounded_t(radius),
-        Edge::Left => bar.rounded_r(radius),
-        Edge::Right => bar.rounded_l(radius),
-    }
+// paints none, see `FramedBars`), square corners, no shadow, so it reads as
+// the frame grown in on that side. Along its side toward the listing runs
+// the card's outline, which the bar covers while it is out, so the line
+// carries on round the card. `occlude`: what is behind a bar must not get
+// its clicks.
+fn frame_bar(slid: Div, edge: Edge, amount: f32) -> Div {
+    let line = div().absolute().bg(rgb(theme::border()));
+    let line = match edge {
+        Edge::Top => line.bottom_0().left_0().right_0().h(px(1.0)),
+        Edge::Bottom => line.top_0().left_0().right_0().h(px(1.0)),
+        Edge::Left => line.right_0().top_0().bottom_0().w(px(1.0)),
+        Edge::Right => line.left_0().top_0().bottom_0().w(px(1.0)),
+    };
+    // The slide makes the bar full width (or height) along its edge; here
+    // the caller's offsets set that instead, clear of the frame's sides,
+    // and a fixed 100% on top of them would run the bar past the far one.
+    let slid = match edge {
+        Edge::Top | Edge::Bottom => slid.w_auto(),
+        Edge::Left | Edge::Right => slid.h_auto(),
+    };
+    slid.absolute()
+        .occlude()
+        .bg(rgb(theme::toolbar_bg()))
+        .when(amount > 0.0, |this| this.child(line))
 }
 
 // A side column floating over the listing, full height, on the window's

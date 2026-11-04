@@ -121,12 +121,16 @@ impl ExplorerPane {
 }
 
 /// The three columns, each divider with a strip to drag it by. A side that
-/// is not shown (hidden, or floating in compact mode) takes no room.
+/// is not shown (hidden, or floating in compact mode) takes no room. `amounts`
+/// scale the sidebar's and the preview's widths while compact mode slides
+/// them in and out as columns (1.0 otherwise); a side part way out has no
+/// divider to drag.
 pub(crate) fn render(
     page: &mut ExplorerPane,
     sidebar: Option<AnyElement>,
     listing: AnyElement,
     preview: Option<AnyElement>,
+    amounts: (f32, f32),
     cx: &mut Context<ExplorerPane>,
 ) -> AnyElement {
     let (show_sidebar, show_preview) = (sidebar.is_some(), preview.is_some());
@@ -134,6 +138,8 @@ pub(crate) fn render(
         let (sidebar, preview) = WIDTHS.get();
         fit_widths(sidebar, preview, page.columns_width.get(), show_sidebar, show_preview)
     };
+    let (sidebar_w, preview_w) = (sidebar_w * amounts.0, preview_w * amounts.1);
+    let (sidebar_grip, preview_grip) = (show_sidebar && amounts.0 >= 1.0, show_preview && amounts.1 >= 1.0);
     let measured = page.columns_width.clone();
     let dragging = page.divider_drag.map(|drag| drag.divider);
     let grip = |id: &'static str, divider: Divider, cx: &mut Context<ExplorerPane>| {
@@ -181,7 +187,7 @@ pub(crate) fn render(
                     .flex_shrink_0()
                     .h_full()
                     .overflow_hidden()
-                    .border_r_1()
+                    .when(amounts.0 > 0.0, |column| column.border_r_1())
                     .border_color(rgb(theme::border()))
                     .child(sidebar),
             )
@@ -204,7 +210,7 @@ pub(crate) fn render(
                     .flex_shrink_0()
                     .h_full()
                     .overflow_hidden()
-                    .border_l_1()
+                    .when(amounts.1 > 0.0, |column| column.border_l_1())
                     .border_color(rgb(theme::border()))
                     .child(preview),
             )
@@ -223,10 +229,10 @@ pub(crate) fn render(
             .size_full(),
         )
         // After the columns, so the strips are on top of both sides.
-        .when(show_sidebar, |row| {
+        .when(sidebar_grip, |row| {
             row.child(grip("divider-sidebar", Divider::Sidebar, cx).left(px(sidebar_w - GRIP / 2.0)))
         })
-        .when(show_preview, |row| {
+        .when(preview_grip, |row| {
             row.child(grip("divider-preview", Divider::Preview, cx).right(px(preview_w - GRIP / 2.0)))
         })
         .into_any_element()

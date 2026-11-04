@@ -351,17 +351,22 @@ fn render_body(
     // across the frame, so the window's edge still calls the bars.
     let frame = if page.compact.enabled { page.compact.frame_px as f32 } else { 0.0 };
     // With a frame, a bar comes out of it, as in Zen: the frame's colour, no
-    // shadow, square corners, so the frame looks to grow in on that side
-    // (see `frame_bar`). Without one, a
-    // floating bar lies over the listing with a shadow, inside the pane.
+    // shadow, square corners, so the frame looks to grow in on that side.
+    // Floating, it lies over the card (see `frame_bar`); pushing, it takes
+    // its room in the frame beside the card, which shrinks and keeps its own
+    // rounded outline. Without a frame, a floating bar lies over the listing
+    // with a shadow, and a pushing one is part of the pane's column.
     let framed = frame > 0.0;
     page.framed = FramedBars {
-        header: framed && overlay && chrome.header,
+        header: framed && chrome.header,
         sidebar: framed && chrome.sidebar,
         preview: framed && chrome.preview,
-        bottom: framed && overlay && chrome.bottom,
+        bottom: framed && chrome.bottom,
     };
     let mut out_of_frame: Vec<AnyElement> = Vec::new();
+    // Pushing bars in the frame, above and below the card.
+    let mut above_card: Option<AnyElement> = None;
+    let mut below_card: Option<AnyElement> = None;
     let body = div()
         .relative()
         .flex()
@@ -417,6 +422,9 @@ fn render_body(
                         .into_any_element(),
                 );
                 body
+            } else if framed {
+                above_card = Some(compact::slider(Edge::Top, 0.0, height, amount, measure, header).into_any_element());
+                body
             } else {
                 body.child(compact::slider(Edge::Top, 0.0, height, amount, measure, header))
             }
@@ -441,14 +449,27 @@ fn render_body(
     } else {
         None
     };
-    // The sides float over the listing rather than push it: pushing would
-    // reflow every row sideways on each frame of the slide.
+    // Floating, the sides lie over the listing. Pushing, they take their
+    // room from it: in the frame beside the card, or, with no frame, as the
+    // listing's own columns, which narrow with the slide.
     let mut sides: Vec<AnyElement> = Vec::new();
+    let mut left_of_card: Option<AnyElement> = None;
+    let mut right_of_card: Option<AnyElement> = None;
+    let mut side_amounts = (1.0, 1.0);
     let sidebar = match sidebar {
         Some(element) if chrome.sidebar => {
             let amount = page.left_reveal.amount();
             let width = panels::sidebar_width();
-            if framed {
+            let pushed = if !overlay && framed {
+                // The frame's width again between the bar and the card, as
+                // on the window's side of it.
+                let padded = div().size_full().pr(px(frame)).child(element);
+                left_of_card = Some(compact::slider(Edge::Left, 0.0, width + frame, amount, None, padded).into_any_element());
+                None
+            } else if !overlay {
+                side_amounts.0 = amount;
+                Some(compact::slider(Edge::Left, 0.0, width, amount, None, element).into_any_element())
+            } else if framed {
                 out_of_frame.push(
                     frame_bar(compact::slider(Edge::Left, frame, width, amount, None, element), Edge::Left, amount)
                         .left_0()
@@ -456,6 +477,7 @@ fn render_body(
                         .bottom(px(frame))
                         .into_any_element(),
                 );
+                None
             } else {
                 sides.push(
                     side_panel(compact::slider(Edge::Left, 0.0, width, amount, None, element), amount)
@@ -463,7 +485,8 @@ fn render_body(
                         .when(amount > 0.0, |this| this.border_r_1())
                         .into_any_element(),
                 );
-            }
+                None
+            };
             strips.push(
                 compact::edge_strip(
                     "compact-sidebar-edge",
@@ -475,17 +498,27 @@ fn render_body(
                 )
                 .into_any_element(),
             );
-            None
+            pushed
         }
         other => other,
     };
     let preview = match preview {
         Some(element) if chrome.preview => {
             let amount = page.right_reveal.amount();
-            let room = page.columns_width.get();
             let width = panels::preview_width().max(240.0);
-            let width = if room > 0.0 { width.min(room * 0.9) } else { width };
-            if framed {
+            // Floating, kept inside the listing it covers. Not when pushing:
+            // the listing narrows as the preview widens, and capping by it
+            // would chase its own tail.
+            let room = page.columns_width.get();
+            let width = if overlay && room > 0.0 { width.min(room * 0.9) } else { width };
+            let pushed = if !overlay && framed {
+                let padded = div().size_full().pl(px(frame)).child(element);
+                right_of_card = Some(compact::slider(Edge::Right, 0.0, width + frame, amount, None, padded).into_any_element());
+                None
+            } else if !overlay {
+                side_amounts.1 = amount;
+                Some(compact::slider(Edge::Right, 0.0, width, amount, None, element).into_any_element())
+            } else if framed {
                 out_of_frame.push(
                     frame_bar(compact::slider(Edge::Right, frame, width, amount, None, element), Edge::Right, amount)
                         .right_0()
@@ -493,6 +526,7 @@ fn render_body(
                         .bottom(px(frame))
                         .into_any_element(),
                 );
+                None
             } else {
                 sides.push(
                     side_panel(compact::slider(Edge::Right, 0.0, width, amount, None, element), amount)
@@ -500,7 +534,8 @@ fn render_body(
                         .when(amount > 0.0, |this| this.border_l_1())
                         .into_any_element(),
                 );
-            }
+                None
+            };
             strips.push(
                 compact::edge_strip(
                     "compact-preview-edge",
@@ -512,11 +547,11 @@ fn render_body(
                 )
                 .into_any_element(),
             );
-            None
+            pushed
         }
         other => other,
     };
-    let columns = panels::render(page, sidebar, listing, preview, cx);
+    let columns = panels::render(page, sidebar, listing, preview, side_amounts, cx);
     let body = body.child(
         div()
             .relative()
@@ -570,6 +605,12 @@ fn render_body(
                     .into_any_element(),
             );
             body
+        } else if framed {
+            // The bar is 32 px plus the frame tall (`quick_bar`), its contents
+            // centred; shown 32 px of it over the frame's own band below, the
+            // gaps above and below its contents come out even.
+            below_card = Some(compact::slider(Edge::Bottom, 0.0, QUICK_BAR_HEIGHT, amount, None, quick).into_any_element());
+            body
         } else {
             body.child(compact::slider(Edge::Bottom, 0.0, QUICK_BAR_HEIGHT, amount, None, quick))
         }
@@ -581,10 +622,29 @@ fn render_body(
     if frame <= 0.0 {
         return root.child(body).children(strips);
     }
+    // The corners go with the card, which pushing bars move.
+    let card = div()
+        .relative()
+        .flex()
+        .flex_col()
+        .flex_1()
+        .min_h(px(0.0))
+        .min_w(px(0.0))
+        .child(body.bg(rgb(theme::bg())).overflow_hidden())
+        .children(frame_corners());
+    let middle = div()
+        .flex()
+        .flex_row()
+        .flex_1()
+        .min_h(px(0.0))
+        .children(left_of_card)
+        .child(card)
+        .children(right_of_card);
     root.p(px(frame))
         .bg(rgb(theme::toolbar_bg()))
-        .child(body.bg(rgb(theme::bg())).overflow_hidden())
-        .children(frame_corners(frame))
+        .children(above_card)
+        .child(middle)
+        .children(below_card)
         .children(out_of_frame)
         .children(strips)
 }
@@ -597,25 +657,27 @@ const FRAME_RADIUS: f32 = 8.0;
 // rounded card; instead a ring in the frame's colour is drawn over them: a
 // box larger than the card by the radius on every side, with a border that
 // wide, whose inner edge is then the card's rounded outline. Its own outer
-// corners round off over the frame, which is the same colour. Neither box
-// takes the mouse (no listeners, so no hitbox).
-fn frame_corners(frame: f32) -> [AnyElement; 2] {
+// corners round off over the frame, which is the same colour, and the band
+// it lays outside the card is frame-coloured too: over the frame, or under a
+// pushing bar, which is drawn after it and paints nothing of its own.
+// Neither box takes the mouse (no listeners, so no hitbox).
+fn frame_corners() -> [AnyElement; 2] {
     let reach = FRAME_RADIUS;
     let ring = div()
         .absolute()
-        .top(px(frame - reach))
-        .bottom(px(frame - reach))
-        .left(px(frame - reach))
-        .right(px(frame - reach))
+        .top(px(-reach))
+        .bottom(px(-reach))
+        .left(px(-reach))
+        .right(px(-reach))
         .border(px(reach))
         .rounded(px(FRAME_RADIUS + reach))
         .border_color(rgb(theme::toolbar_bg()));
     let outline = div()
         .absolute()
-        .top(px(frame))
-        .bottom(px(frame))
-        .left(px(frame))
-        .right(px(frame))
+        .top_0()
+        .bottom_0()
+        .left_0()
+        .right_0()
         .border_1()
         .rounded(px(FRAME_RADIUS))
         .border_color(rgb(theme::border()));

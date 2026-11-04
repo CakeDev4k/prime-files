@@ -514,9 +514,10 @@ impl<T: PaneItem> PaneGroup<T> {
         }
     }
 
-    /// Whether the tab row slides out of compact mode's frame.
+    /// Whether the tab row slides out of compact mode's frame, floating or
+    /// pushing: either way it is part of the frame, with no line of its own.
     fn tabs_in_frame(&self) -> bool {
-        self.compact.enabled && self.compact.hide_tabs && self.compact.overlay && self.compact.frame_px > 0
+        self.compact.enabled && self.compact.hide_tabs && self.compact.frame_px > 0
     }
 
     /// Whether the tab row is the window's title bar: with one pane it
@@ -623,7 +624,9 @@ impl<T: PaneItem> PaneGroup<T> {
         // card to the other carries on the card's outline, which the row
         // covers while it is out.
         let frame = self.compact.frame_px as f32;
-        let sliding = if self.tabs_in_frame() {
+        // Pushing, the card below keeps its own outline and the line would
+        // double it.
+        let sliding = if self.tabs_in_frame() && overlay {
             sliding.child(
                 div()
                     .absolute()

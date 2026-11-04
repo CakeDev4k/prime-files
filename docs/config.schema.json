@@ -59,7 +59,7 @@
         },
         "overlay": {
           "default": true,
-          "description": "When shown, the top and bottom bars float over the listing (`true`)\ninstead of pushing it (`false`), so it does not jump. The sidebar and\nthe preview always float: pushing would reflow the listing sideways\nevery frame of the slide.",
+          "description": "When shown, the bars float over the listing (`true`), so it does not\nmove, or push it aside (`false`), so nothing of it is covered.",
           "type": "boolean"
         },
         "reveal_delay_ms": {

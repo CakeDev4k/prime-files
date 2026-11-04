@@ -427,7 +427,7 @@ impl SettingsPage {
         ))
         .child(setting_row(
             "Como as barras aparecem",
-            Some("Por cima da lista, sem mexer nela, ou empurrando a lista. Vale para as de cima e a de baixo; a lateral e o visualizador sempre vêm por cima."),
+            Some("Por cima da lista, sem mexer nela, ou empurrando a lista para abrir espaço, sem cobrir nada dela."),
             self.config_choice(
                 "compact-overlay",
                 &[

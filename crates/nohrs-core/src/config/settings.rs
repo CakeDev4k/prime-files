@@ -183,10 +183,8 @@ pub struct Compact {
     pub hide_preview: bool,
     /// The bottom bar: filter, counts, zoom (bottom edge).
     pub hide_bottom_bar: bool,
-    /// When shown, the top and bottom bars float over the listing (`true`)
-    /// instead of pushing it (`false`), so it does not jump. The sidebar and
-    /// the preview always float: pushing would reflow the listing sideways
-    /// every frame of the slide.
+    /// When shown, the bars float over the listing (`true`), so it does not
+    /// move, or push it aside (`false`), so nothing of it is covered.
     pub overlay: bool,
     /// How long the pointer rests at an edge before its bars come, in ms.
     pub reveal_delay_ms: u32,
@@ -724,7 +722,7 @@ impl Config {
              hide_sidebar = true    # left edge\n\
              hide_preview = true    # right edge\n\
              hide_bottom_bar = true # filter, counts, zoom (bottom edge)\n\
-             overlay = true         # top/bottom bars float over the listing; false = push it\n\
+             overlay = true         # bars float over the listing; false = push it aside\n\
              reveal_delay_ms = 100  # rest at the edge this long before the bars come\n\
              hide_delay_ms = 400    # bars stay this long after the pointer leaves\n\
              animation_ms = 220     # slide length; 0 = no animation\n\

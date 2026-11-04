@@ -29,4 +29,8 @@ fn main() {
     }
 
     app::NohrsApp::run(&cli);
+
+    // Here, after the event loop, rather than in a gpui quit hook: the window
+    // is gone and nothing of the app is left for the installer to wait on.
+    nohrs_pages::updater::install_pending_on_exit();
 }

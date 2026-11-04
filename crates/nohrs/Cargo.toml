@@ -1,6 +1,6 @@
 [package]
 name = "nohrs"
-description = "Launcher × Explorer — a fast, extensible, plugin-ready file workspace built in Rust."
+description = "Prime Files — a fast file explorer for Windows, built in Rust."
 keywords = ["launcher", "file-explorer", "file-manager", "gpui", "productivity"]
 categories = ["filesystem", "gui"]
 readme = "../../README.md"
@@ -28,6 +28,10 @@ gpui = "0.2"
 gpui-component = "0.5"
 tracing.workspace = true
 clap.workspace    = true
+
+[build-dependencies]
+# Already in the tree through gpui; embeds the icon and version (build.rs).
+embed-resource = "3.0"
 
 [lints]
 workspace = true

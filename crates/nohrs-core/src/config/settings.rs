@@ -19,7 +19,8 @@ pub const CURRENT_SCHEMA_VERSION: u64 = 1;
 
 /// URL advertised in the `#:schema` header of `config.toml` so TOML-aware
 /// editors can offer completion and validation.
-pub const SCHEMA_URL: &str = "https://nohrs.app/schema/config.schema.json";
+pub const SCHEMA_URL: &str =
+    "https://raw.githubusercontent.com/CakeDev4k/prime-files/main/docs/config.schema.json";
 
 /// The fully merged, validated configuration.
 ///
@@ -54,6 +55,8 @@ pub struct Config {
     pub explorer: Explorer,
     /// Compact mode: the tab row hidden until the pointer reaches it.
     pub compact: Compact,
+    /// Automatic updates from the project's releases.
+    pub updates: Updates,
     /// Keybinding overrides (draft; full support in P3). Empty means the
     /// built-in keymap is used.
     pub keybindings: Keybindings,
@@ -77,6 +80,7 @@ impl Default for Config {
             ui: Ui::default(),
             explorer: Explorer::default(),
             compact: Compact::default(),
+            updates: Updates::default(),
             keybindings: Keybindings::default(),
             plugins: Plugins::default(),
             indexing: Indexing::default(),
@@ -215,6 +219,22 @@ impl Default for Compact {
             edge_px: 8,
             frame_px: 8,
         }
+    }
+}
+
+/// Automatic updates. Only an installed copy updates itself; one run from a
+/// build folder never does, whatever this says.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(default)]
+pub struct Updates {
+    /// Look for a new version when the app starts, download it in the
+    /// background and install it when the app closes.
+    pub automatic: bool,
+}
+
+impl Default for Updates {
+    fn default() -> Self {
+        Self { automatic: true }
     }
 }
 
@@ -618,6 +638,12 @@ impl Config {
                 None => diagnostics.push(Diagnostic::warn("[explorer] is not a table; ignoring")),
             }
         }
+        if let Some(value) = table.get("updates") {
+            match value.as_table() {
+                Some(updates) => read_updates(updates, &mut config.updates, &mut diagnostics),
+                None => diagnostics.push(Diagnostic::warn("[updates] is not a table; ignoring")),
+            }
+        }
         if let Some(value) = table.get("compact") {
             match value.as_table() {
                 Some(compact) => read_compact(compact, &mut config.compact, &mut diagnostics),
@@ -673,6 +699,7 @@ impl Config {
                 "ui",
                 "explorer",
                 "compact",
+                "updates",
                 "keybindings",
                 "plugins",
                 "indexing",
@@ -728,6 +755,9 @@ impl Config {
              animation_ms = 220     # slide length; 0 = no animation\n\
              edge_px = 8            # depth of the strip along each edge that calls its bars\n\
              frame_px = 8           # frame around the listing, rounded like Zen; 0 = none\n\
+             \n\
+             [updates]\n\
+             automatic = true       # look for, download and install new versions (installed copies only)\n\
              \n\
              # The sections below are parsed and validated, but not yet applied at\n\
              # runtime — they take effect when their subsystem is wired in a later\n\
@@ -892,6 +922,19 @@ fn read_explorer(table: &toml::Table, explorer: &mut Explorer, diagnostics: &mut
         "explorer.",
         diagnostics,
     );
+}
+
+fn read_updates(table: &toml::Table, updates: &mut Updates, diagnostics: &mut Vec<Diagnostic>) {
+    if let Some(value) = table.get("automatic") {
+        match value.as_bool() {
+            Some(flag) => updates.automatic = flag,
+            None => diagnostics.push(Diagnostic::warn(format!(
+                "invalid updates.automatic {value}; using {}",
+                updates.automatic
+            ))),
+        }
+    }
+    warn_unknown_keys(table, &["automatic"], "updates.", diagnostics);
 }
 
 fn read_compact(table: &toml::Table, compact: &mut Compact, diagnostics: &mut Vec<Diagnostic>) {

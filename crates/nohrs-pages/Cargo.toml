@@ -32,6 +32,10 @@ time = { workspace = true, features = ["local-offset"] }
 async-channel = "2"
 # Reads the Explorer window's HWND for the IPC endpoint; the version gpui uses.
 raw-window-handle = "0.6"
+# The updater: comparing release versions and checking the downloaded
+# installer against SHA256SUMS.txt. Both already in the tree.
+semver = "1"
+sha2 = "0.10"
 
 # Thumbnails come from the Shell's own extractor (`IShellItemImageFactory`), the
 # one Explorer uses: it covers images, video frames, PDFs and program icons in one

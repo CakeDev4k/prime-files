@@ -20,7 +20,7 @@ pub use loader::{backup, ensure_exists, needs_migration, reset, set_value, write
 pub use settings::{
     CURRENT_SCHEMA_VERSION, Compact, Config, ConfigOverride, Diagnostic, DiagnosticLevel, Diagnostics,
     DiagnosticsStore, Explorer, Indexing, IndexingExclude, IndexingMode, Keybindings, Launcher,
-    Plugins, SCHEMA_URL, Search, SearchBackend, SortOrder, SplitDirection, Theme, ThemeMode, Ui,
+    Plugins, SCHEMA_URL, Search, SearchBackend, SortOrder, SplitDirection, Theme, ThemeMode, Ui, Updates,
     json_schema_string, load_from_path, report_diagnostics,
 };
 pub use watcher::ConfigWatcher;

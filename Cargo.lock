@@ -4361,9 +4361,10 @@ dependencies = [
 
 [[package]]
 name = "nohrs"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "clap",
+ "embed-resource",
  "gpui",
  "gpui-component",
  "nohrs-core",
@@ -4378,7 +4379,7 @@ dependencies = [
 
 [[package]]
 name = "nohrs-cli"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "clap",
  "clap_complete",
@@ -4392,7 +4393,7 @@ dependencies = [
 
 [[package]]
 name = "nohrs-core"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "dirs 6.0.0",
  "insta",
@@ -4411,7 +4412,7 @@ dependencies = [
 
 [[package]]
 name = "nohrs-launcher"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "ashpd 0.11.0",
@@ -4433,14 +4434,14 @@ dependencies = [
 
 [[package]]
 name = "nohrs-models"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "serde",
 ]
 
 [[package]]
 name = "nohrs-pages"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "async-channel 2.5.0",
@@ -4455,8 +4456,10 @@ dependencies = [
  "nohrs-store",
  "nohrs-ui",
  "raw-window-handle",
+ "semver",
  "serde",
  "serde_json",
+ "sha2 0.10.9",
  "stl_io",
  "tempfile",
  "time",
@@ -4469,7 +4472,7 @@ dependencies = [
 
 [[package]]
 name = "nohrs-services"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "async-channel 2.5.0",
@@ -4497,7 +4500,7 @@ dependencies = [
 
 [[package]]
 name = "nohrs-store"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "criterion",
  "redb",
@@ -4509,7 +4512,7 @@ dependencies = [
 
 [[package]]
 name = "nohrs-ui"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "gpui",

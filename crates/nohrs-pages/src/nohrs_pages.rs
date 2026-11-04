@@ -18,6 +18,8 @@ pub mod ipc;
 /// A reusable 2-way split/tab container shared across pages.
 pub mod compact;
 pub mod pane_group;
+/// Automatic updates from the project's GitHub releases.
+pub mod updater;
 /// Other programs' "show in folder", answered by Nohrs.
 pub mod reveal;
 /// The application root view that hosts the sidebar and active page.

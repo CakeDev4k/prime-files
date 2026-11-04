@@ -36,6 +36,9 @@ expression: parsed
             edge_px: 8,
             frame_px: 8,
         },
+        updates: Updates {
+            automatic: true,
+        },
         keybindings: Keybindings {
             bindings: {},
         },

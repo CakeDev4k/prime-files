@@ -379,6 +379,17 @@
         }
       },
       "type": "object"
+    },
+    "Updates": {
+      "description": "Automatic updates. Only an installed copy updates itself; one run from a\nbuild folder never does, whatever this says.",
+      "properties": {
+        "automatic": {
+          "default": true,
+          "description": "Look for a new version when the app starts, download it in the\nbackground and install it when the app closes.",
+          "type": "boolean"
+        }
+      },
+      "type": "object"
     }
   },
   "$schema": "https://json-schema.org/draft/2020-12/schema",
@@ -486,6 +497,13 @@
         "show_hidden": false
       },
       "description": "Explorer / view settings."
+    },
+    "updates": {
+      "$ref": "#/$defs/Updates",
+      "default": {
+        "automatic": true
+      },
+      "description": "Automatic updates from the project's releases."
     }
   },
   "title": "Config",

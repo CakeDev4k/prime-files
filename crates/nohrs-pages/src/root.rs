@@ -18,7 +18,7 @@ use gpui::{
     InteractiveElement, Render, WeakEntity, Window, div, prelude::*, px, rgb,
 };
 use gpui_component::resizable::ResizableState;
-use gpui_component::{Icon, IconName, Root, Theme, ThemeMode as GpuiThemeMode};
+use gpui_component::{Icon, IconName, Root, Theme, ThemeMode as GpuiThemeMode, WindowExt as _};
 use nohrs_core::config::{self, Config, ConfigOverride, ConfigWatcher};
 use nohrs_core::telemetry::LogErr;
 use nohrs_services::fs::trash::Ledger as TrashLedger;
@@ -131,7 +131,42 @@ impl RootView {
         crate::ipc::serve(window, cx);
         crate::file_dialog::watch(window, cx);
         crate::reveal::watch(window, cx);
+        view.start_updates(window, cx);
         view
+    }
+
+    // Looks for an update a few seconds after the window is up (so it never
+    // competes with the first listing), and says so when one is ready.
+    fn start_updates(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let updater = crate::updater::updater(cx);
+        let mut announced = false;
+        cx.observe_in(&updater, window, move |_root, updater, window, cx| {
+            if let crate::updater::Status::Ready { version, .. } = &updater.read(cx).status
+                && !announced
+            {
+                announced = true;
+                let message = if updater.read(cx).automatic {
+                    format!("A versão {version} foi baixada e será instalada quando você fechar o Prime Files.")
+                } else {
+                    format!("A versão {version} foi baixada. Instale em Configurações › Sobre.")
+                };
+                window.push_notification(
+                    gpui_component::notification::Notification::info(message).title("Atualização pronta"),
+                    cx,
+                );
+            }
+        })
+        .detach();
+        if !self.config.updates.automatic {
+            return;
+        }
+        cx.spawn(async move |_root, cx| {
+            cx.background_executor().timer(std::time::Duration::from_secs(5)).await;
+            if let Err(error) = updater.update(cx, |updater, cx| updater.check(cx)) {
+                tracing::debug!("app closed before the update check: {error}");
+            }
+        })
+        .detach();
     }
 
     /// Apply a freshly-merged configuration to the live UI: switch the theme
@@ -182,6 +217,8 @@ impl RootView {
         });
         let shown = config.clone();
         self.settings.update(cx, |page, cx| page.set_config(shown, cx));
+        let automatic = config.updates.automatic;
+        crate::updater::updater(cx).update(cx, |updater, cx| updater.set_automatic(automatic, cx));
 
         self.config = config;
         cx.notify();

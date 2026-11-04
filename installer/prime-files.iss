@@ -53,6 +53,7 @@ Compression=lzma2/max
 SolidCompression=yes
 WizardStyle=modern
 LicenseFile=..\LICENSE
+SetupIconFile=..\assets\icon\prime-files.ico
 UninstallDisplayIcon={app}\{#AppExe}
 UninstallDisplayName={#AppName}
 CloseApplications=yes
@@ -96,6 +97,9 @@ Filename: "{tmp}\vc_redist.x64.exe"; Parameters: "/install /quiet /norestart"; S
 Filename: "{tmp}\7zip-setup.exe"; Parameters: "/S"; StatusMsg: "{cm:InstallingSevenZip}"; Flags: shellexec waituntilterminated; Check: SevenZipDownloaded
 Filename: "{sys}\Dism.exe"; Parameters: "/Online /Add-Capability /CapabilityName:Media.MediaFeaturePack~~~~0.0.1.0 /NoRestart"; StatusMsg: "{cm:InstallingMedia}"; Verb: "runas"; Flags: shellexec waituntilterminated runhidden; Check: MediaFoundationMissing; AfterInstall: TellMediaRestart
 Filename: "{app}\{#AppExe}"; Description: "{cm:LaunchProgram,{#AppName}}"; Flags: nowait postinstall skipifsilent; Check: not MediaFoundationMissing
+; An update started from the app's "Atualizar agora" runs silently with
+; /RELAUNCH=1: the app closed itself for it, so it is opened again.
+Filename: "{app}\{#AppExe}"; Flags: nowait; Check: Relaunch
 
 [Code]
 var
@@ -120,6 +124,11 @@ end;
 function MediaFoundationMissing: Boolean;
 begin
   Result := not FileExists(ExpandConstant('{sys}\mfplat.dll'));
+end;
+
+function Relaunch: Boolean;
+begin
+  Result := WizardSilent and (ExpandConstant('{param:RELAUNCH|0}') = '1');
 end;
 
 function VcRedistDownloaded: Boolean;

@@ -1,8 +1,12 @@
-# Prime Files
+<div align="center">
+  <img src="assets/icon/prime-files.png" alt="" width="112" height="112">
 
-Explorador de arquivos para Windows, rápido, escrito em Rust.
+  # Prime Files
 
-Prime Files é um fork do [Nohrs](https://github.com/noh-rs/nohrs) (licença MIT) feito só para Windows: barra de título com abas, miniaturas e ícones do próprio Windows, menu do botão direito do Explorador, visualizador de quase tudo e um modo compacto no estilo do Zen Browser.
+  Explorador de arquivos para Windows, rápido, escrito em Rust.
+</div>
+
+Barra de título com abas, miniaturas e ícones do próprio Windows, menu do botão direito do Explorador, visualizador de quase tudo e um modo compacto no estilo do Zen Browser.
 
 ## Baixar
 
@@ -11,6 +15,8 @@ Pegue o instalador na página de [Releases](https://github.com/CakeDev4k/prime-f
 - o **Visual C++ Runtime** da Microsoft, se o computador não tiver;
 - o **7-Zip**, se você marcar a opção, para ver `.rar`, `.7z` e `.iso` no visualizador;
 - no Windows edição "N", o **Media Feature Pack**, sem o qual o programa não abre.
+
+Depois de instalado, o Prime Files se atualiza sozinho: procura uma versão nova ao abrir, baixa em segundo plano e instala quando você fecha o programa (ou na hora, em Configurações › Sobre). Dá para desligar em Configurações › Sobre.
 
 O instalador não é assinado digitalmente: o Windows pode mostrar "O Windows protegeu o computador". Clique em **Mais informações → Executar assim mesmo**. Cada release traz um `SHA256SUMS.txt` para conferir o arquivo.
 
@@ -25,6 +31,7 @@ Requer Windows 10 (1903) ou mais novo, 64 bits.
 - **Busca** nas subpastas (Ctrl+F) e filtro rápido (é só digitar na lista)
 - **Modo compacto** no estilo do Zen Browser: abas, barra de rota, barra lateral, visualizador e barra de baixo escondidos até o mouse encostar na borda, por cima da lista ou empurrando-a, numa moldura de cantos arredondados
 - **Explorador padrão** do Windows, opcional (Configurações › Explorador): pastas, drives e Win+E abrem no Prime Files
+- **Atualização automática** pelas releases deste repositório
 
 ## Compilar
 
@@ -34,12 +41,10 @@ Precisa do [Rust](https://rustup.rs) (stable) e do Windows.
 cargo build --release -p nohrs
 ```
 
-O programa fica em `target/release/nohrs.exe`. O instalador sai de `installer/prime-files.iss` com o [Inno Setup 6](https://jrsoftware.org/isinfo.php); o workflow `.github/workflows/release.yml` faz os dois e publica a release a cada tag `v*`.
+O programa fica em `target/release/nohrs.exe` (o código usa internamente o nome `nohrs`: crates `nohrs-*` e a pasta de configuração). O instalador sai de `installer/prime-files.iss` com o [Inno Setup 6](https://jrsoftware.org/isinfo.php); o workflow `.github/workflows/release.yml` faz os dois e publica a release a cada tag `v*`. O ícone é gerado por `assets/icon/make_icon.py`.
 
-Os nomes internos (crates `nohrs-*`, a pasta de configuração `nohrs`) vêm do projeto original e foram mantidos.
+Inclui uma cópia do [gpui](https://github.com/zed-industries/zed) 0.2.2 com correções para o Windows, descritas em [`third_party/gpui/NOHRS.md`](third_party/gpui/NOHRS.md).
 
-## Créditos e licença
+## Licença
 
-Baseado no [Nohrs](https://github.com/noh-rs/nohrs), de seus autores e colaboradores. O README original está em [`docs/README.nohrs.md`](docs/README.nohrs.md). Inclui uma cópia do [gpui](https://github.com/zed-industries/zed) 0.2.2 com correções para o Windows, descritas em [`third_party/gpui/NOHRS.md`](third_party/gpui/NOHRS.md).
-
-Licença MIT, veja [`LICENSE`](LICENSE).
+MIT, veja [`LICENSE`](LICENSE).

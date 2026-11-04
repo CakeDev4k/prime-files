@@ -8,7 +8,7 @@
 //! single source of truth. The root hands the page each config it applies.
 
 use gpui::{
-    AnyElement, Context, Div, ElementId, Render, SharedString, Stateful, Window, div, prelude::*,
+    AnyElement, Context, Div, ElementId, Entity, Render, SharedString, Stateful, Window, div, prelude::*,
     px, rgb,
 };
 use gpui_component::{Icon, IconName};
@@ -127,17 +127,21 @@ pub struct SettingsPage {
     confirm_reset: bool,
     // Whether folders open in Nohrs; `None` until the registry has answered.
     default_explorer: Option<bool>,
+    updater: Entity<crate::updater::Updater>,
 }
 
 impl SettingsPage {
     /// Creates a new settings page on its first section.
     pub fn new(cx: &mut Context<Self>) -> Self {
+        let updater = crate::updater::updater(cx);
+        cx.observe(&updater, |_page, _updater, cx| cx.notify()).detach();
         let mut page = Self {
             section: SettingsSection::Appearance,
             config: Config::default(),
             status: None,
             confirm_reset: false,
             default_explorer: None,
+            updater,
         };
         page.refresh_default_explorer(cx);
         page
@@ -738,6 +742,72 @@ impl SettingsPage {
                 None,
                 div().text_sm().text_color(rgb(theme::fg())).child(env!("CARGO_PKG_VERSION")),
             ))
+            .child(self.render_updates(cx))
+            .child(setting_row(
+                "Atualizar automaticamente",
+                Some("Procura uma versão nova ao abrir, baixa em segundo plano e instala quando você fecha o Prime Files."),
+                self.config_choice(
+                    "updates-automatic",
+                    &[
+                        ("Sim", self.config.updates.automatic, "true"),
+                        ("Não", !self.config.updates.automatic, "false"),
+                    ],
+                    ("updates", "automatic"),
+                    cx,
+                ),
+            ))
+    }
+
+    fn render_updates(&self, cx: &mut Context<Self>) -> Div {
+        use crate::updater::Status;
+        let status = self.updater.read(cx).status.clone();
+        let (text, error) = match &status {
+            Status::NotInstalled => ("Esta cópia não foi instalada pelo instalador, então não se atualiza sozinha.".to_string(), false),
+            Status::Idle => ("Ainda não procurou.".to_string(), false),
+            Status::Checking => ("Procurando…".to_string(), false),
+            Status::UpToDate => ("Você está na versão mais nova.".to_string(), false),
+            Status::Downloading(version) => (format!("Baixando a versão {version}…"), false),
+            Status::Ready { version, .. } => (format!("A versão {version} está pronta para instalar."), false),
+            Status::Failed(error) => (format!("Não deu para atualizar: {error}"), true),
+        };
+        let busy = matches!(status, Status::Checking | Status::Downloading(_));
+        let can_check = !busy && status != Status::NotInstalled;
+        let ready = matches!(status, Status::Ready { .. });
+        setting_row(
+            "Atualizações",
+            Some("Vêm das releases do Prime Files no GitHub; cada instalador é conferido pelo SHA256SUMS.txt antes de rodar."),
+            div()
+                .flex()
+                .flex_col()
+                .items_end()
+                .gap_2()
+                .child(
+                    div()
+                        .text_xs()
+                        .max_w(px(320.0))
+                        .text_color(rgb(if error { theme::danger() } else { theme::fg_secondary() }))
+                        .child(text),
+                )
+                .child(
+                    div()
+                        .flex()
+                        .gap_2()
+                        .when(can_check, |row| {
+                            row.child(button("check-updates", "Procurar agora", false).on_click(cx.listener(
+                                |page, _event, _window, cx| {
+                                    page.updater.update(cx, |updater, cx| updater.check(cx));
+                                },
+                            )))
+                        })
+                        .when(ready, |row| {
+                            row.child(button("install-update", "Atualizar agora", false).on_click(cx.listener(
+                                |page, _event, _window, cx| {
+                                    page.updater.update(cx, |updater, cx| updater.install_now(cx));
+                                },
+                            )))
+                        }),
+                ),
+        )
     }
 
     // A `choice` whose every option writes its TOML value to `key` (a

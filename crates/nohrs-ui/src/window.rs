@@ -17,5 +17,12 @@ pub fn unified_window_options(
     };
 
     traffic_lights.apply(&mut options);
+    // The name Windows shows on the taskbar, in Alt+Tab and Task Manager.
+    if let Some(titlebar) = options.titlebar.as_mut() {
+        titlebar.title = Some(APP_NAME.into());
+    }
     options
 }
+
+/// The product's name, as people see it.
+pub const APP_NAME: &str = "Prime Files";

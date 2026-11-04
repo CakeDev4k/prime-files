@@ -40,3 +40,6 @@ __pycache__/
 # holding paths of the machine that built them.
 integrations/**/bin/
 integrations/**/obj/
+
+# Installer output (installer/prime-files.iss)
+/dist/

@@ -63,7 +63,7 @@ pub fn enable(exe: &Path) -> io::Result<()> {
     for class in FOLDER_CLASSES {
         let shell = format!(r"HKCU\Software\Classes\{class}\shell");
         let verb = format!(r"{shell}\{VERB}");
-        reg_ok(&["add", &verb, "/ve", "/d", "Abrir no Nohrs", "/f"])?;
+        reg_ok(&["add", &verb, "/ve", "/d", "Abrir no Prime Files", "/f"])?;
         reg_ok(&["add", &verb, "/v", "Icon", "/d", &quoted, "/f"])?;
         reg_ok(&["add", &format!(r"{verb}\command"), "/ve", "/d", &format!("{quoted} \"%1\""), "/f"])?;
         reg_ok(&["add", &shell, "/ve", "/d", VERB, "/f"])?;
@@ -92,14 +92,20 @@ pub fn disable() -> io::Result<()> {
     Ok(())
 }
 
-// Whether the default value of `key` points at Nohrs, so a value some other
-// program set is left alone.
+// Whether the default value of `key` points at this app, so a value some
+// other program set is left alone. The verb's name says "nohrs"; a command
+// names the executable, which the installer calls PrimeFiles.exe.
 fn is_ours(key: &str) -> bool {
+    let exe_name = std::env::current_exe()
+        .ok()
+        .and_then(|exe| exe.file_name().map(|name| name.to_string_lossy().to_ascii_lowercase()));
     reg(&["query", key, "/ve"])
         .map(|output| {
-            String::from_utf8_lossy(&output.stdout)
-                .lines()
-                .any(|line| line.contains("REG_SZ") && line.to_ascii_lowercase().contains("nohrs"))
+            String::from_utf8_lossy(&output.stdout).lines().any(|line| {
+                let line = line.to_ascii_lowercase();
+                line.contains("reg_sz")
+                    && (line.contains("nohrs") || exe_name.as_deref().is_some_and(|name| line.contains(name)))
+            })
         })
         .unwrap_or(false)
 }

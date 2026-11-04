@@ -162,7 +162,7 @@ impl SettingsPage {
         let exe = match std::env::current_exe() {
             Ok(exe) => exe,
             Err(error) => {
-                self.status = Some((format!("Não foi possível achar o nohrs.exe: {error}"), true));
+                self.status = Some((format!("Não foi possível achar o executável do Prime Files: {error}"), true));
                 cx.notify();
                 return;
             }
@@ -178,7 +178,7 @@ impl SettingsPage {
             let outcome = change.await;
             this.update(cx, |page, cx| {
                 page.status = Some(match outcome {
-                    Ok(()) if enable => ("Pastas, drives e Win+E agora abrem no Nohrs.".to_string(), false),
+                    Ok(()) if enable => ("Pastas, drives e Win+E agora abrem no Prime Files.".to_string(), false),
                     Ok(()) => ("Pastas voltaram a abrir no Explorador do Windows.".to_string(), false),
                     Err(error) => (format!("Não foi possível mudar o registro: {error}"), true),
                 });
@@ -590,7 +590,7 @@ impl SettingsPage {
             ))
             .child(setting_row(
                 "Restaurar abas",
-                Some("Reabrir as abas da última sessão. Vale na próxima vez que o Nohrs abrir."),
+                Some("Reabrir as abas da última sessão. Vale na próxima vez que o Prime Files abrir."),
                 self.config_choice(
                     "restore-tabs",
                     &[
@@ -634,7 +634,7 @@ impl SettingsPage {
             .child(setting_row(
                 "Explorador padrão do Windows",
                 Some(
-                    "Pastas, drives, Win+E e o ícone do Explorador na barra de tarefas abrem no Nohrs.                      Só neste usuário do Windows; \"Não\" devolve tudo ao Explorador.",
+                    "Pastas, drives, Win+E e o ícone do Explorador na barra de tarefas abrem no Prime Files.                      Só neste usuário do Windows; \"Não\" devolve tudo ao Explorador.",
                 ),
                 match self.default_explorer {
                     Some(is_default) => self

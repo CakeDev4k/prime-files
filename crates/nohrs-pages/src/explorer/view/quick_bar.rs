@@ -72,6 +72,7 @@ pub fn render(
     let files = ratio(files_shown, files);
     let selected = page.selection.len();
     let kind = page.kind_filter;
+    let framed = page.framed.bottom;
 
     div()
         .id("quick-bar")
@@ -83,8 +84,7 @@ pub fn render(
         .flex()
         .items_center()
         .gap(px(6.0))
-        .bg(rgb(theme::footer_bg()))
-        .border_t_1()
+        .when(!framed, |this| this.bg(rgb(theme::footer_bg())).border_t_1())
         .border_color(rgb(theme::border()))
         .child(
             // The field: a search glyph, the text, and the switch between

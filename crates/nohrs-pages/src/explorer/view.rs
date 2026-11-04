@@ -1,7 +1,14 @@
+use std::time::Instant;
+
+use crate::compact::{self, Edge};
 use crate::explorer::ExplorerPane;
+use crate::explorer::state::FramedBars;
 use gpui::prelude::FluentBuilder;
 use gpui::*;
 use nohrs_ui::theme::theme;
+
+/// Height of the bar under the listing (`quick_bar`'s own `h`).
+const QUICK_BAR_HEIGHT: f32 = 32.0;
 
 /// Modal dialogs for file operations (permanent-delete confirm, paste conflict).
 mod dialogs;
@@ -319,26 +326,381 @@ pub fn render(
                 }
             }),
         )
-        .child(header::render(page, window, cx))
-        .when(page.filter_bar_visible, |this| {
-            this.child(filter_bar::render(page, window, cx))
-        })
-        .child({
-            let sidebar = if page.sidebar_visible {
-                sidebar::render(page, window, cx).into_any_element()
-            } else {
-                div().into_any_element()
-            };
-            let listing = listing::render(page, window, cx);
-            let preview = if page.preview_visible {
-                preview::render(page, window, cx).into_any_element()
-            } else {
-                div().into_any_element()
-            };
-            panels::render(page, sidebar, listing, preview, cx)
-        })
-        .child(quick_bar::render(page, window, cx))
+        .map(|this| render_body(this, page, window, cx))
         .children(menu::render(page, window, cx))
+}
+
+// Address bar, filter bar, the three columns and the bar under them, in that
+// order (the bottom bar applies the filter as it renders, after the listing,
+// as before compact mode). In compact mode each chosen bar slides out of its
+// edge instead (see `crate::compact`): the address bar under the floating
+// tab row, the sidebar and the preview over the listing's sides, the bottom
+// bar over its foot.
+fn render_body(
+    root: Div,
+    page: &mut ExplorerPane,
+    window: &mut Window,
+    cx: &mut Context<ExplorerPane>,
+) -> Div {
+    let chrome = compact_chrome(page, window, cx);
+    let view = cx.entity_id();
+    let overlay = page.compact.overlay;
+    let edge = page.compact.edge_px as f32;
+    // Zen's frame: the pane's content in a card with rounded corners, set in
+    // from the window by this much. The strips stay on the outside and reach
+    // across the frame, so the window's edge still calls the bars.
+    let frame = if page.compact.enabled { page.compact.frame_px as f32 } else { 0.0 };
+    // With a frame, a bar comes out of it, as in Zen: the frame's colour, no
+    // shadow, its corners toward the listing rounded like the card's, so the
+    // frame looks to grow in on that side (see `frame_bar`). Without one, a
+    // floating bar lies over the listing with a shadow, inside the pane.
+    let framed = frame > 0.0;
+    page.framed = FramedBars {
+        header: framed && overlay && chrome.header,
+        sidebar: framed && chrome.sidebar,
+        preview: framed && chrome.preview,
+        bottom: framed && overlay && chrome.bottom,
+    };
+    let mut out_of_frame: Vec<AnyElement> = Vec::new();
+    let body = div()
+        .relative()
+        .flex()
+        .flex_col()
+        .flex_1()
+        .min_h(px(0.0))
+        .min_w(px(0.0));
+    // What floats over the pane, then the strips that watch the edges, last
+    // so nothing blocks the pointer from them.
+    let mut floating: Vec<AnyElement> = Vec::new();
+    let mut strips: Vec<AnyElement> = Vec::new();
+
+    let header = header::render(page, window, cx).into_any_element();
+    let body = match page.top_reveal.clone().filter(|_| chrome.header) {
+        Some(top) => {
+            let amount = top.amount();
+            let height = page.header_height.get();
+            let inset = top.inset();
+            strips.push(
+                compact::edge_strip(
+                    "compact-header-edge",
+                    Edge::Top,
+                    frame + edge.max(height * amount),
+                    top,
+                    compact::SOURCE_HEADER,
+                    view,
+                )
+                .top(px(inset))
+                .into_any_element(),
+            );
+            let measure = Some(page.header_height.clone());
+            if overlay && framed {
+                // Under the tab row when that is out, which covers the
+                // frame's top band; out of the band itself otherwise.
+                let lead = (frame - inset).max(0.0);
+                out_of_frame.push(
+                    frame_bar(compact::slider(Edge::Top, lead, height, amount, measure, header), Edge::Top)
+                        .top(px(inset))
+                        .left(px(frame))
+                        .right(px(frame))
+                        .into_any_element(),
+                );
+                body
+            } else if overlay {
+                floating.push(
+                    compact::slider(Edge::Top, 0.0, height, amount, measure, header)
+                        .absolute()
+                        .occlude()
+                        .top(px((inset - frame).max(0.0)))
+                        .left_0()
+                        .right_0()
+                        .when(amount > 0.0, |this| this.shadow_md())
+                        .into_any_element(),
+                );
+                body
+            } else {
+                body.child(compact::slider(Edge::Top, 0.0, height, amount, measure, header))
+            }
+        }
+        None => body.child(header),
+    };
+
+    let body = if page.filter_bar_visible {
+        body.child(filter_bar::render(page, window, cx))
+    } else {
+        body
+    };
+
+    let sidebar = if page.sidebar_visible {
+        Some(sidebar::render(page, window, cx).into_any_element())
+    } else {
+        None
+    };
+    let listing = listing::render(page, window, cx);
+    let preview = if page.preview_visible {
+        Some(preview::render(page, window, cx).into_any_element())
+    } else {
+        None
+    };
+    // The sides float over the listing rather than push it: pushing would
+    // reflow every row sideways on each frame of the slide.
+    let mut sides: Vec<AnyElement> = Vec::new();
+    let sidebar = match sidebar {
+        Some(element) if chrome.sidebar => {
+            let amount = page.left_reveal.amount();
+            let width = panels::sidebar_width();
+            if framed {
+                out_of_frame.push(
+                    frame_bar(compact::slider(Edge::Left, frame, width, amount, None, element), Edge::Left)
+                        .left_0()
+                        .top(px(frame))
+                        .bottom(px(frame))
+                        .into_any_element(),
+                );
+            } else {
+                sides.push(
+                    side_panel(compact::slider(Edge::Left, 0.0, width, amount, None, element), amount)
+                        .left_0()
+                        .when(amount > 0.0, |this| this.border_r_1())
+                        .into_any_element(),
+                );
+            }
+            strips.push(
+                compact::edge_strip(
+                    "compact-sidebar-edge",
+                    Edge::Left,
+                    frame + edge.max(width * amount),
+                    page.left_reveal.clone(),
+                    compact::SOURCE_EDGE,
+                    view,
+                )
+                .into_any_element(),
+            );
+            None
+        }
+        other => other,
+    };
+    let preview = match preview {
+        Some(element) if chrome.preview => {
+            let amount = page.right_reveal.amount();
+            let room = page.columns_width.get();
+            let width = panels::preview_width().max(240.0);
+            let width = if room > 0.0 { width.min(room * 0.9) } else { width };
+            if framed {
+                out_of_frame.push(
+                    frame_bar(compact::slider(Edge::Right, frame, width, amount, None, element), Edge::Right)
+                        .right_0()
+                        .top(px(frame))
+                        .bottom(px(frame))
+                        .into_any_element(),
+                );
+            } else {
+                sides.push(
+                    side_panel(compact::slider(Edge::Right, 0.0, width, amount, None, element), amount)
+                        .right_0()
+                        .when(amount > 0.0, |this| this.border_l_1())
+                        .into_any_element(),
+                );
+            }
+            strips.push(
+                compact::edge_strip(
+                    "compact-preview-edge",
+                    Edge::Right,
+                    frame + edge.max(width * amount),
+                    page.right_reveal.clone(),
+                    compact::SOURCE_EDGE,
+                    view,
+                )
+                .into_any_element(),
+            );
+            None
+        }
+        other => other,
+    };
+    let columns = panels::render(page, sidebar, listing, preview, cx);
+    let body = body.child(
+        div()
+            .relative()
+            .flex()
+            .flex_col()
+            .flex_grow()
+            .min_h(px(0.0))
+            .child(columns)
+            .children(sides),
+    );
+
+    let quick = quick_bar::render(page, window, cx).into_any_element();
+    let body = if chrome.bottom {
+        let amount = page.bottom_reveal.amount();
+        strips.push(
+            compact::edge_strip(
+                "compact-bottom-edge",
+                Edge::Bottom,
+                frame + edge.max(QUICK_BAR_HEIGHT * amount),
+                page.bottom_reveal.clone(),
+                compact::SOURCE_EDGE,
+                view,
+            )
+            .into_any_element(),
+        );
+        if overlay && framed {
+            out_of_frame.push(
+                frame_bar(compact::slider(Edge::Bottom, frame, QUICK_BAR_HEIGHT, amount, None, quick), Edge::Bottom)
+                    .bottom_0()
+                    .left(px(frame))
+                    .right(px(frame))
+                    .into_any_element(),
+            );
+            body
+        } else if overlay {
+            floating.push(
+                compact::slider(Edge::Bottom, 0.0, QUICK_BAR_HEIGHT, amount, None, quick)
+                    .absolute()
+                    .occlude()
+                    .bottom_0()
+                    .left_0()
+                    .right_0()
+                    .when(amount > 0.0, |this| this.shadow_md())
+                    .into_any_element(),
+            );
+            body
+        } else {
+            body.child(compact::slider(Edge::Bottom, 0.0, QUICK_BAR_HEIGHT, amount, None, quick))
+        }
+    } else {
+        body.child(quick)
+    };
+
+    let body = body.children(floating);
+    if frame <= 0.0 {
+        return root.child(body).children(strips);
+    }
+    root.p(px(frame))
+        .bg(rgb(theme::toolbar_bg()))
+        .child(body.bg(rgb(theme::bg())).overflow_hidden())
+        .children(frame_corners(frame))
+        .children(out_of_frame)
+        .children(strips)
+}
+
+/// Radius of the card's corners in compact mode's frame.
+const FRAME_RADIUS: f32 = 8.0;
+
+// The card's rounded corners and its outline. gpui clips children to
+// rectangles, so the content's own square corners would show through a
+// rounded card; instead a ring in the frame's colour is drawn over them: a
+// box larger than the card by the radius on every side, with a border that
+// wide, whose inner edge is then the card's rounded outline. Its own outer
+// corners round off over the frame, which is the same colour. Neither box
+// takes the mouse (no listeners, so no hitbox).
+fn frame_corners(frame: f32) -> [AnyElement; 2] {
+    let reach = FRAME_RADIUS;
+    let ring = div()
+        .absolute()
+        .top(px(frame - reach))
+        .bottom(px(frame - reach))
+        .left(px(frame - reach))
+        .right(px(frame - reach))
+        .border(px(reach))
+        .rounded(px(FRAME_RADIUS + reach))
+        .border_color(rgb(theme::toolbar_bg()));
+    let outline = div()
+        .absolute()
+        .top(px(frame))
+        .bottom(px(frame))
+        .left(px(frame))
+        .right(px(frame))
+        .border_1()
+        .rounded(px(FRAME_RADIUS))
+        .border_color(rgb(theme::border()));
+    [ring.into_any_element(), outline.into_any_element()]
+}
+
+// A bar out of compact mode's frame: the frame's colour (the bar itself
+// paints none, see `FramedBars`), and the two corners toward the listing
+// rounded like the card's. gpui clips to rectangles, which is why the bar's
+// own background must stay off: a square one would fill those corners in.
+fn frame_bar(slid: Div, edge: Edge) -> Div {
+    // `occlude`: what is behind a bar must not get its clicks.
+    let bar = slid.absolute().occlude().bg(rgb(theme::toolbar_bg()));
+    let radius = px(FRAME_RADIUS);
+    match edge {
+        Edge::Top => bar.rounded_b(radius),
+        Edge::Bottom => bar.rounded_t(radius),
+        Edge::Left => bar.rounded_r(radius),
+        Edge::Right => bar.rounded_l(radius),
+    }
+}
+
+// A side column floating over the listing, full height, on the window's
+// background with its divider line.
+fn side_panel(slid: Div, amount: f32) -> Div {
+    slid.absolute()
+        .occlude()
+        .top_0()
+        .bottom_0()
+        .bg(rgb(theme::bg()))
+        .border_color(rgb(theme::border()))
+        .when(amount > 0.0, |this| this.shadow_lg())
+}
+
+/// Which bars compact mode hides on this pane, this frame.
+#[derive(Default)]
+struct CompactChrome {
+    header: bool,
+    sidebar: bool,
+    preview: bool,
+    bottom: bool,
+}
+
+// Decides which bars hide, keeps them out or still while they are in use, and
+// advances the slides this pane owns (the top one belongs to the pane group,
+// which ticks it before this renders).
+fn compact_chrome(
+    page: &mut ExplorerPane,
+    window: &mut Window,
+    cx: &mut Context<ExplorerPane>,
+) -> CompactChrome {
+    let settings = page.compact.clone();
+    if !settings.enabled {
+        return CompactChrome::default();
+    }
+    let chrome = CompactChrome {
+        header: settings.hide_header && page.top_reveal.is_some(),
+        sidebar: settings.hide_sidebar && page.sidebar_visible,
+        preview: settings.hide_preview && page.preview_visible,
+        bottom: settings.hide_bottom_bar,
+    };
+    // An open menu freezes every bar: the pointer going into the menu must
+    // not take away the bar it was opened from.
+    let menu_open = page.context_menu.is_some();
+    let filter_focused = page
+        .name_filter_input
+        .as_ref()
+        .is_some_and(|input| input.read(cx).focus_handle(cx).is_focused(window));
+    let filtering = filter_focused || page.quick_recursive || !page.name_filter.is_empty();
+
+    let mut frame = false;
+    if let Some(top) = &page.top_reveal {
+        // The group reads these on its next frame.
+        frame |= top.set_forced(chrome.header && page.path_edit.is_some());
+        frame |= top.set_held(menu_open);
+    }
+    let now = Instant::now();
+    for (reveal, used, forced) in [
+        (&page.left_reveal, chrome.sidebar, false),
+        (&page.right_reveal, chrome.preview, false),
+        (&page.bottom_reveal, chrome.bottom, filtering),
+    ] {
+        if used {
+            frame |= reveal.set_forced(forced);
+            frame |= reveal.set_held(menu_open);
+            frame |= reveal.tick(&settings, now);
+        }
+    }
+    if frame {
+        window.request_animation_frame();
+    }
+    chrome
 }
 
 /// `text` with every occurrence of `query` in the accent colour, as File

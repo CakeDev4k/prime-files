@@ -14,7 +14,7 @@ use std::time::Duration;
 
 use gpui::*;
 use gpui_component::resizable::ResizableState;
-use nohrs_core::config::{Explorer as ExplorerConfig, SplitDirection, Ui};
+use nohrs_core::config::{Compact, Explorer as ExplorerConfig, SplitDirection, Ui};
 use nohrs_core::telemetry::LogErr;
 use nohrs_services::fs::trash::Ledger as TrashLedger;
 use nohrs_services::search::SearchService;
@@ -498,6 +498,12 @@ impl ExplorerPage {
             // nothing else schedules a save. Persist the new session here.
             self.schedule_save(cx);
         }
+        cx.notify();
+    }
+
+    /// Applies the `[compact]` config section to the tab rows.
+    pub fn apply_config_compact(&mut self, compact: &Compact, cx: &mut Context<Self>) {
+        self.group.set_compact(compact.clone());
         cx.notify();
     }
 

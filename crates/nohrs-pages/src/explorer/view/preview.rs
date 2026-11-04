@@ -195,7 +195,7 @@ pub fn render(
         .size_full()
         .flex()
         .flex_col()
-        .bg(rgb(theme::bg()))
+        .when(!page.framed.preview, |this| this.bg(rgb(theme::bg())))
         .child(
             // Header. Matches the listing's column-header height so the two
             // line up across the divider between the panes.

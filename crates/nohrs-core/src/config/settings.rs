@@ -52,6 +52,8 @@ pub struct Config {
     pub ui: Ui,
     /// Split-view and pane settings.
     pub explorer: Explorer,
+    /// Compact mode: the tab row hidden until the pointer reaches it.
+    pub compact: Compact,
     /// Keybinding overrides (draft; full support in P3). Empty means the
     /// built-in keymap is used.
     pub keybindings: Keybindings,
@@ -74,6 +76,7 @@ impl Default for Config {
             theme: Theme::default(),
             ui: Ui::default(),
             explorer: Explorer::default(),
+            compact: Compact::default(),
             keybindings: Keybindings::default(),
             plugins: Plugins::default(),
             indexing: Indexing::default(),
@@ -156,6 +159,63 @@ impl Default for Explorer {
             split_direction: SplitDirection::Vertical,
             synced_panes: false,
             restore_tabs: true,
+        }
+    }
+}
+
+/// Compact mode, as in Zen Browser: the chosen bars stay hidden and slide in
+/// while the pointer rests at their edge of the window, leaving the listing
+/// alone on screen. Off by default, so the window keeps its full chrome until
+/// someone asks for less.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(default)]
+pub struct Compact {
+    /// Whether the chosen bars hide.
+    pub enabled: bool,
+    /// The tab row (top edge).
+    pub hide_tabs: bool,
+    /// The address bar: back, forward, path, refresh, view buttons (top
+    /// edge, under the tabs).
+    pub hide_header: bool,
+    /// The sidebar with the places (left edge).
+    pub hide_sidebar: bool,
+    /// The preview (right edge).
+    pub hide_preview: bool,
+    /// The bottom bar: filter, counts, zoom (bottom edge).
+    pub hide_bottom_bar: bool,
+    /// When shown, the top and bottom bars float over the listing (`true`)
+    /// instead of pushing it (`false`), so it does not jump. The sidebar and
+    /// the preview always float: pushing would reflow the listing sideways
+    /// every frame of the slide.
+    pub overlay: bool,
+    /// How long the pointer rests at an edge before its bars come, in ms.
+    pub reveal_delay_ms: u32,
+    /// How long the bars stay after the pointer leaves them, in ms.
+    pub hide_delay_ms: u32,
+    /// Length of the slide in and out, in ms; 0 = no animation.
+    pub animation_ms: u32,
+    /// Depth of the strip along each edge that calls its bars, in px.
+    pub edge_px: u32,
+    /// Width of the frame around the listing, which then sits in a card with
+    /// rounded corners, as Zen's compact mode does; 0 = no frame.
+    pub frame_px: u32,
+}
+
+impl Default for Compact {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            hide_tabs: true,
+            hide_header: true,
+            hide_sidebar: true,
+            hide_preview: true,
+            hide_bottom_bar: true,
+            overlay: true,
+            reveal_delay_ms: 100,
+            hide_delay_ms: 400,
+            animation_ms: 220,
+            edge_px: 8,
+            frame_px: 8,
         }
     }
 }
@@ -560,6 +620,12 @@ impl Config {
                 None => diagnostics.push(Diagnostic::warn("[explorer] is not a table; ignoring")),
             }
         }
+        if let Some(value) = table.get("compact") {
+            match value.as_table() {
+                Some(compact) => read_compact(compact, &mut config.compact, &mut diagnostics),
+                None => diagnostics.push(Diagnostic::warn("[compact] is not a table; ignoring")),
+            }
+        }
         if let Some(value) = table.get("keybindings") {
             match value.as_table() {
                 Some(keys) => read_keybindings(keys, &mut config.keybindings, &mut diagnostics),
@@ -608,6 +674,7 @@ impl Config {
                 "theme",
                 "ui",
                 "explorer",
+                "compact",
                 "keybindings",
                 "plugins",
                 "indexing",
@@ -649,6 +716,20 @@ impl Config {
              split_direction = \"vertical\"   # \"vertical\" (left/right) | \"horizontal\" (top/bottom)\n\
              synced_panes = false            # when true, panes mirror the same path\n\
              restore_tabs = true             # restore the previous session's tabs on restart\n\
+             \n\
+             [compact]\n\
+             enabled = false        # hide the bars below until the pointer reaches their edge\n\
+             hide_tabs = true       # top edge\n\
+             hide_header = true     # address bar: back, forward, path, refresh (top edge)\n\
+             hide_sidebar = true    # left edge\n\
+             hide_preview = true    # right edge\n\
+             hide_bottom_bar = true # filter, counts, zoom (bottom edge)\n\
+             overlay = true         # top/bottom bars float over the listing; false = push it\n\
+             reveal_delay_ms = 100  # rest at the edge this long before the bars come\n\
+             hide_delay_ms = 400    # bars stay this long after the pointer leaves\n\
+             animation_ms = 220     # slide length; 0 = no animation\n\
+             edge_px = 8            # depth of the strip along each edge that calls its bars\n\
+             frame_px = 8           # frame around the listing, rounded like Zen; 0 = none\n\
              \n\
              # The sections below are parsed and validated, but not yet applied at\n\
              # runtime — they take effect when their subsystem is wired in a later\n\
@@ -811,6 +892,60 @@ fn read_explorer(table: &toml::Table, explorer: &mut Explorer, diagnostics: &mut
         table,
         &["split_direction", "synced_panes", "restore_tabs"],
         "explorer.",
+        diagnostics,
+    );
+}
+
+fn read_compact(table: &toml::Table, compact: &mut Compact, diagnostics: &mut Vec<Diagnostic>) {
+    let mut read_bool = |key: &str, slot: &mut bool| {
+        if let Some(value) = table.get(key) {
+            match value.as_bool() {
+                Some(flag) => *slot = flag,
+                None => diagnostics.push(Diagnostic::warn(format!(
+                    "invalid compact.{key} {value}; using {slot}"
+                ))),
+            }
+        }
+    };
+    read_bool("enabled", &mut compact.enabled);
+    read_bool("hide_tabs", &mut compact.hide_tabs);
+    read_bool("hide_header", &mut compact.hide_header);
+    read_bool("hide_sidebar", &mut compact.hide_sidebar);
+    read_bool("hide_preview", &mut compact.hide_preview);
+    read_bool("hide_bottom_bar", &mut compact.hide_bottom_bar);
+    read_bool("overlay", &mut compact.overlay);
+    let mut read_number = |key: &str, max: u32, slot: &mut u32| {
+        if let Some(value) = table.get(key) {
+            match value.as_integer().and_then(|v| u32::try_from(v).ok()).filter(|&v| v <= max) {
+                Some(number) => *slot = number,
+                None => diagnostics.push(Diagnostic::warn(format!(
+                    "invalid compact.{key} {value} (0..={max}); using {slot}"
+                ))),
+            }
+        }
+    };
+    read_number("reveal_delay_ms", 5_000, &mut compact.reveal_delay_ms);
+    read_number("hide_delay_ms", 10_000, &mut compact.hide_delay_ms);
+    read_number("animation_ms", 2_000, &mut compact.animation_ms);
+    read_number("edge_px", 64, &mut compact.edge_px);
+    read_number("frame_px", 32, &mut compact.frame_px);
+    warn_unknown_keys(
+        table,
+        &[
+            "enabled",
+            "hide_tabs",
+            "hide_header",
+            "hide_sidebar",
+            "hide_preview",
+            "hide_bottom_bar",
+            "overlay",
+            "reveal_delay_ms",
+            "hide_delay_ms",
+            "animation_ms",
+            "edge_px",
+            "frame_px",
+        ],
+        "compact.",
         diagnostics,
     );
 }
@@ -1456,6 +1591,28 @@ mod tests {
         "#;
         let parsed = Config::from_toml_str(toml);
         insta::assert_debug_snapshot!(parsed);
+    }
+
+    #[test]
+    fn compact_section_reads_values_and_rejects_out_of_range() {
+        let toml = r#"
+            [compact]
+            enabled = true
+            hide_sidebar = false
+            overlay = false
+            animation_ms = 90
+            edge_px = 999
+            hide_delay_ms = "long"
+        "#;
+        let (config, diagnostics) = Config::from_toml_str(toml);
+        assert!(config.compact.enabled);
+        assert!(!config.compact.hide_sidebar);
+        assert!(config.compact.hide_preview);
+        assert!(!config.compact.overlay);
+        assert_eq!(config.compact.animation_ms, 90);
+        assert_eq!(config.compact.edge_px, Compact::default().edge_px);
+        assert_eq!(config.compact.hide_delay_ms, Compact::default().hide_delay_ms);
+        assert_eq!(diagnostics.len(), 2);
     }
 
     #[test]

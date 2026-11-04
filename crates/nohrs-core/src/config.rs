@@ -18,7 +18,7 @@ pub mod watcher;
 
 pub use loader::{backup, ensure_exists, needs_migration, reset, set_value, write_default};
 pub use settings::{
-    CURRENT_SCHEMA_VERSION, Config, ConfigOverride, Diagnostic, DiagnosticLevel, Diagnostics,
+    CURRENT_SCHEMA_VERSION, Compact, Config, ConfigOverride, Diagnostic, DiagnosticLevel, Diagnostics,
     DiagnosticsStore, Explorer, Indexing, IndexingExclude, IndexingMode, Keybindings, Launcher,
     Plugins, SCHEMA_URL, Search, SearchBackend, SortOrder, SplitDirection, Theme, ThemeMode, Ui,
     json_schema_string, load_from_path, report_diagnostics,

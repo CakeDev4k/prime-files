@@ -322,6 +322,29 @@ pub struct ExplorerPane {
     pub(crate) deep_search: Option<super::quick_search::DeepSearch>,
     /// Decoded frames of the GIF playing in the preview, and which one it is.
     pub(crate) gif_cache: Option<(String, Entity<gpui::RetainAllImageCache>)>,
+    /// The `[compact]` settings, handed over by the pane group each render.
+    pub(crate) compact: nohrs_core::config::Compact,
+    /// The top edge's slide, shared with the tab row; the group ticks it.
+    pub(crate) top_reveal: Option<std::rc::Rc<crate::compact::Reveal>>,
+    /// The other edges' slides, ticked here: sidebar, preview, bottom bar.
+    pub(crate) left_reveal: std::rc::Rc<crate::compact::Reveal>,
+    pub(crate) right_reveal: std::rc::Rc<crate::compact::Reveal>,
+    pub(crate) bottom_reveal: std::rc::Rc<crate::compact::Reveal>,
+    /// The address bar's own height, measured as it lays out, for its slide.
+    pub(crate) header_height: std::rc::Rc<std::cell::Cell<f32>>,
+    /// Which bars come out of compact mode's frame on this frame.
+    pub(crate) framed: FramedBars,
+}
+
+/// Bars drawn as part of compact mode's frame: with no background or
+/// separator line of their own, so the frame's colour, and its rounded
+/// corners, show through. Set by the pane's render before the bars render.
+#[derive(Clone, Copy, Default)]
+pub(crate) struct FramedBars {
+    pub header: bool,
+    pub sidebar: bool,
+    pub preview: bool,
+    pub bottom: bool,
 }
 
 impl Focusable for ExplorerPane {
@@ -338,6 +361,24 @@ impl crate::pane_group::PaneItem for ExplorerPane {
             .file_name()
             .map(|name| name.to_string_lossy().to_string())
             .unwrap_or_else(|| self.cwd.clone())
+    }
+
+    fn attach_compact(
+        &mut self,
+        settings: &nohrs_core::config::Compact,
+        top: &std::rc::Rc<crate::compact::Reveal>,
+    ) {
+        if settings.enabled && !self.compact.enabled {
+            for reveal in [&self.left_reveal, &self.right_reveal, &self.bottom_reveal] {
+                reveal.hide_now();
+            }
+        }
+        if self.compact != *settings {
+            self.compact = settings.clone();
+        }
+        if !self.top_reveal.as_ref().is_some_and(|mine| std::rc::Rc::ptr_eq(mine, top)) {
+            self.top_reveal = Some(top.clone());
+        }
     }
 }
 
@@ -501,6 +542,13 @@ impl ExplorerPane {
             deep_search: None,
             hit_folders: Default::default(),
             gif_cache: None,
+            compact: Default::default(),
+            top_reveal: None,
+            left_reveal: Default::default(),
+            right_reveal: Default::default(),
+            bottom_reveal: Default::default(),
+            header_height: std::rc::Rc::new(std::cell::Cell::new(52.0)),
+            framed: FramedBars::default(),
         }
     }
 

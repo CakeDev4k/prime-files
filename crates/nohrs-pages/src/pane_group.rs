@@ -15,13 +15,16 @@
 //! create/remove through the group's primitives.
 
 use std::rc::Rc;
+use std::time::Instant;
 
 use gpui::prelude::FluentBuilder;
 use gpui::*;
 use gpui_component::resizable::{ResizableState, h_resizable, resizable_panel, v_resizable};
 use gpui_component::{Icon, IconName};
-use nohrs_core::config::SplitDirection;
+use nohrs_core::config::{Compact, SplitDirection};
 use nohrs_ui::theme::theme;
+
+use crate::compact::{self, Edge, Reveal};
 
 /// Width the settings button and the three window buttons take at the end
 /// of the tab row when it is the title bar: 32 + 4 + 3 x 46.
@@ -37,6 +40,11 @@ pub trait PaneItem: Render + Focusable + 'static {
     fn tab_icon(&self, _cx: &App) -> Option<IconName> {
         None
     }
+
+    /// Hands the item the `[compact]` settings and its pane's top-edge slide,
+    /// which the item's own top bar shares with the tab row. Called on every
+    /// render of the active tab, before it renders; defaults to ignoring it.
+    fn attach_compact(&mut self, _settings: &Compact, _top: &Rc<Reveal>) {}
 }
 
 /// Builds a fresh tab entity. Separate from [`PaneItem`] because construction
@@ -54,6 +62,9 @@ struct Pane<T: PaneItem> {
     tabs: Vec<Entity<T>>,
     /// Index of the tab rendered and acted on within this pane.
     active_tab: usize,
+    /// The top edge's slide in compact mode: the tab row and the active
+    /// tab's own top bar.
+    reveal: Rc<Reveal>,
 }
 
 impl<T: PaneItem> Pane<T> {
@@ -61,6 +72,7 @@ impl<T: PaneItem> Pane<T> {
         Self {
             tabs: vec![tab],
             active_tab: 0,
+            reveal: Rc::default(),
         }
     }
 
@@ -160,6 +172,8 @@ pub struct PaneGroup<T: PaneItem> {
     /// Resizable state for the divider between the two panes.
     pane_resizable: Entity<ResizableState>,
     build_pane: BuildPane<T>,
+    /// Compact mode: tab rows hidden until the pointer reaches them.
+    compact: Compact,
 }
 
 impl<T: PaneItem> PaneGroup<T> {
@@ -179,8 +193,21 @@ impl<T: PaneItem> PaneGroup<T> {
             direction: SplitDirection::default(),
             pane_resizable,
             build_pane,
+            compact: Compact::default(),
         };
         (group, first)
+    }
+
+    /// Adopts the `[compact]` settings. Turning compact mode on hides the
+    /// rows at once rather than sliding them away under the pointer that
+    /// just clicked the setting.
+    pub fn set_compact(&mut self, compact: Compact) {
+        if compact.enabled && !self.compact.enabled {
+            for pane in &self.panes {
+                pane.reveal.hide_now();
+            }
+        }
+        self.compact = compact;
     }
 
     /// Builds a pane (with one tab) and appends it, enforcing the 2-way cap.
@@ -487,6 +514,11 @@ impl<T: PaneItem> PaneGroup<T> {
         }
     }
 
+    /// Whether the tab row slides out of compact mode's frame.
+    fn tabs_in_frame(&self) -> bool {
+        self.compact.enabled && self.compact.hide_tabs && self.compact.overlay && self.compact.frame_px > 0
+    }
+
     /// Whether the tab row is the window's title bar: with one pane it
     /// carries the window's buttons and the toolbar above is not drawn.
     pub fn tabs_in_title_bar(&self) -> bool {
@@ -507,6 +539,20 @@ impl<T: PaneItem> PaneGroup<T> {
         let split = self.panes.len() > 1;
         let is_active = split && pane_index == self.active;
         let on_activate_pane = callbacks.on_activate_pane.clone();
+        let tab_bar = self
+            .render_tab_bar(pane_index, split, window, cx, callbacks)
+            .into_any_element();
+        let reveal = self.panes[pane_index].reveal.clone();
+        if self.compact.enabled && reveal.tick(&self.compact, Instant::now()) {
+            window.request_animation_frame();
+        }
+        content.update(cx, |item, _| item.attach_compact(&self.compact, &reveal));
+        let (in_flow, layered) = if self.compact.enabled && self.compact.hide_tabs {
+            self.render_compact_tab_bar(pane_index, tab_bar, split, cx)
+        } else {
+            reveal.set_inset(0.0);
+            (Some(tab_bar), Vec::new())
+        };
         div()
             .flex()
             .flex_col()
@@ -526,7 +572,8 @@ impl<T: PaneItem> PaneGroup<T> {
                     on_activate_pane(this, pane_index, window, cx)
                 }),
             )
-            .child(self.render_tab_bar(pane_index, split, window, cx, callbacks))
+            .relative()
+            .children(in_flow)
             .child(
                 div()
                     .flex_1()
@@ -534,7 +581,57 @@ impl<T: PaneItem> PaneGroup<T> {
                     .overflow_hidden()
                     .child(content),
             )
+            // After the content, so what floats is painted over it.
+            .children(layered)
             .into_any_element()
+    }
+
+    // Compact mode: the row slides in from the top edge (see `compact`),
+    // floating over the content or pushing it down. The edge strip goes
+    // last, over everything, so nothing that blocks the mouse (a button
+    // that occludes, say) can hide the pointer from it.
+    //
+    // Returns what goes above the content in the column and what floats
+    // over the pane.
+    fn render_compact_tab_bar<V>(
+        &self,
+        pane_index: usize,
+        tab_bar: AnyElement,
+        split: bool,
+        cx: &mut Context<V>,
+    ) -> (Option<AnyElement>, Vec<AnyElement>)
+    where
+        V: 'static,
+    {
+        let reveal = self.panes[pane_index].reveal.clone();
+        let bar_height = if split { 36.0 } else { 40.0 };
+        let amount = reveal.amount();
+        let shown_height = bar_height * amount;
+        let overlay = self.compact.overlay;
+        reveal.set_inset(if overlay { shown_height } else { 0.0 });
+
+        let sliding = compact::slider(Edge::Top, 0.0, bar_height, amount, None, div().h(px(bar_height)).child(tab_bar))
+            // Floating, it takes the mouse from what lies behind: a click on
+            // a tab, or on the window's buttons, must not reach the files
+            // under it (they would claim the press, and gpui then drops the
+            // minimize/maximize/close it was meant for).
+            .when(overlay, |this| this.absolute().top_0().left_0().right_0().occlude())
+            // With a frame the row is the frame's colour already and reads as
+            // part of it, as the explorer's bars do; a shadow would lift it off.
+            .when(overlay && amount > 0.0 && self.compact.frame_px == 0, |this| this.shadow_md());
+        let strip = compact::edge_strip(
+            ("compact-tabs-edge", pane_index),
+            Edge::Top,
+            (self.compact.edge_px as f32).max(shown_height),
+            reveal,
+            compact::SOURCE_TABS,
+            cx.entity_id(),
+        );
+        if overlay {
+            (None, vec![sliding.into_any_element(), strip.into_any_element()])
+        } else {
+            (Some(sliding.into_any_element()), vec![strip.into_any_element()])
+        }
     }
 
     // The pane-local tab bar: one chip per tab (active highlight, per-tab close
@@ -593,7 +690,9 @@ impl<T: PaneItem> PaneGroup<T> {
             .pr(px(if title_bar { 0.0 } else { 6.0 }))
             .pt(px(if title_bar { 8.0 } else { 4.0 }))
             .bg(rgb(theme::toolbar_bg()))
-            .border_b_1()
+            // Out of compact mode's frame the row is part of it, as the
+            // explorer's bars then are: no line under it.
+            .when(!self.tabs_in_frame(), |this| this.border_b_1())
             .border_color(rgb(theme::border()))
             .children(tabs)
             // New-tab affordance (`Cmd/Ctrl+T`, §4 / §6).
@@ -828,3 +927,4 @@ impl<T: PaneItem> PaneGroup<T> {
             .into_any_element()
     }
 }
+

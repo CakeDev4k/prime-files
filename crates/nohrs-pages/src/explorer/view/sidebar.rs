@@ -54,7 +54,7 @@ pub fn render(
     div()
         .id("sidebar")
         .size_full()
-        .bg(rgb(theme::bg()))
+        .when(!page.framed.sidebar, |this| this.bg(rgb(theme::bg())))
         .py(px(8.0))
         .overflow_y_scroll()
         .child(list)

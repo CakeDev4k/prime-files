@@ -16,6 +16,7 @@ pub mod file_dialog;
 /// plugin) reach the running instance through.
 pub mod ipc;
 /// A reusable 2-way split/tab container shared across pages.
+pub mod compact;
 pub mod pane_group;
 /// Other programs' "show in folder", answered by Nohrs.
 pub mod reveal;

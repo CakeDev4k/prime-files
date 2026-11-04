@@ -384,6 +384,134 @@ impl SettingsPage {
                 }),
                 swatches,
             ))
+            .child(self.render_compact(cx))
+    }
+
+    // Each choice offers the default among its options, so a fresh config
+    // always shows one selected.
+    fn render_compact(&self, cx: &mut Context<Self>) -> Div {
+        let compact = &self.config.compact;
+        let enabled = compact.enabled;
+        let rows = div()
+            .flex()
+            .flex_col()
+            .gap(px(20.0))
+            .child(setting_row(
+                "Modo compacto",
+                Some("Esconde as barras escolhidas, deixando só a lista; cada uma desliza para fora quando o mouse encosta na borda dela, como no Zen Browser."),
+                self.config_choice(
+                    "compact-enabled",
+                    &[("Desligado", !enabled, "false"), ("Ligado", enabled, "true")],
+                    ("compact", "enabled"),
+                    cx,
+                ),
+            ));
+        if !enabled {
+            return rows;
+        }
+        rows.child(setting_row(
+            "O que esconder",
+            Some("Abas e barra de rota saem do topo, a barra lateral da esquerda, o visualizador da direita e a barra de baixo (filtro, contagem, zoom) de baixo. Só as abas é o jeito antigo."),
+            self.config_toggles(
+                "compact-hide",
+                "compact",
+                &[
+                    ("Abas", compact.hide_tabs, "hide_tabs"),
+                    ("Barra de rota", compact.hide_header, "hide_header"),
+                    ("Barra lateral", compact.hide_sidebar, "hide_sidebar"),
+                    ("Visualizador", compact.hide_preview, "hide_preview"),
+                    ("Barra de baixo", compact.hide_bottom_bar, "hide_bottom_bar"),
+                ],
+                cx,
+            ),
+        ))
+        .child(setting_row(
+            "Como as barras aparecem",
+            Some("Por cima da lista, sem mexer nela, ou empurrando a lista. Vale para as de cima e a de baixo; a lateral e o visualizador sempre vêm por cima."),
+            self.config_choice(
+                "compact-overlay",
+                &[
+                    ("Por cima", compact.overlay, "true"),
+                    ("Empurrando", !compact.overlay, "false"),
+                ],
+                ("compact", "overlay"),
+                cx,
+            ),
+        ))
+        .child(setting_row(
+            "Espera para aparecer",
+            Some("Quanto tempo o mouse fica na borda antes de a barra sair."),
+            self.config_choice(
+                "compact-reveal-delay",
+                &[
+                    ("Nenhuma", compact.reveal_delay_ms == 0, "0"),
+                    ("Curta", compact.reveal_delay_ms == 100, "100"),
+                    ("Média", compact.reveal_delay_ms == 300, "300"),
+                    ("Longa", compact.reveal_delay_ms == 600, "600"),
+                ],
+                ("compact", "reveal_delay_ms"),
+                cx,
+            ),
+        ))
+        .child(setting_row(
+            "Espera para sumir",
+            Some("Quanto tempo a barra fica depois que o mouse sai dela."),
+            self.config_choice(
+                "compact-hide-delay",
+                &[
+                    ("Nenhuma", compact.hide_delay_ms == 0, "0"),
+                    ("Curta", compact.hide_delay_ms == 150, "150"),
+                    ("Média", compact.hide_delay_ms == 400, "400"),
+                    ("Longa", compact.hide_delay_ms == 1000, "1000"),
+                ],
+                ("compact", "hide_delay_ms"),
+                cx,
+            ),
+        ))
+        .child(setting_row(
+            "Animação",
+            Some("Duração do deslizar. Desligada, as barras aparecem e somem de uma vez."),
+            self.config_choice(
+                "compact-animation",
+                &[
+                    ("Desligada", compact.animation_ms == 0, "0"),
+                    ("Rápida", compact.animation_ms == 120, "120"),
+                    ("Média", compact.animation_ms == 220, "220"),
+                    ("Lenta", compact.animation_ms == 400, "400"),
+                ],
+                ("compact", "animation_ms"),
+                cx,
+            ),
+        ))
+        .child(setting_row(
+            "Área de ativação",
+            Some("Largura da faixa em cada borda que chama a barra."),
+            self.config_choice(
+                "compact-edge",
+                &[
+                    ("Fina", compact.edge_px == 4, "4"),
+                    ("Média", compact.edge_px == 8, "8"),
+                    ("Larga", compact.edge_px == 16, "16"),
+                ],
+                ("compact", "edge_px"),
+                cx,
+            ),
+        ))
+        .child(setting_row(
+            "Moldura",
+            Some("A lista fica num cartão de cantos arredondados, com uma borda da cor da janela em volta, como no Zen."),
+            self.config_choice(
+                "compact-frame",
+                &[
+                    ("Sem", compact.frame_px == 0, "0"),
+                    ("Fina", compact.frame_px == 4, "4"),
+                    ("Média", compact.frame_px == 8, "8"),
+                    ("Larga", compact.frame_px == 12, "12"),
+                ],
+                ("compact", "frame_px"),
+                cx,
+            ),
+        ))
     }
 
     fn render_explorer(&self, cx: &mut Context<Self>) -> Div {
@@ -635,6 +763,34 @@ impl SettingsPage {
         options: &[(&'static str, bool, Pick)],
         cx: &mut Context<Self>,
     ) -> impl IntoElement + use<> {
+        self.chips(id, options, false, cx)
+    }
+
+    // Independent on/off switches in one row: each chip flips its own key
+    // (a `(section, key)` pair) between `true` and `false`.
+    fn config_toggles(
+        &self,
+        id: &'static str,
+        section: &'static str,
+        options: &[(&'static str, bool, &'static str)],
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement + use<> {
+        let options: Vec<_> = options
+            .iter()
+            .map(|&(label, on, key)| (label, on, Pick::Config(section, key, if on { "false" } else { "true" })))
+            .collect();
+        self.chips(id, &options, true, cx)
+    }
+
+    // The row of chips behind `choice` and `config_toggles`. A selected chip
+    // only answers a click when the chips are toggles.
+    fn chips(
+        &self,
+        id: &'static str,
+        options: &[(&'static str, bool, Pick)],
+        toggles: bool,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement + use<> {
         div()
             .flex()
             .p(px(2.0))
@@ -661,7 +817,7 @@ impl SettingsPage {
                                 .hover(|style| style.bg(rgb(theme::bg_hover())).text_color(rgb(theme::fg())))
                         }
                     })
-                    .when(!selected, |this| {
+                    .when(!selected || toggles, |this| {
                         this.on_click(cx.listener(move |page, _event, _window, cx| page.pick(pick, cx)))
                     })
                     .child(label)

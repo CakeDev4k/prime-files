@@ -66,9 +66,9 @@ pub fn render(
     let preview_visible = page.preview_visible;
     let entry_count = page.filtered_entries.len();
 
+    let framed = page.framed.header;
     div()
-        .bg(rgb(theme::bg()))
-        .border_b_1()
+        .when(!framed, |this| this.bg(rgb(theme::bg())).border_b_1())
         .border_color(rgb(theme::border()))
         .flex()
         .items_center()

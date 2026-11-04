@@ -1,5 +1,76 @@
 {
   "$defs": {
+    "Compact": {
+      "description": "Compact mode, as in Zen Browser: the chosen bars stay hidden and slide in\nwhile the pointer rests at their edge of the window, leaving the listing\nalone on screen. Off by default, so the window keeps its full chrome until\nsomeone asks for less.",
+      "properties": {
+        "animation_ms": {
+          "default": 220,
+          "description": "Length of the slide in and out, in ms; 0 = no animation.",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "edge_px": {
+          "default": 8,
+          "description": "Depth of the strip along each edge that calls its bars, in px.",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "enabled": {
+          "default": false,
+          "description": "Whether the chosen bars hide.",
+          "type": "boolean"
+        },
+        "frame_px": {
+          "default": 8,
+          "description": "Width of the frame around the listing, which then sits in a card with\nrounded corners, as Zen's compact mode does; 0 = no frame.",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "hide_bottom_bar": {
+          "default": true,
+          "description": "The bottom bar: filter, counts, zoom (bottom edge).",
+          "type": "boolean"
+        },
+        "hide_delay_ms": {
+          "default": 400,
+          "description": "How long the bars stay after the pointer leaves them, in ms.",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "hide_header": {
+          "default": true,
+          "description": "The address bar: back, forward, path, refresh, view buttons (top\nedge, under the tabs).",
+          "type": "boolean"
+        },
+        "hide_preview": {
+          "default": true,
+          "description": "The preview (right edge).",
+          "type": "boolean"
+        },
+        "hide_sidebar": {
+          "default": true,
+          "description": "The sidebar with the places (left edge).",
+          "type": "boolean"
+        },
+        "hide_tabs": {
+          "default": true,
+          "description": "The tab row (top edge).",
+          "type": "boolean"
+        },
+        "overlay": {
+          "default": true,
+          "description": "When shown, the top and bottom bars float over the listing (`true`)\ninstead of pushing it (`false`), so it does not jump. The sidebar and\nthe preview always float: pushing would reflow the listing sideways\nevery frame of the slide.",
+          "type": "boolean"
+        },
+        "reveal_delay_ms": {
+          "default": 100,
+          "description": "How long the pointer rests at an edge before its bars come, in ms.",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "type": "object"
+    },
     "Diagnostics": {
       "description": "Diagnostics / performance-logging settings (see `docs/persistence.md` §5).",
       "properties": {
@@ -313,6 +384,24 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "description": "The fully merged, validated configuration.\n\nModels the P1 surface (`theme` / `ui`) plus the P2 sections: `[indexing]`,\n`[search]`, `[launcher]`, and `[diagnostics]`. `[keybindings]` and\n`[plugins]` are reserved here as forward-compatible drafts — their types are\ndefined and parsed leniently so files can adopt them now, but the values do\nnot drive behaviour yet (keybindings land in P3, plugins in P4; see\n`docs/config.md` §2/§5).\n\nOnly `theme`, `ui`, and `diagnostics` are consumed at runtime today. The\nremaining sections (`keybindings`, `plugins`, `indexing`, `search`,\n`launcher`) are accepted and validated now so files and editor completion can\nadopt them, but editing them has no effect until the matching subsystem is\nwired in a later phase — see the per-section notes and `docs/config.md` §5.\n\nEvery field is `#[serde(default)]`: the loader starts from\n[`Config::default`] and overlays only the keys present in the file, so a\nmissing section is filled with its default rather than rejected. The\ngenerated schema therefore has no `required` properties, matching the\nloader (an empty `config.toml` is valid).",
   "properties": {
+    "compact": {
+      "$ref": "#/$defs/Compact",
+      "default": {
+        "animation_ms": 220,
+        "edge_px": 8,
+        "enabled": false,
+        "frame_px": 8,
+        "hide_bottom_bar": true,
+        "hide_delay_ms": 400,
+        "hide_header": true,
+        "hide_preview": true,
+        "hide_sidebar": true,
+        "hide_tabs": true,
+        "overlay": true,
+        "reveal_delay_ms": 100
+      },
+      "description": "Compact mode: the tab row hidden until the pointer reaches it."
+    },
     "diagnostics": {
       "$ref": "#/$defs/Diagnostics",
       "default": {

@@ -73,6 +73,12 @@ pub(crate) fn preview_width() -> f32 {
     WIDTHS.get().1
 }
 
+/// The width the sidebar has when it is a column, for compact mode, where
+/// it floats over the listing at that width.
+pub(crate) fn sidebar_width() -> f32 {
+    WIDTHS.get().0.clamp(SIDEBAR_MIN, SIDEBAR_MAX)
+}
+
 impl ExplorerPane {
     /// Starts dragging `divider` from `x`.
     pub(crate) fn start_divider_drag(&mut self, divider: Divider, x: Pixels) {
@@ -114,15 +120,16 @@ impl ExplorerPane {
     }
 }
 
-/// The three columns, each divider with a strip to drag it by.
+/// The three columns, each divider with a strip to drag it by. A side that
+/// is not shown (hidden, or floating in compact mode) takes no room.
 pub(crate) fn render(
     page: &mut ExplorerPane,
-    sidebar: AnyElement,
+    sidebar: Option<AnyElement>,
     listing: AnyElement,
-    preview: AnyElement,
+    preview: Option<AnyElement>,
     cx: &mut Context<ExplorerPane>,
 ) -> AnyElement {
-    let (show_sidebar, show_preview) = (page.sidebar_visible, page.preview_visible);
+    let (show_sidebar, show_preview) = (sidebar.is_some(), preview.is_some());
     let (sidebar_w, preview_w) = {
         let (sidebar, preview) = WIDTHS.get();
         fit_widths(sidebar, preview, page.columns_width.get(), show_sidebar, show_preview)
@@ -167,7 +174,7 @@ pub(crate) fn render(
         .flex_row()
         .flex_grow()
         .min_h(px(0.0))
-        .when(show_sidebar, |row| {
+        .when_some(sidebar, |row, sidebar| {
             row.child(
                 div()
                     .w(px(sidebar_w))
@@ -190,7 +197,7 @@ pub(crate) fn render(
                 .overflow_hidden()
                 .child(listing),
         )
-        .when(show_preview, |row| {
+        .when_some(preview, |row, preview| {
             row.child(
                 div()
                     .w(px(preview_w))

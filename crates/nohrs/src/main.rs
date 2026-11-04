@@ -1,12 +1,27 @@
 //! The `nohrs` binary: parses CLI arguments, runs headless `config` subcommands
 //! when requested, and otherwise launches the gpui desktop application.
 
+// A window program, not a console one: otherwise Windows opens a console
+// beside the window (full of the log) whenever the app is started from the
+// Start menu, a shortcut or Explorer. Debug builds keep theirs, which is
+// where a developer reads the log.
+#![cfg_attr(all(windows, not(debug_assertions)), windows_subsystem = "windows")]
+
 mod app;
 mod cli;
 
 use clap::Parser;
 
 fn main() {
+    // Before parsing: clap prints help, version and argument errors itself.
+    // Only for these text commands: opening a folder from a terminal must not
+    // pour the app's log into it.
+    if std::env::args()
+        .nth(1)
+        .is_some_and(|first| matches!(first.as_str(), "config" | "help" | "-h" | "--help" | "-V" | "--version"))
+    {
+        attach_parent_console();
+    }
     let cli = cli::Cli::parse();
 
     // `config` subcommands run headless and exit without opening a window.
@@ -34,3 +49,23 @@ fn main() {
     // is gone and nothing of the app is left for the installer to wait on.
     nohrs_pages::updater::install_pending_on_exit();
 }
+
+/// A window program has no console of its own, so a `config` command typed
+/// in a terminal would print nowhere: it writes to the terminal it came from.
+/// Started any other way there is none to attach to, and nothing to print.
+#[cfg(all(windows, not(debug_assertions)))]
+#[allow(unsafe_code)]
+fn attach_parent_console() {
+    const ATTACH_PARENT_PROCESS: u32 = u32::MAX;
+    unsafe extern "system" {
+        fn AttachConsole(process_id: u32) -> i32;
+    }
+    // SAFETY: a plain Win32 call with a constant argument; a failure (no
+    // parent console) only means there is nowhere to print.
+    if unsafe { AttachConsole(ATTACH_PARENT_PROCESS) } == 0 {
+        tracing::debug!("no parent console to attach to");
+    }
+}
+
+#[cfg(not(all(windows, not(debug_assertions))))]
+fn attach_parent_console() {}

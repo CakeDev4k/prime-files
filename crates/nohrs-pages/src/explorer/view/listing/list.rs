@@ -1,13 +1,19 @@
 use super::row;
 use crate::explorer::ExplorerPane;
+use crate::explorer::grouping::{self, ListRow};
 use crate::explorer::types::SortKey;
 use gpui::prelude::*;
 use gpui::*;
-use gpui_component::list::ListItem;
 use gpui_component::v_virtual_list;
 use gpui_component::{Icon, IconName};
 use nohrs_ui::theme::theme;
 use std::rc::Rc;
+
+/// The left margin of every row before the Name column (the rows' 22px
+/// padding and their 2px selection bar).
+pub(crate) const ROW_MARGIN: f32 = 24.0;
+/// Width of the line on each heading's right edge.
+const SEPARATOR_WIDTH: f32 = 1.0;
 
 /// Height of the sticky column-header row. Shared with the preview pane's
 /// header so the two line up across the divider, and with the virtual list's
@@ -57,17 +63,47 @@ fn render_table_with_header(
 ) -> impl IntoElement + use<> {
     let entity = cx.entity().clone();
 
-    let mut all_sizes = vec![gpui::size(px(table_width), px(HEADER_HEIGHT))];
-    all_sizes.extend(page.item_sizes.as_ref().iter().copied());
-    let all_sizes = Rc::new(all_sizes);
+    // Rebuilt when the rows or the table's width change, not on every frame:
+    // each thumbnail or icon that arrives is a frame, and this is two vectors
+    // the length of the folder.
+    let key = (
+        page.rows_generation,
+        page.filtered_entries.len(),
+        table_width.to_bits(),
+    );
+    let ListLayout { rows, all_sizes, .. } =
+        match page.list_layout.as_ref().filter(|layout| layout.key == key) {
+            Some(layout) => layout.clone(),
+            None => {
+                let rows = Rc::new(grouping::list_rows(page.groups(), page.filtered_entries.len()));
+                let mut all_sizes = vec![gpui::size(px(table_width), px(HEADER_HEIGHT))];
+                all_sizes.extend(rows.iter().map(|row| match row {
+                    ListRow::Group(_) => gpui::size(px(table_width), px(super::GROUP_HEADER_HEIGHT)),
+                    ListRow::Entry(index) => page.item_sizes.get(*index).copied().unwrap_or_else(|| {
+                        gpui::size(px(table_width), px(nohrs_core::config::BASE_ROW_HEIGHT))
+                    }),
+                }));
+                let layout = ListLayout {
+                    key,
+                    rows,
+                    all_sizes: Rc::new(all_sizes),
+                };
+                page.list_layout = Some(layout.clone());
+                layout
+            }
+        };
     let scroll_handle = page.virtual_scroll_handle.clone();
+    page.listing_extent = super::extent(&all_sizes, false);
 
     div().flex_1().overflow_hidden().child(
         v_virtual_list(
             entity,
             "file-table",
             all_sizes,
-            move |view, visible_range, _window, cx| {
+            move |view, visible_range, window, cx| {
+                // The Shell draws icons at the exact pixel size asked for, so
+                // the row's 16px icon is fetched at the screen's scale.
+                let icon_px = ((row::ICON_SIZE * window.scale_factor()).round() as u32).max(16);
                 visible_range
                     .filter_map(|ix| {
                         if ix == 0 {
@@ -85,10 +121,23 @@ fn render_table_with_header(
                                 .into_any_element(),
                             )
                         } else {
-                            let data_ix = ix - 1;
-                            view.filtered_entries.get(data_ix).cloned().map(|item| {
-                                row::render(view, &item, data_ix, cx).into_any_element()
-                            })
+                            match rows.get(ix - 1)? {
+                                ListRow::Group(group) => {
+                                    let group = view.groups().get(*group)?;
+                                    Some(
+                                        super::group_header(group, table_width)
+                                            .into_any_element(),
+                                    )
+                                }
+                                ListRow::Entry(data_ix) => {
+                                    let data_ix = *data_ix;
+                                    view.filtered_entries.get(data_ix).cloned().map(|item| {
+                                        let icon = view.thumbnails.icon(&item.path, item.kind == "dir", icon_px, cx);
+                                        row::render(view, &item, data_ix, icon, cx)
+                                            .into_any_element()
+                                    })
+                                }
+                            }
                         }
                     })
                     .collect()
@@ -112,11 +161,21 @@ fn render_header_row(
     div()
         .w(px(table_width))
         .h(px(HEADER_HEIGHT))
-        .pl(px(24.0))
         .pr(px(24.0))
         .bg(rgb(theme::bg()))
         .border_b_1()
         .border_color(rgb(theme::border()))
+        // A press on the headings sorts or resizes; it is not empty space
+        // for a selection rectangle.
+        .on_mouse_down(gpui::MouseButton::Left, |_, _, cx| cx.stop_propagation())
+        // The header's own menu, not the folder's.
+        .on_mouse_down(
+            gpui::MouseButton::Right,
+            cx.listener(|this, _, window, cx| {
+                cx.stop_propagation();
+                this.open_column_menu(None, window, cx);
+            }),
+        )
         .child(
             div()
                 .flex()
@@ -190,14 +249,46 @@ fn render_resizable_column_header(
     let leading_indent = if column_index == 0 {
         (width - HEADING_RESERVE).clamp(0.0, super::row::NAME_INDENT)
     } else {
-        0.0
+        // Clear of the previous column's line; the cells below are inset by
+        // the same amount, so headings and values stay in line.
+        super::row::CELL_INSET
     };
 
+    // The Name heading also takes the rows' left margin, so its hover runs to
+    // the edge of the table instead of stopping short of it.
+    let margin = if column_index == 0 { ROW_MARGIN } else { 0.0 };
+    let group = SharedString::from(format!("column-heading-{column_index}"));
+
     div()
-        .w(px(width))
+        .id(("column-heading", column_index))
+        .group(group.clone())
+        .w(px(width + margin))
+        .h(px(HEADER_HEIGHT))
         .flex_shrink_0()
         .relative()
-        .pl(px(leading_indent))
+        // A hidden column is width 0; its heading must not spill out.
+        .overflow_hidden()
+        .when(width == 0.0, |this| this.invisible())
+        .pl(px(margin + leading_indent))
+        // The heading under the pointer lightens, cell by cell, as
+        // Explorer's do. Drawn as a layer that ends where the separator on
+        // the cell's right edge begins, so the line stays visible.
+        .child(
+            div()
+                .absolute()
+                .top_0()
+                .bottom_0()
+                .left_0()
+                .right(px(SEPARATOR_WIDTH))
+                .group_hover(group, |style| style.bg(rgb(theme::bg_hover()))),
+        )
+        .on_mouse_down(
+            gpui::MouseButton::Right,
+            cx.listener(move |this, _, window, cx| {
+                cx.stop_propagation();
+                this.open_column_menu(Some(column_index), window, cx);
+            }),
+        )
         .child(render_column_header(
             page,
             label,
@@ -221,11 +312,14 @@ fn render_resizable_column_header(
                         cx.stop_propagation();
                     }),
                 )
+                // The line on the cell's very edge: the hover layer then
+                // runs from the previous column's line to this one with no
+                // gap on either side.
                 .child(
                     div()
                         .w(px(1.0))
                         .h_full()
-                        .ml(px(3.5))
+                        .ml(px(7.0))
                         .bg(rgb(theme::border())),
                 ),
         )
@@ -256,10 +350,18 @@ fn render_column_header(
     wrapper.child(
         // `ListItem` pads itself horizontally; zeroed here so each heading sits
         // flush with the column data below it.
-        ListItem::new(("sort-header", key_idx))
-            .px(px(0.0))
-            .on_click(cx.listener(move |this, _, _, _| {
-                this.set_sort_key(key);
+        // Plain, not a `ListItem`: its hover fill covered the whole column
+        // heading in a lighter block. Hovering lights the label instead, as
+        // Explorer's headings do.
+        div()
+            .id(("sort-header", key_idx))
+            .h(px(HEADER_HEIGHT))
+            .flex()
+            .items_center()
+            .cursor_pointer()
+            .group(SharedString::from(format!("sort-header-{key_idx}")))
+            .on_click(cx.listener(move |this, _, _, cx| {
+                this.set_sort_key(key, cx);
             }))
             .child(
                 div()
@@ -275,6 +377,9 @@ fn render_column_header(
                             } else {
                                 rgb(theme::fg_secondary())
                             })
+                            .group_hover(SharedString::from(format!("sort-header-{key_idx}")), |style| {
+                                style.text_color(rgb(theme::fg()))
+                            })
                             .child(label_str),
                     )
                     .when(is_active, |this| {
@@ -286,4 +391,13 @@ fn render_column_header(
                     }),
             ),
     )
+}
+
+/// The list's rows and sizes, with what they were built for: the rows'
+/// generation, how many there are, and the table's width.
+#[derive(Clone)]
+pub(crate) struct ListLayout {
+    key: (u64, usize, u32),
+    rows: Rc<Vec<ListRow>>,
+    all_sizes: Rc<Vec<gpui::Size<Pixels>>>,
 }

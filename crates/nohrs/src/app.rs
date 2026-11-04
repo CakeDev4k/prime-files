@@ -53,6 +53,7 @@ impl NohrsApp {
         // channels run on std threads and runtime-agnostic channels — so no async
         // runtime needs to be entered here.
         let launcher_only = matches!(cli.command, Some(Command::Launcher));
+        let initial_path = cli.path.clone();
 
         Application::new().with_assets(Assets).run(move |app: &mut App| {
             gpui_component::init(app);
@@ -146,6 +147,9 @@ impl NohrsApp {
                             cx,
                         )
                     });
+                    if let Some(path) = &initial_path {
+                        view.update(cx, |root, cx| root.open_initial_path(path, window, cx));
+                    }
                     cx.new(|cx| Root::new(view, window, cx))
                 }
             });

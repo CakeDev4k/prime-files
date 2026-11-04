@@ -2,43 +2,292 @@ use nohrs_core::config;
 use nohrs_services::fs::listing::{FileEntryDto, ListParams, list_dir_sync};
 
 use gpui::{Context, Window};
+use std::sync::{Arc, Condvar, Mutex};
+use std::time::Duration;
 
 use super::ExplorerPane;
-use super::entries;
 use super::types::{PaneEvent, StatusLevel};
 
+/// How long a navigation lets the UI thread wait for the folder. A local
+/// folder answers well inside it (System32, 5,218 entries, in about 6 ms) and
+/// appears in the same frame as the click, as before. A network share, a
+/// cloud mount or a drive waking up can take seconds or never answer; past
+/// this the read goes on in its own thread and the window keeps drawing.
+#[cfg(not(test))]
+pub(crate) const LISTING_WAIT: Duration = Duration::from_millis(30);
+// Tests read temp folders on a busy machine and check the listing right after
+// navigating, so they wait as long as it takes; `listing_wait` is set to zero
+// in the test that exercises the background path.
+#[cfg(test)]
+pub(crate) const LISTING_WAIT: Duration = Duration::from_secs(10);
+
+/// How long the previous folder stays on screen while a slow one is read. The
+/// path in the header changes at once, which shows the click worked; the old
+/// rows only give way to "Reading…" if the new ones are not there by then, so a
+/// folder that takes 100 ms does not flash an empty list first.
+const LISTING_HOLD: Duration = Duration::from_millis(220);
+
+type Listing = std::result::Result<Vec<FileEntryDto>, String>;
+
+/// What a read of the current folder brings back.
+struct FolderRead {
+    listing: Listing,
+    /// On a refresh, the folders open in the Tree view, read again, so a row
+    /// deleted inside one goes away with the rest; `None` for one that could
+    /// not be read (it was deleted or moved), which closes it.
+    open_folders: Vec<(String, Option<Vec<FileEntryDto>>)>,
+    /// On a refresh, whether the file in the preview is gone. Asked here, off
+    /// the UI thread, because it is a disk access like the listing itself.
+    preview_gone: bool,
+}
+
+/// What a refresh reads besides the folder itself.
+#[derive(Default)]
+struct RefreshExtras {
+    open_folders: Vec<String>,
+    preview: Option<String>,
+}
+
+fn read_folder(path: &str) -> Listing {
+    list_dir_sync(ListParams {
+        path,
+        limit: config::DIR_LISTING_LIMIT,
+        cursor: None,
+    })
+    .map(|result| result.entries)
+    .map_err(|error| error.to_string())
+}
+
+/// A directory read running on a thread of its own. Its own thread rather
+/// than the background executor: a read stuck on a dead share must not take
+/// a pool thread with it, and nothing ever waits for an abandoned read — it
+/// finishes whenever the drive answers and finds nobody listening.
+struct PendingListing {
+    slot: Arc<(Mutex<Option<FolderRead>>, Condvar)>,
+    done: async_channel::Receiver<()>,
+}
+
+impl PendingListing {
+    fn start(path: String, extras: RefreshExtras) -> Self {
+        let slot: Arc<(Mutex<Option<FolderRead>>, Condvar)> = Arc::default();
+        let (signal, done) = async_channel::bounded(1);
+        let read = {
+            let slot = slot.clone();
+            move || {
+                let listing = read_folder(&path);
+                let open_folders = extras
+                    .open_folders
+                    .into_iter()
+                    .map(|folder| {
+                        let entries = read_folder(&folder).ok();
+                        (folder, entries)
+                    })
+                    .collect();
+                #[allow(clippy::disallowed_methods)]
+                let preview_gone = extras
+                    .preview
+                    .is_some_and(|preview| std::fs::symlink_metadata(preview).is_err());
+                let (lock, ready) = &*slot;
+                match lock.lock() {
+                    Ok(mut held) => {
+                        *held = Some(FolderRead {
+                            listing,
+                            open_folders,
+                            preview_gone,
+                        })
+                    }
+                    Err(error) => tracing::error!("listing slot poisoned: {error}"),
+                }
+                ready.notify_all();
+                signal.try_send(()).ok();
+            }
+        };
+        if let Err(error) = std::thread::Builder::new()
+            .name("nohrs-listing".into())
+            .spawn(read)
+        {
+            // Without a thread the read cannot happen at all; the slot says
+            // so, and the pane shows an error instead of waiting forever.
+            match slot.0.lock() {
+                Ok(mut held) => {
+                    *held = Some(FolderRead {
+                        listing: Err(format!("could not start reading: {error}")),
+                        open_folders: Vec::new(),
+                        preview_gone: false,
+                    })
+                }
+                Err(poisoned) => tracing::error!("listing slot poisoned: {poisoned}"),
+            }
+        }
+        Self { slot, done }
+    }
+
+    /// The read, if it is ready within `wait`.
+    fn wait(&self, wait: Duration) -> Option<FolderRead> {
+        let (lock, ready) = &*self.slot;
+        let held = lock.lock().ok()?;
+        let (mut held, _) = ready
+            .wait_timeout_while(held, wait, |held| held.is_none())
+            .ok()?;
+        held.take()
+    }
+
+    fn take(&self) -> Option<FolderRead> {
+        self.slot.0.lock().ok()?.take()
+    }
+}
+
 impl ExplorerPane {
-    pub(crate) fn ensure_loaded(&mut self) {
+    pub(crate) fn ensure_loaded(&mut self, cx: &mut Context<Self>) {
         if !self.loaded {
-            self.reload();
+            self.reload(cx);
         }
     }
 
-    pub(crate) fn reload(&mut self) {
+    pub(crate) fn reload(&mut self, cx: &mut Context<Self>) {
         // Mark as loaded regardless of outcome so an empty or unreadable
         // directory is not re-read on every subsequent render.
         self.loaded = true;
-        match list_dir_sync(ListParams {
-            path: &self.cwd,
-            limit: config::DIR_LISTING_LIMIT,
-            cursor: None,
-        }) {
-            Ok(res) => {
-                let mut e = res.entries;
-                entries::sort_entries(&mut e, self.sort_key, self.sort_asc);
-                self.entries = e;
+        // Reading the folder already on screen again — F5, or after a delete,
+        // paste, rename or drop — is a refresh, not a visit (OTIMIZACAO.md
+        // §3.9): the folders open in the Tree view stay open and are read
+        // again with it, the shaped names are kept, the preview stays unless
+        // its file is gone, and the old rows stay until the new ones arrive.
+        // Until 04/11/2026 every one of those cleared it all, so deleting one
+        // file closed every open folder in the Tree view and the text preview.
+        let refresh = self.listed_cwd.as_deref() == Some(self.cwd.as_str());
+        let extras = if refresh {
+            RefreshExtras {
+                open_folders: self.tree.expanded.iter().cloned().collect(),
+                preview: self.preview_path.clone(),
+            }
+        } else {
+            // Open folders are read again when reopened.
+            self.tree.children.clear();
+            self.tree.expanded.clear();
+            RefreshExtras::default()
+        };
+        self.enter_folder_view(cx);
+        // A logical clock: an answer stamped with an older generation was
+        // overtaken by a later navigation and is dropped, however late it
+        // arrives (OTIMIZACAO.md §5.4).
+        self.listing_generation += 1;
+        let generation = self.listing_generation;
+        // Replacing the tasks cancels those of the previous read.
+        self.listing_tasks.clear();
+
+        let pending = PendingListing::start(self.cwd.clone(), extras);
+        if let Some(read) = pending.wait(self.listing_wait) {
+            self.listing_pending = false;
+            self.apply_listing(read, refresh, cx);
+            return;
+        }
+
+        self.listing_pending = true;
+        let hold = cx.spawn(async move |this, cx| {
+            cx.background_executor().timer(LISTING_HOLD).await;
+            this.update(cx, |pane, cx| {
+                if pane.listing_pending && pane.listing_generation == generation {
+                    // The rows of the same folder are still the best answer
+                    // there is; only another folder's give way to "Reading…".
+                    if !refresh {
+                        pane.entries.clear();
+                        pane.apply_filter();
+                    }
+                    pane.set_status(StatusLevel::Info, format!("Reading {}…", pane.cwd));
+                    cx.notify();
+                }
+            })
+            .ok();
+        });
+        let arrive = cx.spawn(async move |this, cx| {
+            pending.done.recv().await.ok();
+            let Some(read) = pending.take() else {
+                return;
+            };
+            this.update(cx, |pane, cx| {
+                if pane.listing_generation == generation {
+                    pane.listing_pending = false;
+                    pane.listing_tasks.clear();
+                    pane.apply_listing(read, refresh, cx);
+                    cx.notify();
+                }
+            })
+            .ok();
+        });
+        self.listing_tasks = vec![hold, arrive];
+    }
+
+    fn apply_listing(&mut self, read: FolderRead, refresh: bool, cx: &mut Context<Self>) {
+        match read.listing {
+            Ok(entries) => {
+                if refresh {
+                    // Before `apply_filter`, which splices these under their
+                    // folders. A folder that could not be read is gone, and
+                    // closes; cached contents of closed folders are dropped, as
+                    // they may be as old as the change that prompted this.
+                    self.tree.children.clear();
+                    for (folder, contents) in read.open_folders {
+                        match contents {
+                            Some(contents) => {
+                                self.tree.children.insert(folder, contents);
+                            }
+                            None => {
+                                self.tree.expanded.remove(&folder);
+                            }
+                        }
+                    }
+                    if read.preview_gone {
+                        self.clear_preview(cx);
+                    }
+                    // A file whose size or date changed since the last read
+                    // (overwritten by a paste, saved by another program) gets
+                    // its picture made again; the rest keep theirs.
+                    let before: std::collections::HashMap<&str, (u64, u64)> = self
+                        .entries
+                        .iter()
+                        .map(|entry| (entry.path.as_str(), (entry.size, entry.modified)))
+                        .collect();
+                    let changed: Vec<String> = entries
+                        .iter()
+                        .filter(|entry| {
+                            before
+                                .get(entry.path.as_str())
+                                .is_some_and(|&was| was != (entry.size, entry.modified))
+                        })
+                        .map(|entry| entry.path.clone())
+                        .collect();
+                    for path in changed {
+                        self.thumbnails.forget(&path, cx);
+                    }
+                } else {
+                    // The names the grid shaped for the previous folder are of
+                    // no use here; without this a visit to a folder of 50,000
+                    // kept their layouts until the cap cleared them
+                    // (OTIMIZACAO.md §6.8). A refresh keeps them: the names
+                    // that are still there are most of them.
+                    self.name_layouts.clear();
+                    self.preview_text = None;
+                    self.preview_path = None;
+                    self.preview_editor = None;
+                    self.preview_image_path = None;
+                    self.preview_markdown = None;
+                    self.preview_message = None;
+                }
+                self.entries = entries;
                 self.apply_filter();
                 self.update_item_sizes();
-                self.preview_text = None;
-                self.preview_path = None;
-                self.preview_editor = None;
-                self.preview_image_path = None;
-                self.preview_markdown = None;
-                self.preview_message = None;
+                self.listed_cwd = Some(self.cwd.clone());
                 self.clear_status();
+                if let Some(path) = self.reveal_after_listing.take() {
+                    self.reveal(&path);
+                }
             }
             Err(e) => {
                 tracing::error!("Failed to list directory '{}': {}", self.cwd, e);
+                // The rows are not this folder's, so the next read is a visit.
+                self.listed_cwd = None;
+                self.reveal_after_listing = None;
                 self.entries = Vec::new();
                 self.filtered_entries = Vec::new();
                 // The rows are gone, so the selection addressing them has to go
@@ -61,10 +310,11 @@ impl ExplorerPane {
         }
         self.cancel_rename(window, cx);
         self.close_search(window, cx);
+        self.clear_name_filter();
+        self.tree.reset();
         self.push_history(path.clone());
         self.cwd = path;
-        self.entries.clear();
-        self.reload();
+        self.reload(cx);
         cx.emit(PaneEvent::Navigated(self.cwd.clone()));
         cx.notify();
     }
@@ -100,10 +350,11 @@ impl ExplorerPane {
         self.search_visible = false;
         self.search_results = None;
         self.search_query.clear();
+        self.clear_name_filter();
+        self.tree.reset();
         self.push_history(path.clone());
         self.cwd = path;
-        self.entries.clear();
-        self.reload();
+        self.reload(cx);
         cx.notify();
     }
 
@@ -112,10 +363,10 @@ impl ExplorerPane {
             self.history_index -= 1;
             if let Some(p) = self.history.get(self.history_index).cloned() {
                 self.cwd = p;
-                self.entries.clear();
                 self.cancel_rename(window, cx);
                 self.close_search(window, cx);
-                self.reload();
+                self.clear_name_filter();
+                self.reload(cx);
                 cx.emit(PaneEvent::Navigated(self.cwd.clone()));
                 cx.notify();
             }
@@ -127,10 +378,10 @@ impl ExplorerPane {
             self.history_index += 1;
             if let Some(p) = self.history.get(self.history_index).cloned() {
                 self.cwd = p;
-                self.entries.clear();
                 self.cancel_rename(window, cx);
                 self.close_search(window, cx);
-                self.reload();
+                self.clear_name_filter();
+                self.reload(cx);
                 cx.emit(PaneEvent::Navigated(self.cwd.clone()));
                 cx.notify();
             }
@@ -145,8 +396,46 @@ impl ExplorerPane {
     ) {
         if item.kind == "dir" {
             self.change_dir(item.path, window, cx);
+        } else if crate::file_dialog::picking().is_some() {
+            // A browser is waiting on its Open dialog: the file goes there. The
+            // whole selection goes when the activated file is part of it, so
+            // several files can be sent at once; folders in it are skipped.
+            let selected = self.selected_paths();
+            let paths: Vec<String> = if selected.contains(&item.path) {
+                self.filtered_entries
+                    .iter()
+                    .filter(|entry| entry.kind != "dir" && selected.contains(&entry.path))
+                    .map(|entry| entry.path.clone())
+                    .collect()
+            } else {
+                vec![item.path]
+            };
+            crate::file_dialog::deliver(&paths);
+            cx.notify();
         } else {
-            self.open_preview(item.path, window, cx);
+            self.open_with_default_app(&item.path);
         }
     }
+
+    /// Opens a file in the program Windows associates with it, as a double
+    /// click in Explorer does.
+    fn open_with_default_app(&mut self, path: &str) {
+        // Tests record the request instead: launching the real program would
+        // open windows on the machine running them.
+        #[cfg(test)]
+        OPENED_WITH_DEFAULT_APP.with(|opened| opened.borrow_mut().push(path.to_owned()));
+        // `explorer.exe <file>` hands the file to its associated program
+        // without a shell in between to misread `&` or `^` in the name.
+        #[cfg(not(test))]
+        if let Err(error) = std::process::Command::new("explorer.exe").arg(path).spawn() {
+            self.set_status(StatusLevel::Error, format!("Could not open {path}: {error}"));
+        }
+    }
+}
+
+#[cfg(test)]
+thread_local! {
+    /// Paths `open_with_default_app` was asked to open, in order.
+    pub(crate) static OPENED_WITH_DEFAULT_APP: std::cell::RefCell<Vec<String>> =
+        const { std::cell::RefCell::new(Vec::new()) };
 }

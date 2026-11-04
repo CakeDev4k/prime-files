@@ -115,13 +115,13 @@ async fn explorer_starts_with_default_view_state(cx: &mut TestAppContext) {
 async fn set_sort_key_toggles_direction_then_resets(cx: &mut TestAppContext) {
     let window = new_explorer(cx);
     window
-        .update(cx, |page, _window, _cx| {
+        .update(cx, |page, _window, cx| {
             // Re-selecting the active key flips the direction...
-            page.set_sort_key(SortKey::Name);
+            page.set_sort_key(SortKey::Name, cx);
             assert!(page.sort_key == SortKey::Name);
             assert!(!page.sort_asc);
             // ...and a new key resets to ascending.
-            page.set_sort_key(SortKey::Size);
+            page.set_sort_key(SortKey::Size, cx);
             assert!(page.sort_key == SortKey::Size);
             assert!(page.sort_asc);
         })
@@ -135,11 +135,67 @@ async fn apply_config_ui_reflects_ui_section(cx: &mut TestAppContext) {
         .update(cx, |page, _window, cx| {
             let ui = config::Ui {
                 default_sort: config::SortOrder::Size,
+                default_sort_descending: false,
                 show_hidden: true,
                 icon_pack: "default".to_string(),
+                name_lines: 0,
+                scroll_smoothness: 50,
             };
             page.apply_config_ui(&ui, cx);
             assert!(page.show_hidden);
+            assert!(page.sort_key == SortKey::Size);
+        })
+        .unwrap();
+}
+
+#[gpui::test]
+async fn grouping_counts_headers_when_scrolling_to_an_entry(cx: &mut TestAppContext) {
+    let window = new_explorer(cx);
+    window
+        .update(cx, |page, _window, _cx| {
+            page.entries = vec![
+                file("b.png", "file", 1),
+                file("docs", "dir", 0),
+                file("a.png", "file", 1),
+            ];
+            page.set_group_by(super::grouping::GroupBy::Kind);
+            let names: Vec<&str> = page.filtered_entries.iter().map(|e| e.name.as_str()).collect();
+            assert_eq!(names, ["docs", "a.png", "b.png"]);
+            assert_eq!(page.groups().len(), 2);
+            // List: column header, "Pastas", docs, "Imagens", a.png, b.png.
+            assert_eq!(page.visual_rows_of(2).0, 5);
+            // Search results replace the entries without grouping them.
+            page.search_results = Some(Vec::new());
+            assert!(page.groups().is_empty());
+        })
+        .unwrap();
+}
+
+#[gpui::test]
+async fn config_reload_keeps_a_sort_chosen_in_the_session(cx: &mut TestAppContext) {
+    let window = new_explorer(cx);
+    window
+        .update(cx, |page, _window, cx| {
+            let ui = config::Ui {
+                default_sort: config::SortOrder::Name,
+                default_sort_descending: false,
+                show_hidden: false,
+                icon_pack: "default".to_string(),
+                name_lines: 0,
+                scroll_smoothness: 50,
+            };
+            page.apply_config_ui(&ui, cx);
+            page.set_sort(SortKey::Modified, false, cx);
+            // Another section of the file changed (the theme, from the menu).
+            page.apply_config_ui(&ui, cx);
+            assert!(page.sort_key == SortKey::Modified);
+            assert!(!page.sort_asc);
+            // The default sort itself changed in the file: that wins.
+            let sorted_by_size = config::Ui {
+                default_sort: config::SortOrder::Size,
+                ..ui
+            };
+            page.apply_config_ui(&sorted_by_size, cx);
             assert!(page.sort_key == SortKey::Size);
         })
         .unwrap();
@@ -228,6 +284,132 @@ async fn open_preview_loads_text_off_thread(cx: &mut TestAppContext) {
         .unwrap();
 }
 
+// The preview follows the arrow keys, as Explorer's does, but only once they
+// stop: holding Down through a folder reads the file it stops on, not every
+// file it passes.
+#[gpui::test]
+async fn the_preview_follows_the_arrow_keys_once_they_stop(cx: &mut TestAppContext) {
+    let dir = tempfile::tempdir().unwrap();
+    for (name, text) in [("a.txt", "A"), ("b.txt", "B"), ("c.txt", "C")] {
+        std::fs::write(dir.path().join(name), text).unwrap();
+    }
+    let window = open_pane_at(cx, dir.path());
+    let half = super::preview::PREVIEW_FOLLOW_DELAY / 2;
+    window
+        .update(cx, |pane, window, cx| {
+            pane.select_single(0);
+            pane.move_active_following(1, false, window, cx);
+        })
+        .unwrap();
+    cx.executor().advance_clock(half);
+    cx.run_until_parked();
+    window
+        .update(cx, |pane, window, cx| {
+            assert_eq!(pane.preview_path, None, "nothing is read while the keys are moving");
+            pane.move_active_following(1, false, window, cx);
+        })
+        .unwrap();
+    cx.executor().advance_clock(half);
+    cx.run_until_parked();
+    window
+        .read_with(cx, |pane, _cx| {
+            assert_eq!(pane.preview_path, None, "each key press starts the wait over");
+        })
+        .unwrap();
+    cx.executor().advance_clock(super::preview::PREVIEW_FOLLOW_DELAY);
+    cx.run_until_parked();
+    window
+        .read_with(cx, |pane, _cx| {
+            let c = dir.path().join("c.txt").to_string_lossy().into_owned();
+            assert_eq!(pane.preview_path.as_deref(), Some(c.as_str()));
+            assert_eq!(pane.preview_text.as_deref(), Some("C"));
+        })
+        .unwrap();
+}
+
+// A fitted image is drawn from the Shell's picture at the pane's size; the
+// file is decoded whole only where that is what is needed. A 48 MP photo
+// decoded whole took the process from ~122 to ~677 MB (PERFORMANCE.md,
+// passada 7).
+#[gpui::test]
+async fn a_fitted_image_is_not_decoded_whole(cx: &mut TestAppContext) {
+    use super::view::preview::fitted_picture;
+    let window = new_explorer(cx);
+    window
+        .update(cx, |page, window, cx| {
+            let photo = r"C:\nao-existe\foto.jpg";
+            assert!(fitted_picture(page, photo, window, cx).is_some(), "fitted: the Shell's picture");
+            page.preview_zoom = 2.0;
+            assert!(fitted_picture(page, photo, window, cx).is_none(), "zoomed in: the whole file");
+            page.preview_zoom = 1.0;
+            assert!(
+                fitted_picture(page, r"C:\nao-existe\anima.gif", window, cx).is_none(),
+                "animated: the Shell's picture is a single frame"
+            );
+        })
+        .unwrap();
+}
+
+#[test]
+fn a_fitted_image_is_asked_for_in_steps_that_cover_the_pane() {
+    use super::view::preview::fitted_edge;
+    // The pane's longer side in device pixels, rounded up to a step.
+    assert_eq!(fitted_edge(340.0, 400.0, 1.0), 512);
+    assert_eq!(fitted_edge(340.0, 789.0, 1.0), 1024);
+    assert_eq!(fitted_edge(340.0, 789.0, 1.5), 2048);
+    // Past the top step, the top step.
+    assert_eq!(fitted_edge(340.0, 2160.0, 2.0), 2048);
+}
+
+#[gpui::test]
+async fn a_hidden_preview_does_not_follow_the_arrow_keys(cx: &mut TestAppContext) {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("a.txt"), "A").unwrap();
+    std::fs::write(dir.path().join("b.txt"), "B").unwrap();
+    let window = open_pane_at(cx, dir.path());
+    window
+        .update(cx, |pane, window, cx| {
+            pane.preview_visible = false;
+            pane.select_single(0);
+            pane.move_active_following(1, false, window, cx);
+        })
+        .unwrap();
+    cx.executor().advance_clock(super::preview::PREVIEW_FOLLOW_DELAY * 2);
+    cx.run_until_parked();
+    window
+        .read_with(cx, |pane, _cx| assert_eq!(pane.preview_path, None))
+        .unwrap();
+}
+
+// A click while the preview waits on the arrow keys wins: the click previews
+// its row at once, and the wait that ends after it must not take the preview
+// back to the row the keys were on.
+#[gpui::test]
+async fn a_click_during_the_wait_is_not_undone_by_it(cx: &mut TestAppContext) {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("a.txt"), "A").unwrap();
+    std::fs::write(dir.path().join("b.txt"), "B").unwrap();
+    let window = open_pane_at(cx, dir.path());
+    let a = dir.path().join("a.txt").to_string_lossy().into_owned();
+    window
+        .update(cx, |pane, window, cx| {
+            pane.select_single(0);
+            pane.move_active_following(1, false, window, cx);
+            // The click on a.txt, as `row.rs` handles it.
+            pane.select_single(0);
+            pane.open_preview(a.clone(), window, cx);
+        })
+        .unwrap();
+    cx.executor().advance_clock(super::preview::PREVIEW_FOLLOW_DELAY * 2);
+    cx.run_until_parked();
+    window
+        .read_with(cx, |pane, _cx| {
+            assert_eq!(pane.preview_path.as_deref(), Some(a.as_str()));
+            assert_eq!(pane.preview_text.as_deref(), Some("A"));
+        })
+        .unwrap();
+}
+
 #[gpui::test]
 async fn navigation_history_supports_back_forward_and_truncation(cx: &mut TestAppContext) {
     let dir = tempfile::tempdir().unwrap();
@@ -301,8 +483,12 @@ async fn activate_entry_routes_by_kind(cx: &mut TestAppContext) {
     window
         .update(cx, |page, window, cx| {
             page.activate_entry(doc.clone(), window, cx);
-            // open_preview records the target path synchronously before reading.
-            assert_eq!(page.preview_path.as_deref(), Some(doc.path.as_str()));
+            // A file opens in its default program, as in Explorer; the preview
+            // is for selection, not activation.
+            let opened = super::navigation::OPENED_WITH_DEFAULT_APP
+                .with(|opened| opened.borrow().clone());
+            assert_eq!(opened, vec![doc.path.clone()]);
+            assert_eq!(page.cwd, folder.path, "activating a file does not navigate");
         })
         .unwrap();
     cx.run_until_parked();
@@ -348,6 +534,12 @@ async fn trigger_search_empty_clears_and_no_service_degrades(cx: &mut TestAppCon
         .unwrap();
 }
 
+/// Lands a view switch at once. `set_view_mode` glides there over the next
+/// frames, and a test has no frames.
+fn settle_zoom(page: &mut ExplorerPane, cx: &mut gpui::Context<ExplorerPane>) {
+    page.set_zoom(page.zoom_target, cx);
+}
+
 #[gpui::test]
 async fn view_mode_and_match_toggles_flip_state(cx: &mut TestAppContext) {
     let window = new_explorer(cx);
@@ -355,6 +547,7 @@ async fn view_mode_and_match_toggles_flip_state(cx: &mut TestAppContext) {
         .update(cx, |page, _window, cx| {
             assert!(page.view_mode == ViewMode::List);
             page.set_view_mode(ViewMode::Grid, cx);
+            settle_zoom(page, cx);
             assert!(page.view_mode == ViewMode::Grid);
 
             assert!(!page.match_case && !page.use_regex && !page.match_whole_word);
@@ -413,10 +606,10 @@ async fn item_sizes_track_entries_and_table_width_sums_columns(cx: &mut TestAppC
 async fn reload_reports_error_for_unreadable_dir(cx: &mut TestAppContext) {
     let window = new_explorer(cx);
     window
-        .update(cx, |page, _window, _cx| {
+        .update(cx, |page, _window, cx| {
             page.cwd = "/nonexistent/nohrs/dir".to_string();
             page.loaded = false;
-            page.reload();
+            page.reload(cx);
             let (_, level) = page.status_for_footer().expect("error status set");
             assert_eq!(level, StatusLevel::Error);
             assert!(page.entries.is_empty());
@@ -606,8 +799,11 @@ async fn split_pane_inherits_applied_ui_config(cx: &mut TestAppContext) {
         .update(cx, |page, window, cx| {
             let ui = config::Ui {
                 default_sort: config::SortOrder::Size,
+                default_sort_descending: false,
                 show_hidden: true,
                 icon_pack: "default".to_string(),
+                name_lines: 0,
+                scroll_smoothness: 50,
             };
             page.apply_config_ui(&ui, cx);
 
@@ -971,7 +1167,7 @@ async fn selection_all_clear_and_arrow_navigation(cx: &mut TestAppContext) {
 async fn sorting_keeps_the_selection_on_the_entries_it_was_made_on(cx: &mut TestAppContext) {
     let window = new_explorer(cx);
     window
-        .update(cx, |page, _window, _cx| {
+        .update(cx, |page, _window, cx| {
             page.entries = vec![
                 file("a", "file", 1),
                 file("b", "file", 2),
@@ -986,7 +1182,7 @@ async fn sorting_keeps_the_selection_on_the_entries_it_was_made_on(cx: &mut Test
             page.select_range_to(1);
             assert_eq!(page.selected_paths(), vec!["/tmp/a", "/tmp/b"]);
 
-            page.set_sort_key(SortKey::Name);
+            page.set_sort_key(SortKey::Name, cx);
             assert_eq!(
                 page.filtered_entries[0].path, "/tmp/c",
                 "the sort did reverse"
@@ -1028,9 +1224,9 @@ async fn filtering_drops_entries_that_are_no_longer_visible(cx: &mut TestAppCont
 fn open_pane_at(cx: &mut TestAppContext, root: &std::path::Path) -> WindowHandle<ExplorerPane> {
     let window = new_explorer(cx);
     window
-        .update(cx, |pane, _window, _cx| {
+        .update(cx, |pane, _window, cx| {
             pane.cwd = root.to_string_lossy().to_string();
-            pane.reload();
+            pane.reload(cx);
         })
         .unwrap();
     window
@@ -1105,12 +1301,12 @@ async fn paste_copy_with_rename_keeps_both(cx: &mut TestAppContext) {
     window
         .update(cx, |pane, _window, cx| {
             pane.cwd = src.to_string_lossy().to_string();
-            pane.reload();
+            pane.reload(cx);
             pane.select_all();
             pane.copy_selection(cx);
 
             pane.cwd = dst.to_string_lossy().to_string();
-            pane.reload();
+            pane.reload(cx);
             // `prepare_paste` is the dialog-free half of `paste_into_cwd`; the
             // dialog plumbing itself is covered by GUI verification.
             let has_pending = pane.prepare_paste(cx);
@@ -1136,12 +1332,12 @@ async fn paste_copy_with_overwrite_replaces(cx: &mut TestAppContext) {
     window
         .update(cx, |pane, _window, cx| {
             pane.cwd = src.to_string_lossy().to_string();
-            pane.reload();
+            pane.reload(cx);
             pane.select_all();
             pane.copy_selection(cx);
 
             pane.cwd = dst.to_string_lossy().to_string();
-            pane.reload();
+            pane.reload(cx);
             pane.prepare_paste(cx);
             pane.resolve_current_conflict(ConflictResolution::Overwrite, cx);
             pane.execute_paste_plan(cx);
@@ -1159,12 +1355,12 @@ async fn paste_copy_with_skip_leaves_destination(cx: &mut TestAppContext) {
     window
         .update(cx, |pane, _window, cx| {
             pane.cwd = src.to_string_lossy().to_string();
-            pane.reload();
+            pane.reload(cx);
             pane.select_all();
             pane.copy_selection(cx);
 
             pane.cwd = dst.to_string_lossy().to_string();
-            pane.reload();
+            pane.reload(cx);
             pane.prepare_paste(cx);
             pane.resolve_current_conflict(ConflictResolution::Skip, cx);
             pane.execute_paste_plan(cx);
@@ -1194,12 +1390,12 @@ async fn paste_apply_to_all_resolves_every_conflict_at_once(cx: &mut TestAppCont
     window
         .update(cx, |pane, _window, cx| {
             pane.cwd = src.to_string_lossy().to_string();
-            pane.reload();
+            pane.reload(cx);
             pane.select_all();
             pane.copy_selection(cx);
 
             pane.cwd = dst.to_string_lossy().to_string();
-            pane.reload();
+            pane.reload(cx);
             pane.prepare_paste(cx);
             // Two conflicts queued; one Overwrite choice with "apply to all" set
             // resolves both.
@@ -1226,7 +1422,7 @@ async fn cut_paste_without_conflict_moves_the_source(cx: &mut TestAppContext) {
     window
         .update(cx, |pane, _window, cx| {
             pane.cwd = src.to_string_lossy().to_string();
-            pane.reload();
+            pane.reload(cx);
             pane.select_all();
             pane.cut_selection(cx);
         })
@@ -1234,7 +1430,7 @@ async fn cut_paste_without_conflict_moves_the_source(cx: &mut TestAppContext) {
     window
         .update(cx, |pane, window, cx| {
             pane.cwd = dst.to_string_lossy().to_string();
-            pane.reload();
+            pane.reload(cx);
             // No collision, so the paste executes immediately with no dialog.
             pane.paste_into_cwd(window, cx);
             assert!(pane.paste_plan.is_none());
@@ -1278,7 +1474,7 @@ async fn paste_numbers_a_second_source_sharing_an_existing_name(cx: &mut TestApp
     window
         .update(cx, |pane, _window, cx| {
             pane.cwd = dst.to_string_lossy().to_string();
-            pane.reload();
+            pane.reload(cx);
             assert!(pane.prepare_paste(cx), "the existing name collides");
             pane.set_apply_to_all(true, cx);
             pane.resolve_current_conflict(ConflictResolution::Overwrite, cx);
@@ -1316,7 +1512,7 @@ async fn a_destination_taken_after_planning_is_numbered_not_overwritten(cx: &mut
     window
         .update(cx, |pane, _window, cx| {
             pane.cwd = src.to_string_lossy().to_string();
-            pane.reload();
+            pane.reload(cx);
             pane.select_all();
             pane.copy_selection(cx);
         })
@@ -1324,7 +1520,7 @@ async fn a_destination_taken_after_planning_is_numbered_not_overwritten(cx: &mut
     window
         .update(cx, |pane, _window, cx| {
             pane.cwd = dst.to_string_lossy().to_string();
-            pane.reload();
+            pane.reload(cx);
             assert!(
                 !pane.prepare_paste(cx),
                 "the destination name is free when the plan is built"
@@ -1380,7 +1576,7 @@ async fn pasting_names_differing_only_by_case_keeps_both_sources(cx: &mut TestAp
     window
         .update(cx, |pane, _window, cx| {
             pane.cwd = dst.to_string_lossy().to_string();
-            pane.reload();
+            pane.reload(cx);
             assert!(!pane.prepare_paste(cx), "the destination starts empty");
             pane.execute_paste_plan(cx);
         })
@@ -1417,7 +1613,7 @@ async fn a_paste_during_an_in_flight_cut_finds_nothing_to_paste(cx: &mut TestApp
     window
         .update(cx, |pane, _window, cx| {
             pane.cwd = src.to_string_lossy().to_string();
-            pane.reload();
+            pane.reload(cx);
             pane.select_all();
             pane.cut_selection(cx);
         })
@@ -1425,7 +1621,7 @@ async fn a_paste_during_an_in_flight_cut_finds_nothing_to_paste(cx: &mut TestApp
     window
         .update(cx, |pane, _window, cx| {
             pane.cwd = dst.to_string_lossy().to_string();
-            pane.reload();
+            pane.reload(cx);
             pane.prepare_paste(cx);
             // Started, not awaited: the move is still on the background executor.
             pane.execute_paste_plan(cx);
@@ -1478,11 +1674,11 @@ async fn closing_the_conflict_dialog_leaves_the_plan_for_the_resolving_button(
 
     pane.update_in(&mut cx, |pane, window, cx| {
         pane.cwd = src.to_string_lossy().to_string();
-        pane.reload();
+        pane.reload(cx);
         pane.select_all();
         pane.copy_selection(cx);
         pane.cwd = dst.to_string_lossy().to_string();
-        pane.reload();
+        pane.reload(cx);
         pane.paste_into_cwd(window, cx);
     });
 
@@ -1529,7 +1725,7 @@ async fn a_failed_cut_does_not_clobber_a_clipboard_claimed_while_it_ran(cx: &mut
     window
         .update(cx, |pane, _window, cx| {
             pane.cwd = src.to_string_lossy().to_string();
-            pane.reload();
+            pane.reload(cx);
             pane.select_single(0); // x.txt
             pane.cut_selection(cx);
         })
@@ -1540,11 +1736,11 @@ async fn a_failed_cut_does_not_clobber_a_clipboard_claimed_while_it_ran(cx: &mut
     window
         .update(cx, |pane, window, cx| {
             pane.cwd = dst.to_string_lossy().to_string();
-            pane.reload();
+            pane.reload(cx);
             pane.paste_into_cwd(window, cx);
             // Still in flight: the user copies something else.
             pane.cwd = src.to_string_lossy().to_string();
-            pane.reload();
+            pane.reload(cx);
             pane.select_all(); // only y.txt remains
             pane.copy_selection(cx);
         })
@@ -1554,7 +1750,7 @@ async fn a_failed_cut_does_not_clobber_a_clipboard_claimed_while_it_ran(cx: &mut
     window
         .update(cx, |pane, window, cx| {
             pane.cwd = dst.to_string_lossy().to_string();
-            pane.reload();
+            pane.reload(cx);
             pane.paste_into_cwd(window, cx);
         })
         .unwrap();
@@ -1595,7 +1791,7 @@ async fn overlapping_cut_pastes_restore_only_the_live_clipboard(cx: &mut TestApp
     window
         .update(cx, |pane, _window, cx| {
             pane.cwd = src.to_string_lossy().to_string();
-            pane.reload();
+            pane.reload(cx);
             pane.select_single(0); // x.txt
             pane.cut_selection(cx);
         })
@@ -1604,7 +1800,7 @@ async fn overlapping_cut_pastes_restore_only_the_live_clipboard(cx: &mut TestApp
     window
         .update(cx, |pane, window, cx| {
             pane.cwd = dst.to_string_lossy().to_string();
-            pane.reload();
+            pane.reload(cx);
             pane.paste_into_cwd(window, cx);
         })
         .unwrap();
@@ -1613,7 +1809,7 @@ async fn overlapping_cut_pastes_restore_only_the_live_clipboard(cx: &mut TestApp
     window
         .update(cx, |pane, _window, cx| {
             pane.cwd = src.to_string_lossy().to_string();
-            pane.reload();
+            pane.reload(cx);
             pane.select_all(); // only y.txt remains
             pane.cut_selection(cx);
         })
@@ -1622,7 +1818,7 @@ async fn overlapping_cut_pastes_restore_only_the_live_clipboard(cx: &mut TestApp
     window
         .update(cx, |pane, window, cx| {
             pane.cwd = dst.to_string_lossy().to_string();
-            pane.reload();
+            pane.reload(cx);
             pane.paste_into_cwd(window, cx);
         })
         .unwrap();
@@ -1634,7 +1830,7 @@ async fn overlapping_cut_pastes_restore_only_the_live_clipboard(cx: &mut TestApp
     window
         .update(cx, |pane, window, cx| {
             pane.cwd = dst.to_string_lossy().to_string();
-            pane.reload();
+            pane.reload(cx);
             pane.paste_into_cwd(window, cx);
         })
         .unwrap();
@@ -1669,7 +1865,7 @@ async fn cut_paste_keeps_failed_sources_on_the_clipboard_as_a_cut(cx: &mut TestA
     window
         .update(cx, |pane, _window, cx| {
             pane.cwd = src.to_string_lossy().to_string();
-            pane.reload();
+            pane.reload(cx);
             pane.select_all();
             pane.cut_selection(cx);
         })
@@ -1680,7 +1876,7 @@ async fn cut_paste_keeps_failed_sources_on_the_clipboard_as_a_cut(cx: &mut TestA
     window
         .update(cx, |pane, window, cx| {
             pane.cwd = dst.to_string_lossy().to_string();
-            pane.reload();
+            pane.reload(cx);
             pane.paste_into_cwd(window, cx);
         })
         .unwrap();
@@ -1735,6 +1931,52 @@ async fn rename_collision_falls_back_to_numbering(cx: &mut TestAppContext) {
     assert!(!root.join("b.txt").exists());
 }
 
+// Changing only the case of a name is a rename, not a collision with the file
+// itself: on NTFS it used to come out as `A (2).txt`.
+#[gpui::test]
+async fn a_rename_that_only_changes_case_is_not_numbered(cx: &mut TestAppContext) {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("a.txt"), "a").unwrap();
+    let window = open_pane_at(cx, dir.path());
+    window
+        .update(cx, |pane, window, cx| {
+            pane.begin_rename(0, window, cx);
+            let input = pane.renaming.as_ref().unwrap().input.clone();
+            input.update(cx, |state, cx| state.set_value("A.txt", window, cx));
+            pane.commit_rename(window, cx);
+        })
+        .unwrap();
+    cx.run_until_parked();
+    let names: Vec<String> = std::fs::read_dir(dir.path())
+        .unwrap()
+        .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
+        .collect();
+    assert_eq!(names, ["A.txt"]);
+}
+
+// The rename asks the disk off the UI thread: a folder on a share that
+// stopped answering must not freeze the window on it.
+#[gpui::test]
+async fn a_rename_runs_off_the_ui_thread(cx: &mut TestAppContext) {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("a.txt"), "a").unwrap();
+    let window = open_pane_at(cx, dir.path());
+    window
+        .update(cx, |pane, window, cx| {
+            pane.begin_rename(0, window, cx);
+            let input = pane.renaming.as_ref().unwrap().input.clone();
+            input.update(cx, |state, cx| state.set_value("b.txt", window, cx));
+            pane.commit_rename(window, cx);
+            // The test executor runs background work only when it is let to.
+            assert!(dir.path().join("a.txt").exists(), "nothing touched the disk on the UI thread");
+            assert!(pane.renaming.is_none(), "the field closes at once");
+        })
+        .unwrap();
+    cx.run_until_parked();
+    assert!(dir.path().join("b.txt").exists());
+    assert!(!dir.path().join("a.txt").exists());
+}
+
 #[gpui::test]
 async fn new_folder_picks_a_unique_name(cx: &mut TestAppContext) {
     let dir = tempfile::tempdir().unwrap();
@@ -1745,7 +1987,7 @@ async fn new_folder_picks_a_unique_name(cx: &mut TestAppContext) {
         .update(cx, |_root, window, cx| {
             pane.update(cx, |pane, cx| {
                 pane.cwd = root.to_string_lossy().to_string();
-                pane.reload();
+                pane.reload(cx);
                 pane.create_new_folder(window, cx);
             });
         })
@@ -1842,12 +2084,12 @@ async fn a_reload_that_fails_takes_the_selection_with_it(cx: &mut TestAppContext
     std::fs::write(root.join("a.txt"), "A").unwrap();
     let window = open_pane_at(cx, &root);
     window
-        .update(cx, |pane, _window, _cx| {
+        .update(cx, |pane, _window, cx| {
             pane.select_all();
             assert_eq!(pane.selected_paths().len(), 1);
 
             pane.cwd = root.join("gone").to_string_lossy().into_owned();
-            pane.reload();
+            pane.reload(cx);
 
             assert!(pane.filtered_entries.is_empty(), "the listing is empty");
             assert!(pane.selection.is_empty(), "and so is the selection");
@@ -1920,6 +2162,8 @@ async fn rename_to_invalid_name_reports_error(cx: &mut TestAppContext) {
             pane.commit_rename(window, cx);
         })
         .unwrap();
+    // The rename answers from the background (`a_rename_runs_off_the_ui_thread`).
+    cx.run_until_parked();
     window
         .read_with(cx, |pane, _cx| {
             let (text, level) = pane.status_for_footer().expect("a status was set");
@@ -1991,4 +2235,429 @@ async fn paste_numbers_same_basename_sources(cx: &mut TestAppContext) {
     ];
     got.sort();
     assert_eq!(got, vec!["A1".to_string(), "B1".to_string()]);
+}
+
+#[gpui::test]
+async fn hiding_a_column_keeps_its_width_for_when_it_returns(cx: &mut TestAppContext) {
+    let window = new_explorer(cx);
+    window
+        .update(cx, |page, _window, _cx| {
+            page.col_size_width = 123.0;
+            page.toggle_column(2);
+            assert!(!page.column_visible(2));
+            assert_eq!(page.col_size_width, 0.0);
+            page.toggle_column(2);
+            assert!(page.column_visible(2));
+            assert_eq!(page.col_size_width, 123.0);
+            // Name cannot be hidden.
+            page.toggle_column(0);
+            assert!(page.column_visible(0));
+        })
+        .unwrap();
+}
+
+#[gpui::test]
+async fn fitting_a_column_follows_its_longest_value(cx: &mut TestAppContext) {
+    let window = new_explorer(cx);
+    window
+        .update(cx, |page, _window, _cx| {
+            page.entries = vec![file("a.txt", "file", 1), file(&"x".repeat(60), "file", 1)];
+            page.apply_filter();
+            page.fit_column(0);
+            let long = page.col_name_width;
+            page.entries = vec![file("a.txt", "file", 1)];
+            page.apply_filter();
+            page.fit_column(0);
+            assert!(page.col_name_width < long);
+        })
+        .unwrap();
+}
+
+#[gpui::test]
+async fn the_tree_view_splices_an_open_folder_under_it(cx: &mut TestAppContext) {
+    let window = new_explorer(cx);
+    window
+        .update(cx, |page, _window, cx| {
+            page.entries = vec![file("docs", "dir", 0), file("z.txt", "file", 1)];
+            page.set_view_mode(ViewMode::Tree, cx);
+            settle_zoom(page, cx);
+            let docs = page.filtered_entries[0].path.clone();
+            page.tree.children.insert(
+                docs.clone(),
+                vec![file("b.txt", "file", 1), file("a.txt", "file", 1)],
+            );
+            page.tree.expanded.insert(docs.clone());
+            page.apply_filter();
+            let names: Vec<&str> = page.filtered_entries.iter().map(|e| e.name.as_str()).collect();
+            assert_eq!(names, ["docs", "a.txt", "b.txt", "z.txt"]);
+            assert_eq!(page.tree_depth(&page.filtered_entries[1].path.clone()), 1);
+            assert_eq!(page.tree_depth(&docs), 0);
+            // Leaving the Tree view puts the folder back to one row.
+            page.set_view_mode(ViewMode::List, cx);
+            settle_zoom(page, cx);
+            assert_eq!(page.filtered_entries.len(), 2);
+        })
+        .unwrap();
+}
+
+#[gpui::test]
+async fn choosing_the_view_back_mid_glide_turns_the_glide_around(cx: &mut TestAppContext) {
+    let window = new_explorer(cx);
+    window
+        .update(cx, |page, _window, cx| {
+            page.set_view_mode(ViewMode::Grid, cx);
+            // Still in List on screen: the glide has not started moving.
+            assert!(page.view_mode == ViewMode::List);
+            page.set_view_mode(ViewMode::List, cx);
+            assert_eq!(page.zoom_target, 0.0);
+        })
+        .unwrap();
+}
+
+#[gpui::test]
+async fn the_highlight_is_the_literal_part_of_the_filter(cx: &mut TestAppContext) {
+    let window = new_explorer(cx);
+    window
+        .update(cx, |page, _window, _cx| {
+            page.name_filter = "*.png".to_string();
+            assert_eq!(page.highlight_query(), ".png");
+            page.name_filter = "deltarune".to_string();
+            assert_eq!(page.highlight_query(), "deltarune");
+            page.name_filter.clear();
+            assert_eq!(page.highlight_query(), "");
+        })
+        .unwrap();
+}
+
+#[gpui::test]
+async fn path_field_shows_the_path_and_goes_where_it_is_told(cx: &mut TestAppContext) {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    // An accent, so the UTF-16 selection is exercised on more than ASCII.
+    let sub = root.join("Extensões");
+    std::fs::create_dir(&sub).unwrap();
+    let window = open_pane_at(cx, root);
+    window
+        .update(cx, |pane, window, cx| {
+            pane.begin_path_edit(window, cx);
+            let input = pane.path_edit.as_ref().unwrap().input.clone();
+            assert_eq!(input.read(cx).value().to_string(), pane.cwd, "the field starts with the folder's path");
+
+            // A path that does not exist keeps the field open to fix it.
+            input.update(cx, |state, cx| state.set_value(r"Z:\nao\existe", window, cx));
+            pane.commit_path_edit(window, cx);
+            assert!(pane.path_edit.is_some());
+
+            input.update(cx, |state, cx| state.set_value(sub.to_string_lossy().to_string(), window, cx));
+            pane.commit_path_edit(window, cx);
+            assert!(pane.path_edit.is_none(), "Enter on a real folder closes the field");
+            assert_eq!(pane.cwd, sub.to_string_lossy());
+
+            pane.begin_path_edit(window, cx);
+            pane.cancel_path_edit(window, cx);
+            assert!(pane.path_edit.is_none());
+            assert_eq!(pane.cwd, sub.to_string_lossy(), "Escape goes nowhere");
+        })
+        .unwrap();
+}
+
+#[gpui::test]
+async fn dropping_files_on_a_folder_moves_them_on_the_same_drive(cx: &mut TestAppContext) {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    let target = root.join("target");
+    std::fs::create_dir(&target).unwrap();
+    std::fs::write(root.join("a.txt"), "a").unwrap();
+    let window = open_pane_at(cx, root);
+    window
+        .update(cx, |pane, window, cx| {
+            pane.drop_paths(&[root.join("a.txt")], target.clone(), window, cx);
+        })
+        .unwrap();
+    cx.run_until_parked();
+    assert_eq!(std::fs::read_to_string(target.join("a.txt")).unwrap(), "a");
+    assert!(!root.join("a.txt").exists(), "a drop on the same drive is a move");
+}
+
+#[gpui::test]
+async fn a_folder_dropped_into_itself_is_refused(cx: &mut TestAppContext) {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    let folder = root.join("folder");
+    std::fs::create_dir_all(folder.join("inner")).unwrap();
+    let window = open_pane_at(cx, root);
+    window
+        .update(cx, |pane, window, cx| {
+            pane.drop_paths(&[folder.clone()], folder.join("inner"), window, cx);
+            assert!(pane.paste_plan.is_none(), "nothing is planned");
+        })
+        .unwrap();
+    cx.run_until_parked();
+    assert!(folder.join("inner").is_dir());
+    assert!(!folder.join("inner").join("folder").exists());
+}
+
+// A folder that does not answer within `listing_wait` is read in the
+// background, and a read overtaken by a later navigation never lands: the
+// pane shows the folder navigated to last, not the one that answered last.
+#[gpui::test]
+async fn a_slow_folder_is_read_in_the_background_and_an_overtaken_read_is_dropped(
+    cx: &mut TestAppContext,
+) {
+    // The read runs on a real thread, so the executor has to be allowed to
+    // wait for it.
+    cx.executor().allow_parking();
+    let first = tempfile::tempdir().unwrap();
+    std::fs::write(first.path().join("a.txt"), "A").unwrap();
+    let second = tempfile::tempdir().unwrap();
+    std::fs::write(second.path().join("b.txt"), "B").unwrap();
+    let window = new_explorer(cx);
+    window
+        .update(cx, |pane, _window, cx| {
+            pane.listing_wait = std::time::Duration::ZERO;
+            pane.cwd = first.path().to_string_lossy().into_owned();
+            pane.reload(cx);
+            pane.cwd = second.path().to_string_lossy().into_owned();
+            pane.reload(cx);
+            assert!(pane.listing_pending, "nothing waited, so the read must still be on its way");
+        })
+        .unwrap();
+
+    let mut names = Vec::new();
+    for _ in 0..500 {
+        cx.run_until_parked();
+        let (pending, listed) = window
+            .update(cx, |pane, _window, _cx| {
+                let listed: Vec<String> =
+                    pane.filtered_entries.iter().map(|entry| entry.name.clone()).collect();
+                (pane.listing_pending, listed)
+            })
+            .unwrap();
+        names = listed;
+        if !pending {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+    assert_eq!(names, ["b.txt"]);
+}
+
+// A refresh of the folder on screen (F5, or what runs after a delete, paste,
+// rename or drop) is not a visit: the folders open in the Tree view stay open,
+// and they are read again, so a file deleted inside one leaves. Until
+// 04/11/2026 every refresh closed them all.
+#[gpui::test]
+async fn a_refresh_keeps_tree_folders_open_and_reads_them_again(cx: &mut TestAppContext) {
+    let dir = tempfile::tempdir().unwrap();
+    let docs = dir.path().join("docs");
+    std::fs::create_dir(&docs).unwrap();
+    std::fs::write(docs.join("a.txt"), "a").unwrap();
+    std::fs::write(docs.join("b.txt"), "b").unwrap();
+    std::fs::write(dir.path().join("z.txt"), "z").unwrap();
+    let window = open_pane_at(cx, dir.path());
+    let names = |pane: &ExplorerPane| -> Vec<String> {
+        pane.filtered_entries.iter().map(|entry| entry.name.clone()).collect()
+    };
+    window
+        .update(cx, |pane, _window, cx| {
+            pane.set_view_mode(ViewMode::Tree, cx);
+            settle_zoom(pane, cx);
+            let docs_path = pane.filtered_entries[0].path.clone();
+            pane.toggle_tree_folder(docs_path, cx);
+        })
+        .unwrap();
+    cx.run_until_parked();
+    window
+        .update(cx, |pane, _window, _cx| {
+            assert_eq!(names(pane), ["docs", "a.txt", "b.txt", "z.txt"]);
+        })
+        .unwrap();
+
+    std::fs::remove_file(docs.join("b.txt")).unwrap();
+    window
+        .update(cx, |pane, _window, cx| {
+            pane.reload(cx);
+            assert_eq!(names(pane), ["docs", "a.txt", "z.txt"], "still open, and read again");
+        })
+        .unwrap();
+
+    // A folder open in the tree that went away closes instead of failing.
+    std::fs::remove_dir_all(&docs).unwrap();
+    window
+        .update(cx, |pane, _window, cx| {
+            pane.reload(cx);
+            assert_eq!(names(pane), ["z.txt"]);
+            assert!(pane.tree.expanded.is_empty());
+        })
+        .unwrap();
+}
+
+// A file that changed on disk since the last read gets its picture made
+// again on the refresh; one that did not keeps it. The cache is by path, and
+// a file overwritten in place used to keep the old picture.
+#[gpui::test]
+async fn a_refresh_forgets_the_picture_of_a_file_that_changed(cx: &mut TestAppContext) {
+    let dir = tempfile::tempdir().unwrap();
+    let changed = dir.path().join("foto.png");
+    let kept = dir.path().join("outra.png");
+    std::fs::write(&changed, "antes").unwrap();
+    std::fs::write(&kept, "igual").unwrap();
+    let window = open_pane_at(cx, dir.path());
+    let (changed_path, kept_path) = (
+        changed.to_string_lossy().into_owned(),
+        kept.to_string_lossy().into_owned(),
+    );
+    window
+        .update(cx, |pane, _window, cx| {
+            pane.thumbnails.get(&changed_path, 256, cx);
+            pane.thumbnails.get(&kept_path, 256, cx);
+            assert!(pane.thumbnails.holds(&changed_path) && pane.thumbnails.holds(&kept_path));
+        })
+        .unwrap();
+
+    std::fs::write(&changed, "depois, com outro tamanho").unwrap();
+    window
+        .update(cx, |pane, _window, cx| {
+            pane.reload(cx);
+            assert!(!pane.thumbnails.holds(&changed_path), "changed: asked for again");
+            assert!(pane.thumbnails.holds(&kept_path), "unchanged: kept");
+        })
+        .unwrap();
+}
+
+// Going to another folder still starts with every folder closed.
+#[gpui::test]
+async fn a_visit_to_another_folder_starts_with_the_tree_closed(cx: &mut TestAppContext) {
+    let first = tempfile::tempdir().unwrap();
+    std::fs::create_dir(first.path().join("docs")).unwrap();
+    std::fs::write(first.path().join("docs").join("a.txt"), "a").unwrap();
+    let second = tempfile::tempdir().unwrap();
+    std::fs::create_dir(second.path().join("docs")).unwrap();
+    let window = open_pane_at(cx, first.path());
+    window
+        .update(cx, |pane, _window, cx| {
+            pane.set_view_mode(ViewMode::Tree, cx);
+            settle_zoom(pane, cx);
+            let docs_path = pane.filtered_entries[0].path.clone();
+            pane.toggle_tree_folder(docs_path, cx);
+        })
+        .unwrap();
+    cx.run_until_parked();
+    window
+        .update(cx, |pane, _window, cx| {
+            assert!(!pane.tree.expanded.is_empty());
+            pane.cwd = second.path().to_string_lossy().into_owned();
+            pane.reload(cx);
+            assert!(pane.tree.expanded.is_empty());
+            assert!(pane.tree.children.is_empty());
+        })
+        .unwrap();
+}
+
+// The preview stays on a refresh while its file is there, and closes when the
+// file is gone; going to another folder closes it as before.
+#[gpui::test]
+async fn a_refresh_keeps_the_preview_while_its_file_is_there(cx: &mut TestAppContext) {
+    let dir = tempfile::tempdir().unwrap();
+    let note = dir.path().join("nota.txt");
+    std::fs::write(&note, "texto").unwrap();
+    std::fs::write(dir.path().join("outro.txt"), "x").unwrap();
+    let window = open_pane_at(cx, dir.path());
+    let note_path = note.to_string_lossy().into_owned();
+    window
+        .update(cx, |pane, _window, cx| {
+            pane.preview_path = Some(note_path.clone());
+            pane.preview_text = Some("texto".to_string());
+            pane.reload(cx);
+            assert_eq!(pane.preview_path.as_deref(), Some(note_path.as_str()));
+            assert_eq!(pane.preview_text.as_deref(), Some("texto"));
+        })
+        .unwrap();
+
+    std::fs::remove_file(&note).unwrap();
+    window
+        .update(cx, |pane, _window, cx| {
+            pane.reload(cx);
+            assert_eq!(pane.preview_path, None);
+            assert_eq!(pane.preview_text, None);
+        })
+        .unwrap();
+}
+
+// Explorer keeps the row it just renamed selected; the selection is kept by
+// path, so the refresh after a rename used to drop it.
+#[gpui::test]
+async fn a_renamed_row_stays_selected(cx: &mut TestAppContext) {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("a.txt"), "a").unwrap();
+    std::fs::write(dir.path().join("b.txt"), "b").unwrap();
+    let window = open_pane_at(cx, dir.path());
+    window
+        .update(cx, |pane, window, cx| {
+            pane.select_single(1);
+            pane.begin_rename(1, window, cx);
+            let input = pane.renaming.as_ref().unwrap().input.clone();
+            input.update(cx, |state, cx| state.set_value("c.txt", window, cx));
+            pane.commit_rename(window, cx);
+        })
+        .unwrap();
+    cx.run_until_parked();
+    window
+        .update(cx, |pane, _window, _cx| {
+            let renamed = dir.path().join("c.txt").to_string_lossy().into_owned();
+            assert_eq!(pane.active_path.as_deref(), Some(renamed.as_str()));
+            assert_eq!(pane.selected_paths(), [renamed]);
+        })
+        .unwrap();
+}
+
+// A folder opens as it was left (zoom and sort), as in Explorer; a folder
+// never changed opens with the configured sort and keeps the tab's zoom; and a
+// refresh does not undo a change made in the folder.
+#[gpui::test]
+async fn each_folder_opens_with_the_zoom_and_sort_it_was_left_with(cx: &mut TestAppContext) {
+    let photos = tempfile::tempdir().unwrap();
+    std::fs::write(photos.path().join("a.png"), "A").unwrap();
+    let music = tempfile::tempdir().unwrap();
+    std::fs::write(music.path().join("b.wav"), "B").unwrap();
+    let photos_path = photos.path().to_string_lossy().into_owned();
+    let music_path = music.path().to_string_lossy().into_owned();
+
+    cx.update(|cx| super::folder_views::FolderViews::install(None, cx));
+    let window = new_explorer(cx);
+    window
+        .update(cx, |page, window, cx| {
+            let ui = config::Ui {
+                default_sort: config::SortOrder::Name,
+                default_sort_descending: true,
+                show_hidden: false,
+                icon_pack: "default".to_string(),
+                name_lines: 0,
+                scroll_smoothness: 50,
+            };
+            page.apply_config_ui(&ui, cx);
+
+            page.change_dir(photos_path.clone(), window, cx);
+            // Never changed: the configured default, descending.
+            assert!(page.sort_key == SortKey::Name && !page.sort_asc);
+            page.set_zoom(0.6, cx);
+            page.set_sort(SortKey::Size, true, cx);
+            page.reload(cx);
+            assert!(page.sort_key == SortKey::Size && page.sort_asc, "a refresh keeps it");
+
+            page.change_dir(music_path.clone(), window, cx);
+            assert!(page.sort_key == SortKey::Name && !page.sort_asc);
+            assert_eq!(page.zoom, 0.6, "a folder never changed keeps the tab's zoom");
+            page.set_zoom(0.0, cx);
+
+            page.change_dir(photos_path.clone(), window, cx);
+            assert!(page.sort_key == SortKey::Size && page.sort_asc);
+            assert_eq!(page.zoom, 0.6);
+            assert!(page.view_mode == ViewMode::Grid);
+
+            page.go_back(window, cx);
+            assert_eq!(page.zoom, 0.0);
+            assert!(page.view_mode == ViewMode::List);
+        })
+        .unwrap();
 }

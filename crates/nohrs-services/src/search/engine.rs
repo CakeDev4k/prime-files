@@ -1,7 +1,7 @@
 use super::indexer::IndexManager;
 use super::watcher::FileWatcher;
 use super::{SearchBackend, SearchResult, SearchScope};
-use anyhow::{Context, Result};
+use anyhow::Result;
 use std::sync::{Arc, Mutex};
 
 /// Deferred initial-indexing work handed to the caller so it can run on GPUI's
@@ -94,9 +94,12 @@ impl SearchEngine {
         // Bounded channel for watcher events (async-channel; runtime-agnostic).
         let (tx, rx) = async_channel::bounded(100);
 
-        let home_dir = dirs::home_dir().context("Home directory not found")?;
         use std::time::Duration;
-        let watcher = FileWatcher::new(home_dir, tx, Duration::from_secs(2))?;
+        // The folder the index covers, not the whole home: the index itself and
+        // the logs live in the home, and watching them fed every commit back
+        // into the indexer as a change.
+        let watched = index_manager.content_root().to_path_buf();
+        let watcher = FileWatcher::new(watched, tx, Duration::from_secs(2))?;
 
         // The watcher consumer does blocking index updates, so it runs on a
         // dedicated std::thread rather than an async task (async-runtime.md §4).

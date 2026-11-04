@@ -150,7 +150,40 @@ pub fn init_logging_with_file(config: &FileLogConfig) -> LogGuard {
     for note in notes {
         tracing::warn!("{note}");
     }
+    if config.enabled {
+        install_panic_record(config.directory.clone());
+    }
     LogGuard(guard)
+}
+
+// A GUI process has no stderr anyone reads, and a panic on a thread-pool
+// callback aborts before the buffered file writer flushes: on 04/11 a crash
+// left only a dump, with the panic message gone. So the message is also
+// appended to `panic.log` synchronously, before the default hook runs.
+fn install_panic_record(directory: PathBuf) {
+    let previous = std::panic::take_hook();
+    std::panic::set_hook(Box::new(move |info| {
+        let thread = std::thread::current();
+        let name = thread.name().unwrap_or("<unnamed>");
+        let backtrace = std::backtrace::Backtrace::force_capture();
+        let text = format!(
+            "{} panic on thread '{name}': {info}\n{backtrace}\n",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_secs())
+                .unwrap_or_default()
+        );
+        if let Ok(mut file) = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(directory.join("panic.log"))
+        {
+            use std::io::Write as _;
+            file.write_all(text.as_bytes()).ok();
+        }
+        tracing::error!(thread = name, "panic: {info}");
+        previous(info);
+    }));
 }
 
 /// Name of the file the appender writes to right now, if it can be determined.

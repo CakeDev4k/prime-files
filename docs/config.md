@@ -30,11 +30,12 @@ XDG 環境変数 `$XDG_CONFIG_HOME` / `$XDG_DATA_HOME` / `$XDG_CACHE_HOME` を�
 schema_version = 1
 
 [theme]
-mode = "system"   # "light" | "dark" | "system"
-accent = "blue"   # 名前 or hex (P5 で完全カスタマイズ)
+mode = "dark"   # "light" | "dark" | "system"
+accent = "orange"   # "orange" | "blue" | "teal" | "green" | "purple" | "pink" | "red" | hex
 
 [ui]
 default_sort = "name"      # "name" | "modified" | "size" | "kind"
+default_sort_descending = false  # true = Z→A, maior/mais novo primeiro
 show_hidden = false
 icon_pack = "default"
 
@@ -140,6 +141,7 @@ config.toml の冒頭に:
 | `theme.mode` | ✅ Yes | **P1** | `notify` でファイル監視、即時反映 |
 | `theme.accent` | ✅ Yes | **P1** | 同上 |
 | `ui.default_sort` | ✅ Yes | **P1** | 開いているビューに伝播 |
+| `ui.default_sort_descending` | ✅ Yes | **P1** | 開いているビューに伝播 (表示を保存済みのフォルダーは除く) |
 | `ui.show_hidden` | ✅ Yes | **P1** | 開いているビューに伝播 |
 | `ui.icon_pack` | ✅ Yes | **P1** | アイコンキャッシュをクリア |
 | `diagnostics.store.*` | ❌ No (再起動) | P3 で hot reload に格上げ検討 | ストア接続 open 時に profile フックの登録可否を決めるため (off 時はフック未登録でオーバーヘッド 0) |

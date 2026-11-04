@@ -1,160 +1,193 @@
 use crate::explorer::ExplorerPane;
+use crate::explorer::places::{Place, THIS_PC};
 use gpui::prelude::*;
 use gpui::*;
 use gpui_component::{Icon, IconName};
 use nohrs_ui::theme::theme;
 
-/// Renders the explorer sidebar listing quick-access locations.
+const ROW_HEIGHT: f32 = 28.0;
+const ICON_SIZE: f32 = 16.0;
+/// Width of the expand chevron's column; each tree level indents by it.
+const CHEVRON_WIDTH: f32 = 16.0;
+
+/// Renders the sidebar the way Explorer's navigation pane is laid out: Quick
+/// access, then This PC as a tree of drives and folders, then Network and
+/// Linux. Names and icons come from the Shell, so they match Explorer's.
 pub fn render(
     page: &mut ExplorerPane,
-    _window: &mut Window,
+    window: &mut Window,
     cx: &mut Context<ExplorerPane>,
 ) -> impl IntoElement + use<> {
+    page.ensure_places(cx);
+    let icon_px = ((ICON_SIZE * window.scale_factor()).round() as u32).max(16);
+    let places = page.sidebar.places.clone().unwrap_or_default();
+
+    let mut list = div().flex().flex_col().px(px(6.0)).gap(px(1.0));
+    for place in &places.quick_access {
+        list = list.child(row(page, place, 0, None, icon_px, cx));
+    }
+    list = list.child(
+        div()
+            .my(px(8.0))
+            .mx(px(6.0))
+            .h(px(1.0))
+            .bg(rgb(theme::border())),
+    );
+
+    let this_pc = places.this_pc.clone().unwrap_or_else(|| Place {
+        name: "This PC".to_string(),
+        path: None,
+        parsing_name: THIS_PC.to_string(),
+        pinned: false,
+    });
+    let pc_open = page.sidebar.expanded.contains(THIS_PC);
+    list = list.child(row(page, &this_pc, 0, Some(pc_open), icon_px, cx));
+    if pc_open {
+        for drive in &places.drives {
+            list = tree(page, list, drive, 1, icon_px, cx);
+        }
+    }
+    for place in &places.other {
+        list = list.child(row(page, place, 0, None, icon_px, cx));
+    }
+
     div()
+        .id("sidebar")
         .size_full()
-        .flex()
-        .flex_col()
         .bg(rgb(theme::bg()))
-        .py(px(12.0))
-        .child(section_label("Library"))
-        .child(
+        .py(px(8.0))
+        .overflow_y_scroll()
+        .child(list)
+}
+
+// A node and, when open, everything under it.
+fn tree(
+    page: &mut ExplorerPane,
+    mut list: Div,
+    place: &Place,
+    depth: usize,
+    icon_px: u32,
+    cx: &mut Context<ExplorerPane>,
+) -> Div {
+    let open = page.sidebar.expanded.contains(&place.parsing_name);
+    list = list.child(row(page, place, depth, Some(open), icon_px, cx));
+    if open
+        && let Some(path) = &place.path
+        && let Some(children) = page.sidebar.children.get(path).cloned()
+    {
+        for child in &children {
+            list = tree(page, list, child, depth + 1, icon_px, cx);
+        }
+    }
+    list
+}
+
+// One row. `expandable` is `Some(open)` for a tree node, `None` for a leaf
+// (Quick access entries are links, as in Explorer).
+fn row(
+    page: &mut ExplorerPane,
+    place: &Place,
+    depth: usize,
+    expandable: Option<bool>,
+    icon_px: u32,
+    cx: &mut Context<ExplorerPane>,
+) -> impl IntoElement + use<> {
+    let active = place
+        .path
+        .as_deref()
+        .is_some_and(|path| crate::explorer::same_path(path, &page.cwd));
+    let icon = page.sidebar.icons.icon_in(
+        &place.parsing_name,
+        // Places are folders, drives and shell locations, each with its own.
+        true,
+        icon_px,
+        |pane| &mut pane.sidebar.icons,
+        cx,
+    );
+    let icon = match icon {
+        Some(image) => img(ImageSource::Render(image))
+            .size(px(ICON_SIZE))
+            .flex_shrink_0()
+            .into_any_element(),
+        None => Icon::new(IconName::Folder)
+            .size_4()
+            .text_color(rgb(theme::gray_500()))
+            .into_any_element(),
+    };
+    let chevron = match expandable {
+        Some(open) => {
+            let toggled = place.clone();
             div()
+                .id(SharedString::from(format!("toggle-{}", place.parsing_name)))
+                .w(px(CHEVRON_WIDTH))
+                .h_full()
                 .flex()
-                .flex_col()
-                .gap(px(1.0))
-                .px(px(8.0))
-                .child(sidebar_item(Icon::new(IconName::Star), "Favorites", false))
-                .child(sidebar_item(asset_icon("icons/clock.svg"), "Recent", false))
-                .child(sidebar_item(
-                    asset_icon("icons/trash-2.svg"),
-                    "Trash",
-                    false,
-                )),
-        )
-        .child(
-            div()
-                .flex()
-                .flex_col()
-                .mt(px(12.0))
-                .child(section_label("Places"))
-                .child(render_shortcuts(page, cx)),
-        )
-}
-
-fn section_label(label: &'static str) -> impl IntoElement + use<> {
+                .items_center()
+                .justify_center()
+                .flex_shrink_0()
+                .on_mouse_down(
+                    MouseButton::Left,
+                    cx.listener(move |this, _, _, cx| {
+                        cx.stop_propagation();
+                        this.toggle_place(&toggled, cx);
+                    }),
+                )
+                .child(
+                    Icon::new(if open {
+                        IconName::ChevronDown
+                    } else {
+                        IconName::ChevronRight
+                    })
+                    .size_3()
+                    .text_color(rgb(theme::gray_500())),
+                )
+                .into_any_element()
+        }
+        None => div().w(px(CHEVRON_WIDTH)).flex_shrink_0().into_any_element(),
+    };
+    let opened = place.clone();
+    let menu = place.clone();
     div()
-        .px(px(16.0))
-        .pt(px(4.0))
-        .pb(px(6.0))
-        .text_xs()
-        .font_weight(gpui::FontWeight::SEMIBOLD)
-        .text_color(rgb(theme::muted()))
-        .child(label)
-}
-
-/// An icon loaded straight from the embedded asset path, for the glyphs that
-/// ship with this crate but have no `IconName` variant.
-fn asset_icon(path: &'static str) -> Icon {
-    Icon::new(Icon::empty()).path(SharedString::from(path))
-}
-
-/// One sidebar row. Every group shares this so the two lists keep the same row
-/// height and icon/label alignment.
-fn sidebar_item(icon: Icon, label: &str, active: bool) -> impl IntoElement + use<> {
-    let label = label.to_string();
-    div()
+        .id(SharedString::from(format!("place-{depth}-{}", place.parsing_name)))
         .w_full()
+        .h(px(ROW_HEIGHT))
         .flex()
         .items_center()
-        .gap_2()
-        .h(px(28.0))
-        .px(px(8.0))
-        .rounded(px(6.0))
+        .gap(px(6.0))
+        .pl(px(2.0 + depth as f32 * CHEVRON_WIDTH))
+        .pr(px(8.0))
+        .rounded(px(4.0))
         .cursor_pointer()
         .when(active, |this| this.bg(rgb(theme::accent_subtle())))
-        .when(!active, |this| {
-            this.hover(|this| this.bg(rgb(theme::bg_hover())))
-        })
-        .child(icon.size_4().flex_shrink_0().text_color(rgb(if active {
-            theme::accent()
-        } else {
-            theme::gray_500()
-        })))
+        .when(!active, |this| this.hover(|this| this.bg(rgb(theme::bg_hover()))))
+        .on_click(cx.listener(move |this, _, window, cx| this.open_place(&opened, window, cx)))
+        .on_mouse_down(
+            MouseButton::Right,
+            cx.listener(move |this, _, window, cx| {
+                cx.stop_propagation();
+                this.open_place_menu(menu.clone(), window, cx);
+            }),
+        )
+        .child(chevron)
+        .child(icon)
         .child(
             div()
+                .flex_1()
+                .min_w(px(0.0))
                 .text_sm()
                 .overflow_hidden()
                 .text_ellipsis()
                 .whitespace_nowrap()
-                .when(active, |this| this.font_weight(gpui::FontWeight::MEDIUM))
                 .text_color(rgb(theme::fg()))
-                .child(label),
+                .child(place.name.clone()),
         )
-}
-
-fn render_shortcuts(
-    page: &mut ExplorerPane,
-    cx: &mut Context<ExplorerPane>,
-) -> impl IntoElement + use<> {
-    let shortcuts = get_shortcuts();
-    let cwd = page.cwd.clone();
-    let mut shortcuts_el = div().flex().flex_col().gap(px(1.0)).px(px(8.0));
-
-    for (i, (label, path)) in shortcuts.into_iter().enumerate() {
-        let p = path.clone();
-        // `cwd` comes from whichever navigation last ran, so it may carry a
-        // trailing separator the shortcut's own path does not.
-        let is_current = trim_trailing_separator(&cwd) == trim_trailing_separator(&path);
-        let icon = if is_current {
-            Icon::new(IconName::FolderOpen)
-        } else {
-            Icon::new(IconName::Folder)
-        };
-
-        shortcuts_el = shortcuts_el.child(
-            div()
-                .id(("shortcut", i))
-                .on_click(
-                    cx.listener(move |this, _, window, cx| this.change_dir(p.clone(), window, cx)),
-                )
-                .child(sidebar_item(icon, &label, is_current)),
-        );
-    }
-
-    shortcuts_el
-}
-
-/// Drops a trailing path separator, but never the one that *is* the root — "/"
-/// would otherwise compare equal to the empty string.
-fn trim_trailing_separator(path: &str) -> &str {
-    let trimmed = path.trim_end_matches(std::path::MAIN_SEPARATOR);
-    if trimmed.is_empty() { path } else { trimmed }
-}
-
-fn get_shortcuts() -> Vec<(String, String)> {
-    let mut v = Vec::new();
-    let home = std::env::var("HOME").ok();
-    #[cfg(target_os = "windows")]
-    let home = home.or_else(|| std::env::var("USERPROFILE").ok());
-    if let Some(h) = home {
-        let p = |s: &str| {
-            std::path::Path::new(&h)
-                .join(s)
-                .to_string_lossy()
-                .to_string()
-        };
-        v.push(("Home".into(), h.clone()));
-        for (label, sub) in [
-            ("Desktop", "Desktop"),
-            ("Downloads", "Downloads"),
-            ("Documents", "Documents"),
-            ("Pictures", "Pictures"),
-        ] {
-            let path = p(sub);
-            if std::path::Path::new(&path).exists() {
-                v.push((label.into(), path));
-            }
-        }
-    }
-    v
+        .when(place.pinned, |this| {
+            this.child(
+                Icon::new(Icon::empty())
+                    .path("icons/pin.svg")
+                    .size_3()
+                    .flex_shrink_0()
+                    .text_color(rgb(theme::gray_500())),
+            )
+        })
 }

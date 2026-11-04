@@ -16,129 +16,17 @@ use std::fmt;
 pub const UNIFIED_TOOLBAR_HEIGHT: Pixels = px(36.0);
 const ACCOUNT_BUTTON_ID: &str = "unified-toolbar-account-button";
 
-/// Properties for the unified toolbar's account button and menu.
-#[derive(Clone)]
-pub struct UnifiedToolbarProps {
-    /// Display name shown in the account menu header.
-    pub account_name: String,
-    /// Account plan label shown beneath the name; hidden when empty.
-    pub account_plan: String,
-}
-
-impl Default for UnifiedToolbarProps {
-    fn default() -> Self {
-        Self {
-            account_name: "Guest".to_string(),
-            account_plan: String::new(),
-        }
-    }
-}
-
-/// Build the unified toolbar element: a draggable window region plus an account button with menu.
+/// Build the unified toolbar element: a draggable window region plus the
+/// settings button with its menu.
 pub fn unified_toolbar<V: Render>(
-    props: UnifiedToolbarProps,
     window: &Window,
     _cx: &mut Context<V>,
 ) -> impl IntoElement + use<V> {
-    let UnifiedToolbarProps {
-        account_name,
-        account_plan,
-    } = props;
-
     let drag_region = div()
         .id("unified-toolbar-drag-region")
         .flex_1()
         .h_full()
         .window_control_area(WindowControlArea::Drag);
-
-    let account_button = Button::new(ACCOUNT_BUTTON_ID)
-        .icon(
-            Icon::new(IconName::CircleUser)
-                .size_5()
-                .text_color(rgb(theme::fg_secondary())),
-        )
-        .rounded(ButtonRounded::Large)
-        .compact()
-        .with_variant(ButtonVariant::Ghost)
-        .with_size(Size::Small)
-        .dropdown_menu(move |menu, _window, _cx| {
-            let header_name = account_name.clone();
-            let header_plan = account_plan.clone();
-
-            let mut menu = menu
-                .min_w(px(220.0))
-                .menu_element_with_disabled(
-                    AccountMenuAction::boxed(AccountMenuCommand::ProfileSummary),
-                    true,
-                    move |_, _| {
-                        div()
-                            .flex()
-                            .items_center()
-                            .gap_3()
-                            .child(
-                                Icon::new(IconName::CircleUser)
-                                    .size_4()
-                                    .text_color(rgb(theme::fg_secondary())),
-                            )
-                            .child(
-                                div()
-                                    .flex_col()
-                                    .items_start()
-                                    .gap_y(px(2.0))
-                                    .child(
-                                        div()
-                                            .text_sm()
-                                            .text_color(rgb(theme::fg()))
-                                            .child(header_name.clone()),
-                                    )
-                                    .when(!header_plan.is_empty(), |this| {
-                                        this.child(
-                                            div()
-                                                .text_xs()
-                                                .text_color(rgb(theme::fg_secondary()))
-                                                .child(header_plan.clone()),
-                                        )
-                                    }),
-                            )
-                    },
-                )
-                .separator();
-
-            menu = menu
-                .menu_with_icon(
-                    "Settings",
-                    Icon::new(IconName::Settings),
-                    AccountMenuAction::boxed(AccountMenuCommand::Settings),
-                )
-                .menu_with_icon(
-                    "Keymap",
-                    Icon::new(IconName::SquareTerminal),
-                    AccountMenuAction::boxed(AccountMenuCommand::Keymap),
-                )
-                .menu_with_icon(
-                    "Themes…",
-                    Icon::new(IconName::Palette),
-                    AccountMenuAction::boxed(AccountMenuCommand::Themes),
-                )
-                .menu_with_icon(
-                    "Icon Themes…",
-                    Icon::new(IconName::GalleryVerticalEnd),
-                    AccountMenuAction::boxed(AccountMenuCommand::IconThemes),
-                )
-                .menu_with_icon(
-                    "Extensions",
-                    Icon::new(IconName::LayoutDashboard),
-                    AccountMenuAction::boxed(AccountMenuCommand::Extensions),
-                )
-                .separator()
-                .menu_with_icon(
-                    "Sign Out",
-                    Icon::new(IconName::ChevronRight),
-                    AccountMenuAction::boxed(AccountMenuCommand::SignOut),
-                );
-
-            menu
-        });
 
     div()
         .id("unified-toolbar")
@@ -149,18 +37,58 @@ pub fn unified_toolbar<V: Render>(
         .items_center()
         .justify_between()
         .pl(px(16.0))
-        .pr(if cfg!(target_os = "windows") {
-            px(0.0)
-        } else {
-            px(16.0)
-        })
         .bg(rgb(theme::bg()))
         .border_b_1()
         .border_color(rgb(theme::border()))
         .child(drag_region)
+        .child(title_bar_controls(window))
+}
+
+/// The right end of the title bar: the settings button with its menu and,
+/// on Windows, minimize, maximize and close. Drawn by the toolbar above and,
+/// when the explorer has one pane, at the end of its tab row, which then is
+/// the title bar, as in the Explorer of Windows 11.
+pub fn title_bar_controls(window: &Window) -> impl IntoElement + use<> {
+    let account_button = Button::new(ACCOUNT_BUTTON_ID)
+        .icon(
+            Icon::new(IconName::Settings)
+                .size_4()
+                .text_color(rgb(theme::fg_secondary())),
+        )
+        .rounded(ButtonRounded::Large)
+        .compact()
+        .with_variant(ButtonVariant::Ghost)
+        .with_size(Size::Small)
+        .dropdown_menu(move |menu, _window, _cx| {
+            menu.min_w(px(200.0))
+                .menu_with_icon(
+                    "Configurações",
+                    Icon::new(IconName::Settings),
+                    AccountMenuAction::boxed(AccountMenuCommand::Settings),
+                )
+                .menu_with_icon(
+                    "Atalhos",
+                    Icon::new(IconName::CaseSensitive),
+                    AccountMenuAction::boxed(AccountMenuCommand::Keymap),
+                )
+                .menu_with_icon(
+                    "Temas",
+                    Icon::new(IconName::Palette),
+                    AccountMenuAction::boxed(AccountMenuCommand::Themes),
+                )
+        });
+
+    div()
+        .flex_shrink_0()
+        .h_full()
+        .flex()
+        .flex_row()
+        .items_center()
+        .gap_1()
+        .when(!cfg!(target_os = "windows"), |controls| controls.pr(px(16.0)))
         .child(account_button)
-        .when(cfg!(target_os = "windows"), |toolbar| {
-            toolbar.child(windows_caption_buttons(window.is_maximized()))
+        .when(cfg!(target_os = "windows"), |controls| {
+            controls.child(windows_caption_buttons(window.is_maximized()))
         })
 }
 
@@ -213,24 +141,16 @@ fn windows_caption_buttons(maximized: bool) -> impl IntoElement {
         )
 }
 
-/// Commands dispatched from the account menu in the unified toolbar.
+/// Commands dispatched from the settings menu in the unified toolbar.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum AccountMenuCommand {
-    /// The disabled header entry showing the account summary.
-    ProfileSummary,
     /// Open the settings page.
     Settings,
-    /// Open the keymap editor.
+    /// Open the settings page on the shortcut list.
     Keymap,
-    /// Open the theme picker.
+    /// Open the settings page on the appearance section.
     Themes,
-    /// Open the icon theme picker.
-    IconThemes,
-    /// Open the extensions view.
-    Extensions,
-    /// Sign out of the current account.
-    SignOut,
 }
 
 impl AccountMenuCommand {
@@ -246,13 +166,9 @@ impl AccountMenuCommand {
 
     fn from_str(s: &str) -> Option<Self> {
         match s {
-            "profile-summary" => Some(Self::ProfileSummary),
             "settings" => Some(Self::Settings),
             "keymap" => Some(Self::Keymap),
             "themes" => Some(Self::Themes),
-            "icon-themes" => Some(Self::IconThemes),
-            "extensions" => Some(Self::Extensions),
-            "sign-out" => Some(Self::SignOut),
             _ => None,
         }
     }
@@ -299,13 +215,9 @@ impl Action for AccountMenuAction {
 
     fn name(&self) -> &'static str {
         match self.command {
-            AccountMenuCommand::ProfileSummary => "account-menu.profile-summary",
             AccountMenuCommand::Settings => "account-menu.settings",
             AccountMenuCommand::Keymap => "account-menu.keymap",
             AccountMenuCommand::Themes => "account-menu.themes",
-            AccountMenuCommand::IconThemes => "account-menu.icon-themes",
-            AccountMenuCommand::Extensions => "account-menu.extensions",
-            AccountMenuCommand::SignOut => "account-menu.sign-out",
         }
     }
 
@@ -328,7 +240,7 @@ impl Action for AccountMenuAction {
 
 #[cfg(test)]
 mod tests {
-    use super::{AccountMenuCommand, UnifiedToolbarProps, unified_toolbar};
+    use super::{AccountMenuCommand, unified_toolbar};
     use gpui::{IntoElement, Render, TestAppContext, Window};
     use serde_json::json;
 
@@ -338,10 +250,7 @@ mod tests {
             AccountMenuCommand::from_str("settings"),
             Some(AccountMenuCommand::Settings)
         );
-        assert_eq!(
-            AccountMenuCommand::from_str("sign-out"),
-            Some(AccountMenuCommand::SignOut)
-        );
+        assert_eq!(AccountMenuCommand::from_str("sign-out"), None);
         assert_eq!(AccountMenuCommand::from_str("nope"), None);
     }
 
@@ -359,7 +268,6 @@ mod tests {
     }
 
     struct ToolbarHost {
-        props: UnifiedToolbarProps,
         renders: usize,
     }
 
@@ -370,7 +278,7 @@ mod tests {
             cx: &mut gpui::Context<Self>,
         ) -> impl IntoElement {
             self.renders += 1;
-            unified_toolbar(self.props.clone(), window, cx)
+            unified_toolbar(window, cx)
         }
     }
 
@@ -378,11 +286,7 @@ mod tests {
     async fn toolbar_builds_drag_region_and_account_button(cx: &mut TestAppContext) {
         // The account `Button` widget reads the gpui-component `Theme` global.
         cx.update(gpui_component::init);
-        let props = UnifiedToolbarProps {
-            account_name: "Ada".into(),
-            account_plan: "Pro".into(),
-        };
-        let (host, cx) = cx.add_window_view(|_window, _cx| ToolbarHost { props, renders: 0 });
+        let (host, cx) = cx.add_window_view(|_window, _cx| ToolbarHost { renders: 0 });
         cx.run_until_parked();
         host.read_with(cx, |host, _cx| assert!(host.renders > 0));
     }

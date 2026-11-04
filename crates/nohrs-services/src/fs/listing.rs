@@ -1,7 +1,7 @@
 use nohrs_core::errors::Result;
 use std::ffi::OsStr;
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::time::UNIX_EPOCH;
 
 // `FileEntryDto` is a pure data type and lives in `nohrs-models`. It is
@@ -21,7 +21,9 @@ pub struct ListParams<'a> {
 
 /// One page of directory entries plus a cursor for the next page.
 pub struct ListResult {
-    /// The entries in this page, sorted case-insensitively by name.
+    /// The entries in this page. Sorted case-insensitively by name when the
+    /// folder is paged; when it all fits in one answer, in the order the
+    /// filesystem lists them, for the caller to sort its own way.
     pub entries: Vec<FileEntryDto>,
     /// Cursor to fetch the following page, or `None` when the directory is exhausted.
     pub next_cursor: Option<String>,
@@ -37,29 +39,21 @@ pub fn list_dir_sync(params: ListParams<'_>) -> Result<ListResult> {
 
 fn list_dir_impl(path: &str, limit: usize, cursor: Option<&str>) -> Result<ListResult> {
     let dir = Path::new(path);
-    let mut names: Vec<(String, PathBuf)> = Vec::new();
+    let mut entries: Vec<FileEntryDto> = Vec::new();
 
-    // Read directory entries: collect names and paths only (cheap), then sort by name for stable paging.
+    // Everything an entry shows is read here, from what `read_dir` already
+    // holds. On Windows `DirEntry::metadata` is the find data
+    // `FindNextFileW` returned with the name, and, like `symlink_metadata`,
+    // it describes a link rather than its target. Asking `symlink_metadata`
+    // by path instead reopened every file. Whole listings, median of 7
+    // alternated rounds (`examples/listing_ab.rs`, 04/11/2026, Premiere open):
+    // WinSxS\Manifests, 35,628 entries, 2,628 -> 95 ms; System32, 5,218,
+    // 174 -> 5.5 ms; a Google Drive folder, 69, 18 -> 0.9 ms. Elsewhere it
+    // is the same `lstat` as before.
     for entry in fs::read_dir(dir)? {
         let entry = entry?;
-        let file_name = os_str_to_string(entry.file_name());
-        names.push((file_name, entry.path()));
-    }
-    names.sort_by_key(|a| a.0.to_lowercase());
-
-    let total = names.len();
-    let offset = cursor
-        .and_then(|s| s.parse::<usize>().ok())
-        .unwrap_or(0)
-        .min(total);
-
-    let end = (offset + limit).min(total);
-    let slice = &names[offset..end];
-
-    let mut entries = Vec::with_capacity(slice.len());
-    for (name, path) in slice.iter() {
-        let md = fs::symlink_metadata(path);
-        let (kind, size, modified) = match md {
+        let name = os_str_to_string(entry.file_name());
+        let (kind, size, modified) = match entry.metadata() {
             Ok(md) => {
                 let modified = md
                     .modified()
@@ -67,27 +61,45 @@ fn list_dir_impl(path: &str, limit: usize, cursor: Option<&str>) -> Result<ListR
                     .and_then(|t| t.duration_since(UNIX_EPOCH).ok())
                     .map(|d| d.as_secs())
                     .unwrap_or(0);
-                if md.file_type().is_dir() {
-                    ("dir".to_string(), 0, modified)
-                } else if md.file_type().is_file() {
-                    ("file".to_string(), md.len(), modified)
-                } else if md.file_type().is_symlink() {
-                    ("symlink".to_string(), 0, modified)
+                let file_type = md.file_type();
+                if file_type.is_dir() {
+                    ("dir", 0, modified)
+                } else if file_type.is_file() {
+                    ("file", md.len(), modified)
+                } else if file_type.is_symlink() {
+                    ("symlink", 0, modified)
                 } else {
-                    ("other".to_string(), 0, modified)
+                    ("other", 0, modified)
                 }
             }
-            Err(_) => ("unknown".to_string(), 0, 0),
+            Err(_) => ("unknown", 0, 0),
         };
-
         entries.push(FileEntryDto {
-            name: name.clone(),
-            path: path.to_string_lossy().to_string(),
-            kind,
+            path: entry.path().to_string_lossy().into_owned(),
+            name,
+            kind: kind.to_string(),
             size,
             modified,
         });
     }
+    let total = entries.len();
+    let offset = cursor
+        .and_then(|s| s.parse::<usize>().ok())
+        .unwrap_or(0)
+        .min(total);
+    // A page needs an order, or the next cursor would not continue where this
+    // page stopped. The whole folder in one answer does not: the explorer and
+    // the Tree view sort it themselves, by the order the user picked, and this
+    // sort was thrown away — 8.7–10.4 ms of 82–101 for WinSxS\Manifests,
+    // 35,628 entries (`examples/listing_sort_cost.rs`, 04/11/2026). The key is
+    // computed once per entry; `sort_by_key` would lowercase both names again
+    // on every comparison.
+    if offset > 0 || limit < total {
+        entries.sort_by_cached_key(|entry| entry.name.to_lowercase());
+    }
+    let end = offset.saturating_add(limit).min(total);
+    entries.truncate(end);
+    entries.drain(..offset);
 
     let next_cursor = if end < total {
         Some(end.to_string())
@@ -129,14 +141,17 @@ mod tests {
     }
 
     #[test]
-    fn lists_files_and_dirs_sorted_case_insensitively() {
+    fn lists_files_and_dirs() {
         let dir = tempdir().unwrap();
         std::fs::write(dir.path().join("Banana"), "yellow").unwrap();
         std::fs::write(dir.path().join("apple"), "x").unwrap();
         std::fs::create_dir(dir.path().join("Cherry")).unwrap();
 
+        // The whole folder in one answer comes in the filesystem's order; the
+        // caller sorts it (see `pages_are_sorted_case_insensitively`).
         let res = list(&dir.path().to_string_lossy(), 100, None);
-        let names: Vec<_> = res.entries.iter().map(|e| e.name.as_str()).collect();
+        let mut names: Vec<_> = res.entries.iter().map(|e| e.name.as_str()).collect();
+        names.sort_by_key(|name| name.to_lowercase());
         assert_eq!(names, ["apple", "Banana", "Cherry"]);
 
         let banana = res.entries.iter().find(|e| e.name == "Banana").unwrap();
@@ -175,6 +190,32 @@ mod tests {
         let beyond = list(&path, 2, Some("99"));
         assert!(beyond.entries.is_empty());
         assert!(beyond.next_cursor.is_none());
+    }
+
+    #[test]
+    fn pages_are_sorted_case_insensitively() {
+        // A cursor only continues where the page before stopped if every page
+        // is cut from the same order.
+        // NTFS hands names back already in its own case-insensitive order,
+        // which compares upper case: there `_` (0x5F) comes after every
+        // letter, while the lowercase sort puts it before them (0x5F < 0x61).
+        // Without `_` the filesystem's order would pass for the sort.
+        let dir = tempdir().unwrap();
+        for name in ["delta", "Bravo", "_echo", "alpha", "Charlie"] {
+            std::fs::write(dir.path().join(name), "x").unwrap();
+        }
+        let path = dir.path().to_string_lossy().to_string();
+        let mut names = Vec::new();
+        let mut cursor: Option<String> = None;
+        loop {
+            let page = list(&path, 2, cursor.as_deref());
+            names.extend(page.entries.into_iter().map(|entry| entry.name));
+            match page.next_cursor {
+                Some(next) => cursor = Some(next),
+                None => break,
+            }
+        }
+        assert_eq!(names, ["_echo", "alpha", "Bravo", "Charlie", "delta"]);
     }
 
     #[test]

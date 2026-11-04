@@ -1,15 +1,33 @@
 use nohrs_core::config;
+use nohrs_core::telemetry::LogErr as _;
 
 use gpui::{AppContext, AsyncWindowContext, Context, Window};
 
 use super::ExplorerPane;
 use super::view::preview::editor::PreviewEditor;
 
+/// How long the row the arrow keys left active has to stay put before the
+/// preview follows it. Holding Down through a folder passes a row every ~30 ms
+/// (the keyboard's repeat), and each preview reads up to 2 MB, lists a folder
+/// or starts 7-Zip for an archive — none of which can be stopped once
+/// running. Waiting this long reads only the row the keys stop on; it is about
+/// one frame more than a repeat, and well under the 100 ms past which the
+/// preview would feel behind (OTIMIZACAO.md §3.10, §5.4, §7.7).
+pub(crate) const PREVIEW_FOLLOW_DELAY: std::time::Duration = std::time::Duration::from_millis(80);
+
 /// Result of reading a file for preview off the UI thread.
 enum PreviewOutcome {
     TooLarge,
     Text(String),
     Image,
+    /// A folder's contents or a zip's entries.
+    Listing(super::preview_listing::PreviewListing),
+    /// A PDF, rendered page by page once chosen.
+    Pdf,
+    /// Video or audio, played in the pane.
+    Media,
+    /// A 3D model, drawn by the pane and turned by dragging.
+    Model,
     Unsupported,
 }
 
@@ -94,14 +112,49 @@ fn is_binary_image_path(path: &str) -> bool {
 /// it must not touch any GPUI state.
 // Always invoked from `cx.background_spawn` (see `open_preview`), so its
 // blocking reads run off the GPUI foreground thread.
+fn extension_of(path: &str) -> String {
+    std::path::Path::new(path)
+        .extension()
+        .and_then(|s| s.to_str())
+        .unwrap_or("")
+        .to_lowercase()
+}
+
 #[allow(clippy::disallowed_methods)]
-fn read_preview(path: &str) -> PreviewOutcome {
+fn read_preview(path: &str, show_hidden: bool) -> PreviewOutcome {
     let metadata = match std::fs::metadata(path) {
         Ok(metadata) => metadata,
         Err(_) => return PreviewOutcome::Unsupported,
     };
+    if metadata.is_dir() {
+        return match super::preview_listing::read_folder(std::path::Path::new(path), show_hidden) {
+            Ok(listing) => PreviewOutcome::Listing(listing),
+            Err(_) => PreviewOutcome::Unsupported,
+        };
+    }
     if !metadata.is_file() {
         return PreviewOutcome::Unsupported;
+    }
+    if extension_of(path) == "pdf" {
+        return PreviewOutcome::Pdf;
+    }
+    if super::media::is_media(path) {
+        return PreviewOutcome::Media;
+    }
+    if super::model3d::is_model(path) {
+        return PreviewOutcome::Model;
+    }
+    if extension_of(path) == "zip" {
+        return match super::preview_listing::read_zip(std::path::Path::new(path)) {
+            Ok(listing) => PreviewOutcome::Listing(listing),
+            Err(_) => PreviewOutcome::Unsupported,
+        };
+    }
+    if super::preview_listing::is_other_archive(path) {
+        return match super::preview_listing::read_archive(std::path::Path::new(path)) {
+            Ok(listing) => PreviewOutcome::Listing(listing),
+            Err(_) => PreviewOutcome::Unsupported,
+        };
     }
     // Binary images are rendered from disk by path, so avoid reading the whole
     // file and attempting a UTF-8 decode just to discover it is binary. Ahead of
@@ -113,14 +166,37 @@ fn read_preview(path: &str) -> PreviewOutcome {
     if metadata.len() > config::PREVIEW_MAX_FILE_SIZE {
         return PreviewOutcome::TooLarge;
     }
-    match std::fs::read(path) {
-        Ok(bytes) => match String::from_utf8(bytes) {
+    match read_unless_binary(path, is_image_path(path)) {
+        Ok(None) => PreviewOutcome::Unsupported,
+        Ok(Some(bytes)) => match String::from_utf8(bytes) {
             Ok(text) => PreviewOutcome::Text(text),
             Err(_) if is_image_path(path) => PreviewOutcome::Image,
             Err(_) => PreviewOutcome::Unsupported,
         },
         Err(_) => PreviewOutcome::Unsupported,
     }
+}
+
+/// How much of a file is read to tell text from binary.
+const SNIFF_BYTES: usize = 8 * 1024;
+
+/// The whole file, or `None` when its first [`SNIFF_BYTES`] hold a zero byte,
+/// which no UTF-8 text the preview can show has. Until 04/11/2026 an unknown
+/// file was read whole (up to 2 MB) just for `from_utf8` to fail on it —
+/// from a cloud drive, a download of the whole thing. Text in UTF-16 has
+/// zeros too, and came out as "not available" before as well. `image` keeps
+/// what may be an image whole, for the caller's own test.
+#[allow(clippy::disallowed_methods)]
+fn read_unless_binary(path: &str, image: bool) -> std::io::Result<Option<Vec<u8>>> {
+    use std::io::Read as _;
+    let mut file = std::fs::File::open(path)?;
+    let mut bytes = Vec::new();
+    (&mut file).take(SNIFF_BYTES as u64).read_to_end(&mut bytes)?;
+    if !image && bytes.contains(&0) {
+        return Ok(None);
+    }
+    file.read_to_end(&mut bytes)?;
+    Ok(Some(bytes))
 }
 
 /// Computes the byte offset of the start of the given 0-based line index,
@@ -146,29 +222,124 @@ fn line_start_offset(text: &str, target_line: usize) -> Option<usize> {
 }
 
 impl ExplorerPane {
+    /// Moves the active row like [`Self::move_active`] and has the preview
+    /// follow it, as Explorer's preview pane follows the arrow keys. Until
+    /// 04/11/2026 the preview stayed on the last row clicked.
+    pub(crate) fn move_active_following(
+        &mut self,
+        delta: isize,
+        extend: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.move_active(delta, extend);
+        self.follow_active_in_preview(window, cx);
+    }
+
+    /// Previews the active row once it has stayed put for
+    /// [`PREVIEW_FOLLOW_DELAY`]. Each call replaces the wait before it, so a
+    /// run of key presses reads one file, the last.
+    pub(crate) fn follow_active_in_preview(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        // A hidden preview reads nothing; the next click shows the row then.
+        if !self.preview_visible {
+            self.preview_follow = None;
+            return;
+        }
+        let Some(path) = self
+            .active_row()
+            .and_then(|row| self.filtered_entries.get(row))
+            // What a click previews (`row.rs`): not a link or a device.
+            .filter(|entry| entry.kind == "file" || entry.kind == "dir")
+            .map(|entry| entry.path.clone())
+        else {
+            self.preview_follow = None;
+            return;
+        };
+        if self.preview_path.as_deref() == Some(path.as_str()) {
+            self.preview_follow = None;
+            return;
+        }
+        let delay = self.preview_follow_delay;
+        self.preview_follow = Some(cx.spawn_in(window, async move |this, cx| {
+            cx.background_executor().timer(delay).await;
+            this.update_in(cx, |pane, window, cx| {
+                // A click in the meantime moved on to another row, and
+                // previewed it itself.
+                if pane.active_path.as_deref() == Some(path.as_str())
+                    && pane.preview_path.as_deref() != Some(path.as_str())
+                {
+                    pane.open_preview(path, window, cx);
+                }
+            })
+            .log_err();
+        }));
+    }
+
+    /// Previews `path`, picked in the listing: a new look, so the preview's
+    /// own back history starts over.
     pub(crate) fn open_preview(
         &mut self,
         path: String,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        self.preview_back.clear();
+        self.load_preview(path, window, cx);
+    }
+
+    /// Previews `path`, clicked inside the preview's folder listing; the
+    /// back button returns to what was shown before.
+    pub(crate) fn preview_into(&mut self, path: String, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(current) = self.preview_path.take() {
+            self.preview_back.push(current);
+        }
+        self.load_preview(path, window, cx);
+    }
+
+    /// Back to what the preview showed before the last [`Self::preview_into`].
+    pub(crate) fn preview_go_back(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(previous) = self.preview_back.pop() {
+            self.load_preview(previous, window, cx);
+        }
+    }
+
+    /// Closes whatever the preview shows, releasing the player, the PDF pages
+    /// and the model's image. The one list of what makes up the preview, for
+    /// opening another file and for a refresh that found the file gone.
+    pub(crate) fn clear_preview(&mut self, cx: &mut Context<Self>) {
+        self.close_model_preview(cx);
         self.preview_editor = None;
         self.preview_image_path = None;
         self.preview_markdown = None;
         self.preview_message = None;
         self.preview_text = None;
+        self.preview_listing = None;
+        self.close_pdf_preview(cx);
+        self.close_media_preview(cx);
+        self.preview_path = None;
+    }
+
+    fn load_preview(&mut self, path: String, window: &mut Window, cx: &mut Context<Self>) {
+        self.preview_zoom = 1.0;
+        self.preview_pan = None;
+        self.preview_scroll.set_offset(gpui::Point::default());
+        self.clear_preview(cx);
         // Record the path being loaded so that out-of-order async completions
         // (the user clicking another file before this read finishes) can be
         // detected and discarded below.
         self.preview_path = Some(path.clone());
         cx.notify();
 
+        let show_hidden = self.show_hidden;
         let read_task = cx.background_spawn({
             let path = path.clone();
-            async move { read_preview(&path) }
+            async move { read_preview(&path, show_hidden) }
         });
 
-        cx.spawn_in(
+        // Held, not detached: the next preview replaces it, which drops the
+        // read of this file if a worker has not started it yet. One already
+        // running finishes and is discarded by the path check below.
+        self.preview_load = Some(cx.spawn_in(
             window,
             move |this: gpui::WeakEntity<ExplorerPane>, cx: &mut AsyncWindowContext| {
                 let mut cx = cx.clone();
@@ -185,8 +356,7 @@ impl ExplorerPane {
                     }
                 }
             },
-        )
-        .detach();
+        ));
     }
 
     fn apply_preview_outcome(
@@ -204,6 +374,24 @@ impl ExplorerPane {
             PreviewOutcome::Image => {
                 self.preview_path = Some(path.clone());
                 self.preview_image_path = Some(path);
+            }
+            PreviewOutcome::Pdf => {
+                self.preview_path = Some(path.clone());
+                self.open_pdf_preview(path, cx);
+            }
+            PreviewOutcome::Media => {
+                self.preview_path = Some(path.clone());
+                self.open_media_preview(path, cx);
+            }
+            PreviewOutcome::Model => {
+                self.preview_path = Some(path.clone());
+                self.open_model_preview(path, cx);
+            }
+            PreviewOutcome::Listing(listing) => {
+                self.preview_path = Some(path);
+                self.preview_listing = Some(std::rc::Rc::new(listing));
+                // Another folder starts at its top.
+                self.preview_listing_scroll.scroll_to_item(0, gpui::ScrollStrategy::Top);
             }
             PreviewOutcome::Unsupported => {
                 self.preview_path = Some(path);
@@ -358,12 +546,32 @@ mod tests {
     }
 
     #[test]
+    fn a_binary_file_is_not_read_past_its_first_bytes() {
+        let dir = tempfile::tempdir().unwrap();
+        // A program: zeros early, and far bigger than what is looked at.
+        let program = dir.path().join("app.dll");
+        let mut bytes = b"MZ\x90\x00".to_vec();
+        bytes.resize(1024 * 1024, 7);
+        std::fs::write(&program, &bytes).unwrap();
+        assert!(read_unless_binary(&program.to_string_lossy(), false).unwrap().is_none());
+
+        // Text longer than the sniffed part arrives whole.
+        let notes = dir.path().join("notas.txt");
+        let text = "linha de texto\n".repeat(2000);
+        std::fs::write(&notes, &text).unwrap();
+        assert_eq!(read_unless_binary(&notes.to_string_lossy(), false).unwrap(), Some(text.into_bytes()));
+
+        // What may be an image is read whole for the caller to try.
+        assert!(read_unless_binary(&program.to_string_lossy(), true).unwrap().is_some());
+    }
+
+    #[test]
     fn read_preview_classifies_files() {
         let dir = tempfile::tempdir().unwrap();
 
         let text_path = dir.path().join("note.txt");
         std::fs::write(&text_path, "hello\nworld").unwrap();
-        match read_preview(&text_path.to_string_lossy()) {
+        match read_preview(&text_path.to_string_lossy(), false) {
             PreviewOutcome::Text(body) => assert_eq!(body, "hello\nworld"),
             _ => panic!("expected Text"),
         }
@@ -372,7 +580,7 @@ mod tests {
         let png_path = dir.path().join("pic.png");
         std::fs::write(&png_path, [0u8, 1, 2, 3]).unwrap();
         assert!(matches!(
-            read_preview(&png_path.to_string_lossy()),
+            read_preview(&png_path.to_string_lossy(), false),
             PreviewOutcome::Image
         ));
 
@@ -380,17 +588,17 @@ mod tests {
         let bin_path = dir.path().join("blob.bin");
         std::fs::write(&bin_path, [0xff, 0xfe, 0xfd]).unwrap();
         assert!(matches!(
-            read_preview(&bin_path.to_string_lossy()),
+            read_preview(&bin_path.to_string_lossy(), false),
             PreviewOutcome::Unsupported
         ));
 
-        // A directory and a missing path are both Unsupported.
+        // A directory lists its contents; a missing path is Unsupported.
         assert!(matches!(
-            read_preview(&dir.path().to_string_lossy()),
-            PreviewOutcome::Unsupported
+            read_preview(&dir.path().to_string_lossy(), false),
+            PreviewOutcome::Listing(_)
         ));
         assert!(matches!(
-            read_preview("/nonexistent/path/here"),
+            read_preview("/nonexistent/path/here", false),
             PreviewOutcome::Unsupported
         ));
     }

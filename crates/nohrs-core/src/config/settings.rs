@@ -90,16 +90,17 @@ impl Default for Config {
 pub struct Theme {
     /// Light/dark selection, or following the OS.
     pub mode: ThemeMode,
-    /// Accent colour, given as a named colour or a hex string. Full
-    /// customization lands in P5; P1 stores the value and applies the mode.
+    /// Accent colour: one of the named colours the settings page offers
+    /// (`orange`, `blue`, `teal`, `green`, `purple`, `pink`, `red`) or a
+    /// `#rrggbb` hex string. Anything else falls back to orange.
     pub accent: String,
 }
 
 impl Default for Theme {
     fn default() -> Self {
         Self {
-            mode: ThemeMode::System,
-            accent: "blue".to_string(),
+            mode: ThemeMode::Dark,
+            accent: "orange".to_string(),
         }
     }
 }
@@ -110,18 +111,29 @@ impl Default for Theme {
 pub struct Ui {
     /// Column the listing is sorted by on load.
     pub default_sort: SortOrder,
+    /// Whether that default runs from Z to A, largest or newest first.
+    pub default_sort_descending: bool,
     /// Whether dotfiles are shown in listings.
     pub show_hidden: bool,
     /// Identifier of the icon pack used to render entries.
     pub icon_pack: String,
+    /// Most lines a name takes under an icon in the icons view, the last
+    /// one ending in "…" when the name needs more; 0 = no limit.
+    pub name_lines: u32,
+    /// How smoothly the mouse wheel scrolls the listing, 0..=100: 0 moves
+    /// in steps, 100 glides for longest.
+    pub scroll_smoothness: u32,
 }
 
 impl Default for Ui {
     fn default() -> Self {
         Self {
             default_sort: SortOrder::Name,
+            default_sort_descending: false,
             show_hidden: false,
             icon_pack: "default".to_string(),
+            name_lines: 0,
+            scroll_smoothness: 50,
         }
     }
 }
@@ -624,11 +636,12 @@ impl Config {
              schema_version = {CURRENT_SCHEMA_VERSION}\n\
              \n\
              [theme]\n\
-             mode = \"system\"   # \"system\" | \"light\" | \"dark\"\n\
-             accent = \"blue\"   # named colour or hex (full customization in P5)\n\
+             mode = \"dark\"   # \"system\" | \"light\" | \"dark\"\n\
+             accent = \"orange\"   # \"orange\" | \"blue\" | \"teal\" | \"green\" | \"purple\" | \"pink\" | \"red\" | hex\n\
              \n\
              [ui]\n\
              default_sort = \"name\"   # \"name\" | \"modified\" | \"size\" | \"kind\"\n\
+             default_sort_descending = false  # true = Z to A, largest or newest first\n\
              show_hidden = false\n\
              icon_pack = \"default\"\n\
              \n\
@@ -706,6 +719,15 @@ fn read_ui(table: &toml::Table, ui: &mut Ui, diagnostics: &mut Vec<Diagnostic>) 
             ))),
         }
     }
+    if let Some(value) = table.get("default_sort_descending") {
+        match value.as_bool() {
+            Some(flag) => ui.default_sort_descending = flag,
+            None => diagnostics.push(Diagnostic::warn(format!(
+                "invalid ui.default_sort_descending {value}; using {}",
+                ui.default_sort_descending
+            ))),
+        }
+    }
     if let Some(value) = table.get("show_hidden") {
         match value.as_bool() {
             Some(flag) => ui.show_hidden = flag,
@@ -724,9 +746,34 @@ fn read_ui(table: &toml::Table, ui: &mut Ui, diagnostics: &mut Vec<Diagnostic>) 
             ))),
         }
     }
+    if let Some(value) = table.get("name_lines") {
+        match value.as_integer().and_then(|lines| u32::try_from(lines).ok()).filter(|&lines| lines <= 20) {
+            Some(lines) => ui.name_lines = lines,
+            None => diagnostics.push(Diagnostic::warn(format!(
+                "invalid ui.name_lines {value}; using {}",
+                ui.name_lines
+            ))),
+        }
+    }
+    if let Some(value) = table.get("scroll_smoothness") {
+        match value.as_integer().and_then(|v| u32::try_from(v).ok()).filter(|&v| v <= 100) {
+            Some(smoothness) => ui.scroll_smoothness = smoothness,
+            None => diagnostics.push(Diagnostic::warn(format!(
+                "invalid ui.scroll_smoothness {value}; using {}",
+                ui.scroll_smoothness
+            ))),
+        }
+    }
     warn_unknown_keys(
         table,
-        &["default_sort", "show_hidden", "icon_pack"],
+        &[
+            "default_sort",
+            "default_sort_descending",
+            "show_hidden",
+            "icon_pack",
+            "name_lines",
+            "scroll_smoothness",
+        ],
         "ui.",
         diagnostics,
     );
@@ -1098,8 +1145,8 @@ mod tests {
     fn defaults_match_spec() {
         let config = Config::default();
         assert_eq!(config.schema_version, 1);
-        assert_eq!(config.theme.mode, ThemeMode::System);
-        assert_eq!(config.theme.accent, "blue");
+        assert_eq!(config.theme.mode, ThemeMode::Dark);
+        assert_eq!(config.theme.accent, "orange");
         assert_eq!(config.ui.default_sort, SortOrder::Name);
         assert!(!config.ui.show_hidden);
         assert_eq!(config.ui.icon_pack, "default");
@@ -1114,6 +1161,7 @@ mod tests {
             accent = "#ff8800"
             [ui]
             default_sort = "modified"
+            default_sort_descending = true
             show_hidden = true
             icon_pack = "nerd"
         "##;
@@ -1122,6 +1170,7 @@ mod tests {
         assert_eq!(config.theme.mode, ThemeMode::Dark);
         assert_eq!(config.theme.accent, "#ff8800");
         assert_eq!(config.ui.default_sort, SortOrder::Modified);
+        assert!(config.ui.default_sort_descending);
         assert!(config.ui.show_hidden);
         assert_eq!(config.ui.icon_pack, "nerd");
     }
@@ -1283,7 +1332,7 @@ mod tests {
         // No errors: the file still loads.
         assert!(errors(&diagnostics).is_empty());
         // Bad fields fall back to defaults; others are untouched.
-        assert_eq!(config.theme.mode, ThemeMode::System);
+        assert_eq!(config.theme.mode, ThemeMode::Dark);
         assert_eq!(config.ui.default_sort, SortOrder::Name);
         assert!(!config.ui.show_hidden);
         // Three warnings: mode, default_sort, show_hidden.

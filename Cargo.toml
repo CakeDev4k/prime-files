@@ -14,7 +14,7 @@ members = [
 # P4 以降に追加:
 #   "crates/nohrs-plugin-host",
 #   "crates/plugins/*"
-exclude = ["web"]
+exclude = ["web", "third_party/gpui"]
 
 # gpui renders with Metal/Blade and the GUI stack is only exercised on macOS, so
 # Linux CI builds headless. `default-members` keeps bare `cargo build`/`test`/
@@ -69,3 +69,18 @@ missing_docs = "warn"
 [workspace.lints.clippy]
 unwrap_used = "warn"
 expect_used = "warn"
+
+# The release build is what `iniciar-nohrs.bat` runs day to day (debug scrolls
+# too slowly through big folders), so it is tuned for rebuilding after an edit
+# rather than for shipping: incremental keeps the unchanged parts of a crate,
+# and more codegen units split the optimizer's work across the cores. The cost
+# is a slightly slower binary, not visible in use. Dependencies keep the
+# default and are built once.
+[profile.release]
+incremental = true
+codegen-units = 256
+
+# gpui 0.2.2 with one fix in its Windows drop target (third_party/gpui/NOHRS.md).
+# Without it, dragging files out of Nohrs and over its own window crashes.
+[patch.crates-io]
+gpui = { path = "third_party/gpui" }

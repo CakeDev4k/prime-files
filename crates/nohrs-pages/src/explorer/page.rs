@@ -181,6 +181,9 @@ impl ExplorerPage {
         cx: &mut Context<Self>,
     ) -> Self {
         bind_pane_keys(cx);
+        // Before any tab reads a folder, so the first one already opens as it
+        // was left.
+        super::folder_views::FolderViews::install(store.clone(), cx);
         let build_search_service = search_service.clone();
         let (group, first_tab) = PaneGroup::new(
             Box::new(move |window, cx| {
@@ -511,6 +514,23 @@ impl ExplorerPage {
         (pane.selection.len(), pane.filtered_entries.len())
     }
 
+    /// Folders and files in the active tab, for the footer: `(folders, files
+    /// shown, files in the folder)`. Shown is after the filter or search.
+    pub fn listing_counts(&self, cx: &App) -> (usize, usize, usize) {
+        let pane = self.group.active_pane().read(cx);
+        let is_file = |entry: &&nohrs_services::fs::listing::FileEntryDto| entry.kind != "dir";
+        let folders = pane.filtered_entries.iter().filter(|entry| entry.kind == "dir").count();
+        let shown = pane.filtered_entries.iter().filter(is_file).count();
+        // Search results come from other folders too: compared with this
+        // folder's files they read as "1121 of 272".
+        let total = if pane.search_results.is_some() {
+            shown
+        } else {
+            pane.entries.iter().filter(is_file).count()
+        };
+        (folders, shown, total)
+    }
+
     /// Listing zoom of the active tab, for the footer's zoom control.
     pub fn zoom(&self, cx: &App) -> f32 {
         self.group.active_pane().read(cx).zoom
@@ -521,6 +541,92 @@ impl ExplorerPage {
         self.group
             .active_pane()
             .update(cx, |pane, cx| pane.set_zoom(zoom, cx));
+    }
+
+    /// Shows `folder` and selects `select` in it, the way another program
+    /// asks for a path: a new tab in the active pane, unless the active tab is
+    /// already showing that folder.
+    pub fn open_path(
+        &mut self,
+        folder: String,
+        select: Option<String>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let pane_index = self.group.active();
+        let current = self.group.active_pane().clone();
+        let already_there = super::same_path(&current.read(cx).cwd, &folder);
+        let tab = if already_there {
+            current
+        } else {
+            let sidebar_visible = current.read(cx).sidebar_visible;
+            let Some(tab) = self.group.add_tab(pane_index, window, cx) else {
+                return;
+            };
+            self.subscribe_tab(&tab, cx);
+            self.configure_tab(&tab, Some(folder), sidebar_visible, cx);
+            self.group.set_active(pane_index, window, cx);
+            tab
+        };
+        tab.update(cx, |pane, cx| {
+            // Loaded now rather than on the next frame, so the file asked for is
+            // there to select.
+            pane.ensure_loaded(cx);
+            if let Some(select) = &select {
+                pane.reveal(select);
+            }
+            cx.notify();
+        });
+        self.group.focus_active(window, cx);
+        self.schedule_save(cx);
+        cx.notify();
+    }
+
+    /// Points the tab with entity id `tab_id` at `folder`, selecting `select`
+    /// in it. Returns whether such a tab exists.
+    pub fn navigate_tab(
+        &mut self,
+        tab_id: u64,
+        folder: String,
+        select: Option<String>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        let Some(tab) = self
+            .group
+            .all_tabs()
+            .into_iter()
+            .find(|tab| tab.entity_id().as_u64() == tab_id)
+        else {
+            return false;
+        };
+        if let Some((pane_index, tab_index)) = self.group.locate_tab(tab.entity_id()) {
+            self.group.set_active_tab(pane_index, tab_index, window, cx);
+            self.group.set_active(pane_index, window, cx);
+        }
+        tab.update(cx, |pane, cx| {
+            pane.change_dir(folder, window, cx);
+            pane.ensure_loaded(cx);
+            if let Some(select) = &select {
+                pane.reveal(select);
+            }
+        });
+        self.group.focus_active(window, cx);
+        cx.notify();
+        true
+    }
+
+    /// Every open tab as `(entity id, folder, whether it is the active one)`.
+    pub fn tabs(&self, cx: &App) -> Vec<(u64, String, bool)> {
+        let active = self.group.active_pane().entity_id();
+        self.group
+            .all_tabs()
+            .into_iter()
+            .map(|tab| {
+                let id = tab.entity_id();
+                (id.as_u64(), tab.read(cx).cwd.clone(), id == active)
+            })
+            .collect()
     }
 
     /// Absolute path of the active tab's current directory, for the footer.
@@ -608,9 +714,9 @@ impl ExplorerPage {
 }
 
 impl Render for ExplorerPage {
-    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let callbacks = Self::pane_callbacks();
-        let body = self.group.render(cx, &callbacks);
+        let body = self.group.render(window, cx, &callbacks);
 
         div()
             .size_full()
@@ -660,6 +766,14 @@ impl Render for ExplorerPage {
 impl crate::Page for ExplorerPage {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
         <Self as Render>::render(self, window, cx).into_any_element()
+    }
+}
+
+impl ExplorerPage {
+    /// Whether the tab row draws the window's buttons, so the root leaves
+    /// out its own title bar.
+    pub fn tabs_in_title_bar(&self) -> bool {
+        self.group.tabs_in_title_bar()
     }
 }
 

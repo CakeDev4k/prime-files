@@ -1,0 +1,31 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <!-- Listary loads file application plugins into its .NET Framework host. -->
+    <TargetFramework>net48</TargetFramework>
+    <LangVersion>latest</LangVersion>
+    <Nullable>disable</Nullable>
+    <DebugType>none</DebugType>
+    <!-- The host already provides the interfaces assembly; shipping our own copy
+         is what every published plugin does, and it must match 1.0.0. -->
+    <CopyLocalLockFileAssemblies>true</CopyLocalLockFileAssemblies>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Listary.FileAppPlugin" Version="1.0.0" />
+    <!-- Lets the .NET SDK build for .NET Framework without Visual Studio's
+         targeting pack. -->
+    <PackageReference Include="Microsoft.NETFramework.ReferenceAssemblies" Version="1.0.3" PrivateAssets="all" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- JavaScriptSerializer: JSON without adding a dependency the host lacks. -->
+    <Reference Include="System.Web.Extensions" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <None Update="Icon.png" CopyToOutputDirectory="PreserveNewest" />
+    <None Update="ListaryPluginManifest.json" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
+</Project>

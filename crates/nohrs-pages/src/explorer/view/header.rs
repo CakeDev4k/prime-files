@@ -3,6 +3,8 @@ use crate::explorer::ExplorerPane;
 use gpui::prelude::*;
 use gpui::*;
 use gpui_component::breadcrumb::{Breadcrumb, BreadcrumbItem};
+use gpui_component::Sizable;
+use gpui_component::input::Input;
 use gpui_component::list::ListItem;
 use gpui_component::{Icon, IconName};
 use nohrs_ui::theme::theme;
@@ -61,7 +63,7 @@ pub fn render(
     let can_go_forward = page.history_index + 1 < page.history.len();
 
     // Store search_visible for use in search toggle style
-    let search_visible = page.search_visible;
+    let preview_visible = page.preview_visible;
     let entry_count = page.filtered_entries.len();
 
     div()
@@ -122,13 +124,30 @@ pub fn render(
                         .mx(px(6.0)),
                 ),
         )
-        .child(
-            div()
+        .child(match &page.path_edit {
+            Some(state) => div()
                 .flex_1()
+                .min_w(px(0.0))
+                .child(Input::new(&state.input).small().text_sm())
+                .into_any_element(),
+            // A double click anywhere on the bar, crumbs included, turns it
+            // into the full path; a single click on a crumb still navigates.
+            None => div()
+                .id("path-bar")
+                .flex_1()
+                .h(px(28.0))
+                .flex()
+                .items_center()
                 .overflow_hidden()
                 .min_w(px(0.0))
-                .child(div().flex().items_center().child(bc)),
-        )
+                .on_click(cx.listener(|this, event: &ClickEvent, window, cx| {
+                    if event.click_count() >= 2 {
+                        this.begin_path_edit(window, cx);
+                    }
+                }))
+                .child(bc)
+                .into_any_element(),
+        })
         .child(
             div()
                 .flex()
@@ -145,20 +164,27 @@ pub fn render(
                 )
                 .child(render_view_mode_toggle(page, cx))
                 .child(
-                    ListItem::new("search-toggle")
+                    // The preview switch sits up here, beside the view modes,
+                    // where it is seen: the preview is one of the explorer's
+                    // most used parts. The filter menu went to the bottom bar.
+                    ListItem::new("preview-toggle")
                         .px(px(8.0))
                         .py(px(6.0))
                         .rounded(px(6.0))
-                        .on_click(cx.listener(|view, _, window, cx| {
-                            view.toggle_search(window, cx);
+                        .on_click(cx.listener(|view, _, _, cx| {
+                            view.preview_visible = !view.preview_visible;
+                            cx.notify();
                         }))
-                        .child(Icon::new(IconName::Search).size_4().text_color(
-                            if search_visible {
-                                rgb(theme::accent())
-                            } else {
-                                rgb(theme::gray_600())
-                            },
-                        )),
+                        .child(
+                            Icon::new(Icon::empty())
+                                .path("icons/panel-right.svg")
+                                .size_4()
+                                .text_color(if preview_visible {
+                                    rgb(theme::accent())
+                                } else {
+                                    rgb(theme::gray_600())
+                                }),
+                        ),
                 ),
         )
 }
@@ -204,7 +230,8 @@ fn view_mode_button(
     label: &'static str,
     cx: &mut Context<ExplorerPane>,
 ) -> impl IntoElement + use<> {
-    let is_active = page.view_mode == mode;
+    // Tree and List are views of the list side, so its button stays lit.
+    let is_active = (page.view_mode == ViewMode::Grid) == (mode == ViewMode::Grid);
     // The active segment lifts onto white so its accent icon reads against the
     // group's tinted track, rather than accent-on-gray.
     ListItem::new(id)

@@ -2,6 +2,8 @@ use super::super::types::ViewMode;
 use crate::explorer::{ExplorerPane, zoom};
 use gpui::*;
 
+/// The List view: names in columns, scrolling sideways.
+pub mod compact;
 /// Grid-mode rendering of the listing.
 pub mod grid;
 /// List-mode rendering of the listing.
@@ -22,12 +24,15 @@ pub fn render(
     // In both modes: the preview pane draws from the same cache, and the list
     // has to release a folder's thumbnails on leaving it just as the grid does.
     page.thumbnails.show_directory(&page.cwd, cx);
+    page.thumbnails.begin_frame(cx);
+    page.sync_hit_boxes();
 
     let file_list = match page.view_mode {
-        ViewMode::List => list::render(page, cx),
+        ViewMode::List | ViewMode::Tree => list::render(page, cx),
+        ViewMode::Compact => compact::render(page, window, cx),
         ViewMode::Grid => grid::render(page, window, cx),
     };
-    let file_list = with_wheel_zoom(file_list, cx);
+    let file_list = with_wheel_zoom(page, file_list, listing_scrollbar(page), cx);
 
     if page.search_visible {
         div()
@@ -42,30 +47,151 @@ pub fn render(
     }
 }
 
+/// Height of a group's header row in the list.
+pub const GROUP_HEADER_HEIGHT: f32 = 34.0;
+
+/// The header above a group of entries ("Imagens  12"), in the list and the
+/// grid alike.
+pub fn group_header(group: &crate::explorer::grouping::Group, width: f32) -> Div {
+    use nohrs_ui::theme::theme;
+    div()
+        .w(px(width))
+        .h(px(GROUP_HEADER_HEIGHT))
+        .px(px(24.0))
+        .flex()
+        .items_end()
+        .pb(px(6.0))
+        .child(
+            div()
+                .flex()
+                .items_center()
+                .gap_2()
+                .w_full()
+                .border_b_1()
+                .border_color(rgb(theme::border()))
+                .pb(px(4.0))
+                .child(
+                    div()
+                        .text_xs()
+                        .font_weight(FontWeight::SEMIBOLD)
+                        .text_color(rgb(theme::fg()))
+                        .child(group.label),
+                )
+                .child(
+                    div()
+                        .text_xs()
+                        .text_color(rgb(theme::fg_secondary()))
+                        .child(group.len.to_string()),
+                ),
+        )
+}
+
 /// Makes Ctrl+wheel over the listing zoom it instead of scrolling it.
 ///
 /// Caught in the capture phase: the virtual lists inside handle the wheel as it
 /// bubbles, so by the time a bubbling handler here ran they would already have
 /// scrolled.
-fn with_wheel_zoom(listing: AnyElement, cx: &mut Context<ExplorerPane>) -> AnyElement {
+fn with_wheel_zoom(
+    page: &ExplorerPane,
+    listing: AnyElement,
+    scrollbar: gpui_component::scroll::Scrollbar,
+    cx: &mut Context<ExplorerPane>,
+) -> AnyElement {
     let entity = cx.entity();
+    let hit_boxes = page.hit_boxes.clone();
     div()
         .relative()
         .flex_1()
         .flex()
         .flex_col()
+        .min_w(px(0.0))
         .min_h(px(0.0))
+        .on_mouse_down(
+            MouseButton::Right,
+            cx.listener(|this, event: &MouseDownEvent, window, cx| {
+                this.open_context_menu(None, event.modifiers.shift, window, cx);
+            }),
+        )
+        // Bubbles up after the entries' own handlers: a press that no entry
+        // took (and no blank part of a row already turned into a rectangle)
+        // was on empty space.
+        .on_mouse_down(
+            MouseButton::Left,
+            cx.listener(|this, event: &MouseDownEvent, _window, cx| {
+                if this.drag_candidate.is_none() && this.marquee.is_none() {
+                    this.start_marquee(event.position, event.modifiers, None, cx);
+                }
+            }),
+        )
+        .on_mouse_move(cx.listener(|this, event: &MouseMoveEvent, window, cx| {
+            this.drag_moved(event, window, cx);
+        }))
+        // After a row's own click, which has to see that the press became a
+        // rectangle and leave the selection alone.
+        .on_mouse_up(
+            MouseButton::Left,
+            cx.listener(|this, _event: &MouseUpEvent, _window, cx| {
+                this.release_entry(cx);
+                this.end_marquee(cx);
+            }),
+        )
+        .on_drop(cx.listener(|this, paths: &ExternalPaths, window, cx| {
+            let folder = std::path::PathBuf::from(&this.cwd);
+            this.drop_paths(paths.paths(), folder, window, cx);
+        }))
         .child(listing)
+        .child(scrollbar)
+        .children(page.marquee_overlay())
         .child(
             canvas(
-                |_, _, _| {},
+                move |bounds, _, _| hit_boxes.set_listing(bounds),
                 move |bounds, _, window, _cx| {
                     let entity = entity.clone();
-                    window.on_mouse_event(move |event: &ScrollWheelEvent, phase, _window, cx| {
-                        if phase != DispatchPhase::Capture
-                            || !event.modifiers.secondary()
-                            || !bounds.contains(&event.position)
-                        {
+                    // The rectangle follows the pointer outside the listing
+                    // too (that is how it scrolls), so these listen to the
+                    // whole window.
+                    window.on_mouse_event({
+                        let entity = entity.clone();
+                        move |event: &MouseMoveEvent, phase, _window, cx| {
+                            if phase != DispatchPhase::Capture {
+                                return;
+                            }
+                            let pressed = event.pressed_button == Some(MouseButton::Left);
+                            entity.update(cx, |page, cx| {
+                                if page.marquee.is_some() {
+                                    page.marquee_moved(event.position, pressed, cx);
+                                }
+                            });
+                        }
+                    });
+                    window.on_mouse_event({
+                        let entity = entity.clone();
+                        move |event: &MouseUpEvent, phase, _window, cx| {
+                            // Inside, the listing's own mouse-up ends it.
+                            if phase != DispatchPhase::Capture
+                                || event.button != MouseButton::Left
+                                || bounds.contains(&event.position)
+                            {
+                                return;
+                            }
+                            entity.update(cx, |page, cx| page.end_marquee(cx));
+                        }
+                    });
+                    window.on_mouse_event(move |event: &ScrollWheelEvent, phase, window, cx| {
+                        if phase != DispatchPhase::Capture || !bounds.contains(&event.position) {
+                            return;
+                        }
+                        if !event.modifiers.secondary() {
+                            // A mouse wheel's notches glide (`smooth_scroll`);
+                            // a touchpad's pixels and Shift+wheel go on to gpui.
+                            if let ScrollDelta::Lines(_) = event.delta
+                                && !event.modifiers.shift
+                            {
+                                let delta = event.delta.pixel_delta(window.line_height());
+                                if entity.update(cx, |page, cx| page.smooth_wheel(delta, cx)) {
+                                    cx.stop_propagation();
+                                }
+                            }
                             return;
                         }
                         let notches = match event.delta {
@@ -80,8 +206,8 @@ fn with_wheel_zoom(listing: AnyElement, cx: &mut Context<ExplorerPane>) -> AnyEl
                         };
                         if notches != 0.0 {
                             entity.update(cx, |page, cx| {
-                                let next = zoom::step(page.zoom, notches * zoom::STEP);
-                                page.set_zoom(next, cx);
+                                let next = zoom::step(page.zoom_target, notches * zoom::STEP);
+                                page.zoom_to(next, cx);
                             });
                         }
                         cx.stop_propagation();
@@ -92,6 +218,40 @@ fn with_wheel_zoom(listing: AnyElement, cx: &mut Context<ExplorerPane>) -> AnyEl
             .size_full(),
         )
         .into_any_element()
+}
+
+/// The whole size of a virtual list whose rows (or columns, when
+/// `horizontal`) are `sizes`.
+pub(crate) fn extent(sizes: &[Size<Pixels>], horizontal: bool) -> Size<Pixels> {
+    let along: f32 = sizes
+        .iter()
+        .map(|item| f32::from(if horizontal { item.width } else { item.height }))
+        .sum();
+    let across = sizes
+        .iter()
+        .map(|item| f32::from(if horizontal { item.height } else { item.width }))
+        .fold(0.0, f32::max);
+    if horizontal { size(px(along), px(across)) } else { size(px(across), px(along)) }
+}
+
+// The listing's scrollbar, always shown, as Explorer's. Drawn over the
+// panel, whose height is the view's, with the length of the whole folder
+// (`listing_extent`): the virtual list lays out only the rows on screen, so
+// a bar fed by its scroll handle alone never appeared.
+fn listing_scrollbar(page: &ExplorerPane) -> gpui_component::scroll::Scrollbar {
+    let (handle, horizontal) = match page.view_mode {
+        ViewMode::List | ViewMode::Tree => (&page.virtual_scroll_handle, false),
+        ViewMode::Grid => (&page.grid_scroll_handle, false),
+        ViewMode::Compact => (&page.compact_scroll_handle, true),
+    };
+    let bar = if horizontal {
+        gpui_component::scroll::Scrollbar::horizontal(handle)
+    } else {
+        gpui_component::scroll::Scrollbar::vertical(handle)
+    };
+    bar.id("listing-scrollbar")
+        .scroll_size(page.listing_extent)
+        .scrollbar_show(gpui_component::scroll::ScrollbarShow::Always)
 }
 
 /// Truncates `text` to at most `max_len` characters by eliding the middle,
@@ -107,7 +267,7 @@ pub fn truncate_middle(text: &str, max_len: usize) -> String {
 
     // Too little room for the "..." marker plus any content: just take the
     // leading characters so the result never exceeds `max_len` (the contract
-    // above). Callers pass `max_len >= 20`, so this only guards pathological
+    // above). Callers pass `max_len >= 8`, so this only guards pathological
     // inputs, but keeping the function self-consistent avoids surprises.
     if max_len <= ELLIPSIS {
         return chars[..max_len].iter().collect();

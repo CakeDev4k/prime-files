@@ -23,8 +23,8 @@ use std::hint::black_box;
 use tempfile::TempDir;
 
 /// The largest directory measured, and the one the paging benchmarks use.
-/// 1,000 is the current `DIR_LISTING_LIMIT`, so 10,000 shows what a directory
-/// past the limit costs to page through.
+/// 1,000 was the explorer's page until 04/11/2026 (it now reads whole
+/// folders), so 10,000 shows what a directory past one page costs.
 const LARGE: usize = 10_000;
 
 const SMALL_SIZES: [usize; 3] = [10, 100, 1_000];

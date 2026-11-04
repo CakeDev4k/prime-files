@@ -76,7 +76,8 @@ fn handle_identity(file: &fs::File) -> Option<EntryIdentity> {
     file.metadata().ok().map(|entry| (entry.dev(), entry.ino()))
 }
 
-#[cfg(not(unix))]
+// Windows claims a copied file inside `CopyFileExW` and never holds the handle.
+#[cfg(not(any(unix, windows)))]
 fn handle_identity(_file: &fs::File) -> Option<EntryIdentity> {
     None
 }
@@ -443,6 +444,41 @@ pub fn would_conflict(dst: &Path) -> bool {
     path_occupied(dst)
 }
 
+/// Whether renaming `src` to `dst` would collide with something other than
+/// `src` itself.
+///
+/// On a case-insensitive filesystem — NTFS, FAT, exFAT, APFS by default —
+/// `Foto.jpg` is taken by `foto.jpg`, so [`would_conflict`] says yes to the
+/// rename that only changes case, and the explorer numbered it into
+/// `Foto (1).jpg` (04/11/2026). A rename onto its own entry is no collision:
+/// the rename itself changes the stored case. A link at `dst` counts as a
+/// collision even when it points at `src`, since renaming over it would
+/// destroy the link.
+pub fn would_collide_with_another(src: &Path, dst: &Path) -> bool {
+    if !path_occupied(dst) {
+        return false;
+    }
+    let link = fs::symlink_metadata(dst).is_ok_and(|entry| entry.is_symlink());
+    link || !is_this_entry(src, dst)
+}
+
+// Whether `one` and `other` reach the same entry, case and links aside. On
+// Windows `canonicalize` asks the filesystem for the final path of what it
+// opens, with the case as stored, so both names come back the same when they
+// are the same file.
+#[cfg(windows)]
+fn is_this_entry(one: &Path, other: &Path) -> bool {
+    match (fs::canonicalize(one), fs::canonicalize(other)) {
+        (Ok(one), Ok(other)) => one == other,
+        _ => false,
+    }
+}
+
+#[cfg(not(windows))]
+fn is_this_entry(one: &Path, other: &Path) -> bool {
+    is_same_entry(one, other)
+}
+
 // Whether a filesystem entry exists at `path`, detecting the entry itself
 // (including a broken symlink) rather than following links. Ambiguous errors
 // are reported as occupied; only a definitive "not found" is reported as free.
@@ -726,15 +762,73 @@ fn copy_file(from: &Path, to: &Path, existing: Existing) -> Result<()> {
         fs::copy(from, to)?;
         return Ok(());
     }
+    copy_file_claiming(from, to).map_err(ClaimFailure::into_error)
+}
+
+/// Copies the regular file `from` to `to`, taking `to` with a call that fails if
+/// the name is already there, and says which side of that claim a failure fell
+/// on.
+///
+/// On Windows that is `CopyFileExW` with `COPY_FILE_FAIL_IF_EXISTS`, which
+/// creates the destination with `CREATE_NEW` inside the call: the same claim as
+/// `create_new`, so nothing that took the name first is written over. Until
+/// 04/11/2026 this was `create_new` plus `std::io::copy` here too, which wrote
+/// the file again in user-mode chunks and stamped it with the time of the
+/// paste. `CopyFileExW` is what Explorer's copy and `fs::copy` use: it keeps
+/// the modification time, the attributes and the alternate streams, lets a
+/// network share copy on the server side, and picks its own buffers
+/// (`examples/copy_ab.rs`; `docs/PERFORMANCE.md`, passada 4).
+#[cfg(windows)]
+#[allow(unsafe_code)]
+fn copy_file_claiming(from: &Path, to: &Path) -> ClaimResult<()> {
+    use windows::Win32::Storage::FileSystem::{COPY_FILE_FAIL_IF_EXISTS, CopyFileExW};
+    use windows::core::PCWSTR;
+    let (source, destination) = (wide(from), wide(to));
+    // SAFETY: both buffers are NUL-terminated UTF-16 and outlive the call; no
+    // progress routine, data or cancel flag is passed.
+    let copied = unsafe {
+        CopyFileExW(
+            PCWSTR(source.as_ptr()),
+            PCWSTR(destination.as_ptr()),
+            None,
+            None,
+            None,
+            COPY_FILE_FAIL_IF_EXISTS,
+        )
+    };
+    let Err(error) = copied.map_err(win32_io_error) else {
+        return Ok(());
+    };
+    // "The name was taken" is answered before anything is written, so it never
+    // leaves a destination of ours. Any other failure may come after the
+    // claim: CopyFileExW removes what it wrote when it gives up, but if
+    // something is at the name now it is reported as a partial destination.
+    // The identity is unknown here, as it always was on Windows, so a caller's
+    // cleanup removes nothing (`discard_claimed`); the report just says where
+    // it is.
+    if error.kind() == std::io::ErrorKind::AlreadyExists || fs::symlink_metadata(to).is_err() {
+        Err(ClaimFailure::untouched(error))
+    } else {
+        Err(ClaimFailure::partial(error, None))
+    }
+}
+
+#[cfg(not(windows))]
+fn copy_file_claiming(from: &Path, to: &Path) -> ClaimResult<()> {
     // Opening the source first, so a source that cannot be read fails before the
     // destination name is taken.
-    let source = fs::File::open(from)?;
-    let destination = claim_file(to)?;
-    fill_file(from, to, source, destination)
+    let source = fs::File::open(from).map_err(ClaimFailure::untouched)?;
+    let destination = claim_file(to).map_err(ClaimFailure::untouched)?;
+    // Through the handle rather than the path: this is the entry `create_new`
+    // itself made, so nothing that takes the name in between can be recorded as
+    // the claim and later deleted as though it were.
+    let claimed = handle_identity(&destination);
+    fill_file(from, to, source, destination).map_err(|error| ClaimFailure::partial(error, claimed))
 }
 
 // Takes the name `to` with a call that fails if it is already there — the point
 // past which everything at that path was written by this copy.
+#[cfg(not(windows))]
 fn claim_file(to: &Path) -> Result<fs::File> {
     Ok(fs::OpenOptions::new()
         .write(true)
@@ -743,6 +837,7 @@ fn claim_file(to: &Path) -> Result<fs::File> {
 }
 
 // Writes `from` into the already-claimed `to`.
+#[cfg(not(windows))]
 fn fill_file(
     from: &Path,
     to: &Path,
@@ -829,8 +924,8 @@ pub fn move_path(src: &Path, dst: &Path) -> Result<MoveKind> {
 /// destroyed. Restoring from the trash writes to a path the user last saw empty
 /// minutes or days ago, which is exactly when something else may have taken it.
 ///
-/// On Linux and macOS the rename itself carries the no-replace flag, so the
-/// whole move is atomic against a concurrent create. Elsewhere — and on
+/// On Linux, macOS and Windows the rename itself carries the no-replace flag, so
+/// the whole move is atomic against a concurrent create. Across drives — and on
 /// filesystems that reject the flag — it falls back to [`copy_path_no_replace`]
 /// plus deleting the source, which claims the destination atomically too; a
 /// check followed by a replacing `rename` would not, which is the very hole this
@@ -885,7 +980,57 @@ fn rename_no_replace(src: &Path, dst: &Path) -> Option<std::io::Result<()>> {
     }
 }
 
-#[cfg(not(any(target_os = "linux", target_os = "macos")))]
+/// `MoveFileExW` without `MOVEFILE_REPLACE_EXISTING` is Windows' no-replace
+/// rename: the filesystem refuses an occupied name inside the rename itself
+/// (`ERROR_ALREADY_EXISTS`), files and directories alike, and a destination on
+/// another drive answers `ERROR_NOT_SAME_DEVICE`, which sends the caller to the
+/// copy. `std::fs::rename` always passes the replacing flag, so it cannot be
+/// used here.
+///
+/// Until 04/11/2026 this answered `None` on Windows, and every move took the
+/// copy-and-delete fallback even within one drive: Cut + Paste of a folder
+/// wrote it all a second time and needed room for a second copy, and a folder
+/// holding a link or junction could not be moved at all, since the copy
+/// refuses links here. `examples/move_ab.rs`, C:, median of 5 alternated
+/// rounds with Premiere open: 2,000 files of 64 KB, 3,222 -> 3.9 ms; one file
+/// of 512 MB, 2,307 -> 2.5 ms (`docs/PERFORMANCE.md`, passada 2).
+///
+/// No `MOVEFILE_COPY_ALLOWED`: with it Windows would copy across drives by
+/// itself, replacing nothing but also claiming nothing entry by entry, which
+/// is the guarantee [`copy_path_no_replace`] gives the cross-drive case.
+#[cfg(windows)]
+#[allow(unsafe_code)]
+fn rename_no_replace(src: &Path, dst: &Path) -> Option<std::io::Result<()>> {
+    use windows::Win32::Storage::FileSystem::{MOVE_FILE_FLAGS, MoveFileExW};
+    use windows::core::PCWSTR;
+    let (from, to) = (wide(src), wide(dst));
+    // SAFETY: both buffers are NUL-terminated UTF-16 and outlive the call,
+    // which only reads them.
+    let moved = unsafe { MoveFileExW(PCWSTR(from.as_ptr()), PCWSTR(to.as_ptr()), MOVE_FILE_FLAGS(0)) };
+    Some(moved.map_err(win32_io_error))
+}
+
+/// NUL-terminated UTF-16 for a Win32 call.
+#[cfg(windows)]
+fn wide(path: &Path) -> Vec<u16> {
+    use std::os::windows::ffi::OsStrExt;
+    path.as_os_str().encode_wide().chain(Some(0)).collect()
+}
+
+// The HRESULT wraps the Win32 code (0x8007xxxx, negative as an i32);
+// `is_cross_device` and the callers' `AlreadyExists` checks read the raw code,
+// so it is unwrapped here. The crate's own `From` keeps the whole HRESULT as
+// the "OS error", which matches nothing.
+#[cfg(windows)]
+fn win32_io_error(error: windows::core::Error) -> std::io::Error {
+    let code = u32::from_ne_bytes(error.code().0.to_ne_bytes());
+    match i32::try_from(code & 0xFFFF) {
+        Ok(win32) if code >> 16 == 0x8007 => std::io::Error::from_raw_os_error(win32),
+        _ => std::io::Error::other(error),
+    }
+}
+
+#[cfg(not(any(target_os = "linux", target_os = "macos", windows)))]
 fn rename_no_replace(_src: &Path, _dst: &Path) -> Option<std::io::Result<()>> {
     None
 }
@@ -927,13 +1072,7 @@ pub fn copy_path_no_replace(src: &Path, dst: &Path) -> ClaimResult<()> {
         return fill_dir(src, dst, Existing::Refuse)
             .map_err(|error| ClaimFailure::partial(error, claimed));
     }
-    let source = fs::File::open(src).map_err(ClaimFailure::untouched)?;
-    let destination = claim_file(dst).map_err(ClaimFailure::untouched)?;
-    // Through the handle rather than the path: this is the entry `create_new`
-    // itself made, so nothing that takes the name in between can be recorded as
-    // the claim and later deleted as though it were.
-    let claimed = handle_identity(&destination);
-    fill_file(src, dst, source, destination).map_err(|error| ClaimFailure::partial(error, claimed))
+    copy_file_claiming(src, dst)
 }
 
 // Recreates a symlink to `target` at `link`, failing if `link` is taken.
@@ -1015,8 +1154,7 @@ pub fn trash_path(path: &Path, ledger: Option<&dyn TrashLedger>) -> Result<()> {
         Some(_) => Some(trash::capture(path)?),
         None => None,
     };
-    ::trash::delete(path)
-        .map_err(|error| Error::Other(format!("failed to move to trash: {error}")))?;
+    os_trash_delete(path)?;
     // Past this point the item is in the trash, so a ledger write that fails
     // cannot be reported as a failed delete — but it must not vanish either.
     if let (Some(ledger), Some(captured)) = (ledger, captured)
@@ -1029,6 +1167,115 @@ pub fn trash_path(path: &Path, ledger: Option<&dyn TrashLedger>) -> Result<()> {
         );
     }
     Ok(())
+}
+
+/// Moves every path in `paths` to the trash, returning the ones that could not
+/// go, each with why.
+///
+/// Where the OS keeps the trash index (`ledger` is `None`, see [`trash_path`])
+/// the whole selection is one call to the system trash. On Windows that is one
+/// `IFileOperation` and one thread for its COM apartment, where item by item
+/// paid both per file: 1,000 files went from 35.8 to 9.9 s, 200 from 7.0 to
+/// 1.9 s (`examples/trash_ab.rs`, median of 3 alternated rounds; what is left,
+/// ~10 ms an item, is the Recycle Bin's own work). `docs/PERFORMANCE.md`,
+/// passada 3.
+/// Where a ledger has to be written, each item is captured and recorded on its
+/// own, as [`trash_path`] does.
+pub fn trash_paths(paths: &[PathBuf], ledger: Option<&dyn TrashLedger>) -> Vec<(PathBuf, Error)> {
+    match ledger {
+        Some(ledger) => paths
+            .iter()
+            .filter_map(|path| {
+                trash_path(path, Some(ledger))
+                    .err()
+                    .map(|error| (path.clone(), error))
+            })
+            .collect(),
+        None => trash_in_one_batch(
+            paths,
+            |path| fs::symlink_metadata(path).is_ok(),
+            os_trash_delete_all,
+            os_trash_delete,
+        ),
+    }
+}
+
+// The plan behind [`trash_paths`] without a ledger, apart from the system calls
+// so a test can count them.
+//
+// The batch is all-or-nothing in what it reports, not in what it does: the
+// `trash` crate gives up before starting if any path cannot be opened, and if
+// one item fails midway the others still go and all it says is "some
+// operations were aborted". So a path already missing never enters the batch
+// (it would sink the rest), and after a failed batch whatever is still on disk
+// is tried alone — which is what names the file that failed and says why, as
+// the item-by-item delete always did. What the batch already took is gone and
+// counts as done.
+fn trash_in_one_batch(
+    paths: &[PathBuf],
+    exists: impl Fn(&Path) -> bool,
+    trash_all: impl FnOnce(&[PathBuf]) -> Result<()>,
+    trash_one: impl Fn(&Path) -> Result<()>,
+) -> Vec<(PathBuf, Error)> {
+    let (present, missing): (Vec<PathBuf>, Vec<PathBuf>) =
+        paths.iter().cloned().partition(|path| exists(path));
+    let mut failed = Vec::new();
+    // Tried anyway rather than reported here, so the message is the system's
+    // own, as it was before the batch.
+    for path in missing {
+        if let Err(error) = trash_one(&path) {
+            failed.push((path, error));
+        }
+    }
+    if present.is_empty() {
+        return failed;
+    }
+    if let Err(batch_error) = trash_all(&present) {
+        tracing::debug!(%batch_error, items = present.len(), "the batch trash failed; retrying what is left one by one");
+        for path in present {
+            if !exists(&path) {
+                continue;
+            }
+            if let Err(error) = trash_one(&path) {
+                failed.push((path, error));
+            }
+        }
+    }
+    failed
+}
+
+// On Windows the `trash` crate joins COM as a single-threaded apartment on the
+// calling thread and *panics* if that thread already sits in the other kind.
+// The UI calls this from gpui's executor, which runs on the Windows thread pool:
+// a pool thread that some earlier work left in the multithreaded apartment (the
+// PDF preview did) turned a plain Delete into a panic, and a panic there cannot
+// unwind out of the pool callback, so it aborted the whole app (04/11, D:\).
+// A thread of its own starts with no apartment at all, and joining it turns
+// any panic left in the crate into an ordinary error.
+#[cfg(windows)]
+fn on_own_thread(work: impl FnOnce() -> std::result::Result<(), ::trash::Error> + Send) -> Result<()> {
+    std::thread::scope(|scope| {
+        std::thread::Builder::new()
+            .name("nohrs-trash".into())
+            .spawn_scoped(scope, work)
+            .map_err(|error| Error::Other(format!("failed to move to trash: {error}")))?
+            .join()
+            .map_err(|_| Error::Other("failed to move to trash: the system trash call crashed".into()))?
+            .map_err(|error| Error::Other(format!("failed to move to trash: {error}")))
+    })
+}
+
+#[cfg(not(windows))]
+fn on_own_thread(work: impl FnOnce() -> std::result::Result<(), ::trash::Error>) -> Result<()> {
+    work().map_err(|error| Error::Other(format!("failed to move to trash: {error}")))
+}
+
+fn os_trash_delete(path: &Path) -> Result<()> {
+    on_own_thread(|| ::trash::delete(path))
+}
+
+fn os_trash_delete_all(paths: &[PathBuf]) -> Result<()> {
+    on_own_thread(|| ::trash::delete_all(paths))
 }
 
 fn record_trashed(ledger: &dyn TrashLedger, captured: &nohrs_store::TrashEntry) -> Result<()> {
@@ -1795,6 +2042,279 @@ mod tests {
         assert!(src.join("inside.txt").is_file());
     }
 
+    // The batch plan with the system calls replaced by counters: `on_disk` is
+    // what exists, the batch takes all of it unless told to fail on a name,
+    // and the single delete fails on the names in `stuck`.
+    struct FakeTrash {
+        on_disk: std::cell::RefCell<std::collections::HashSet<PathBuf>>,
+        batch_calls: std::cell::Cell<usize>,
+        single_calls: std::cell::RefCell<Vec<PathBuf>>,
+    }
+
+    impl FakeTrash {
+        fn new(names: &[&str]) -> Self {
+            Self {
+                on_disk: std::cell::RefCell::new(names.iter().map(PathBuf::from).collect()),
+                batch_calls: Default::default(),
+                single_calls: Default::default(),
+            }
+        }
+
+        fn run(&self, asked: &[&str], batch_fails_on: Option<&str>, stuck: &[&str]) -> Vec<PathBuf> {
+            let asked: Vec<PathBuf> = asked.iter().map(PathBuf::from).collect();
+            trash_in_one_batch(
+                &asked,
+                |path| self.on_disk.borrow().contains(path),
+                |paths| {
+                    self.batch_calls.set(self.batch_calls.get() + 1);
+                    // Like IFileOperation: the others still go, and the
+                    // failure does not say which one it was.
+                    for path in paths {
+                        if Some(path.as_path()) != batch_fails_on.map(Path::new) {
+                            self.on_disk.borrow_mut().remove(path);
+                        }
+                    }
+                    match batch_fails_on {
+                        Some(_) => Err(Error::Other("some operations were aborted".into())),
+                        None => Ok(()),
+                    }
+                },
+                |path| {
+                    self.single_calls.borrow_mut().push(path.to_path_buf());
+                    if stuck.iter().any(|name| Path::new(name) == path) || !self.on_disk.borrow().contains(path) {
+                        return Err(Error::Other(format!("cannot trash {}", path.display())));
+                    }
+                    self.on_disk.borrow_mut().remove(path);
+                    Ok(())
+                },
+            )
+            .into_iter()
+            .map(|(path, _)| path)
+            .collect()
+        }
+    }
+
+    #[test]
+    fn a_selection_goes_to_the_trash_in_one_call() {
+        let trash = FakeTrash::new(&["a", "b", "c", "d"]);
+
+        let failed = trash.run(&["a", "b", "c", "d"], None, &[]);
+
+        assert!(failed.is_empty());
+        assert_eq!(trash.batch_calls.get(), 1, "one system call for the whole selection");
+        assert!(trash.single_calls.borrow().is_empty(), "{:?}", trash.single_calls.borrow());
+        assert!(trash.on_disk.borrow().is_empty());
+    }
+
+    #[test]
+    fn a_failed_batch_retries_only_what_is_left_and_names_the_file_that_failed() {
+        let trash = FakeTrash::new(&["a", "b", "in use", "d"]);
+
+        let failed = trash.run(&["a", "b", "in use", "d"], Some("in use"), &["in use"]);
+
+        assert_eq!(failed, [PathBuf::from("in use")]);
+        assert_eq!(
+            *trash.single_calls.borrow(),
+            [PathBuf::from("in use")],
+            "what the batch already took is not tried again"
+        );
+    }
+
+    #[test]
+    fn a_path_already_gone_stays_out_of_the_batch_and_is_still_reported() {
+        // The crate refuses the whole batch when one path cannot be opened; let
+        // in, a file deleted by another program would keep the rest from going.
+        let trash = FakeTrash::new(&["a", "b"]);
+
+        let failed = trash.run(&["a", "gone", "b"], None, &[]);
+
+        assert_eq!(failed, [PathBuf::from("gone")]);
+        assert_eq!(trash.batch_calls.get(), 1);
+        assert!(trash.on_disk.borrow().is_empty());
+    }
+
+    #[test]
+    fn nothing_on_disk_makes_no_batch_call() {
+        let trash = FakeTrash::new(&[]);
+
+        let failed = trash.run(&["gone"], None, &[]);
+
+        assert_eq!(failed, [PathBuf::from("gone")]);
+        assert_eq!(trash.batch_calls.get(), 0);
+    }
+
+    #[test]
+    fn trash_paths_moves_real_files_and_reports_the_missing_one() {
+        let dir = tempdir().unwrap();
+        let files: Vec<PathBuf> = (0..3).map(|n| dir.path().join(format!("lixo {n}.txt"))).collect();
+        for file in &files {
+            fs::write(file, "x").unwrap();
+        }
+        let folder = dir.path().join("pasta");
+        fs::create_dir(&folder).unwrap();
+        fs::write(folder.join("dentro.txt"), "x").unwrap();
+        let missing = dir.path().join("nunca existiu.txt");
+        let mut asked = files.clone();
+        asked.push(folder.clone());
+        asked.push(missing.clone());
+
+        let failed = trash_paths(&asked, None);
+
+        assert_eq!(failed.len(), 1, "{failed:?}");
+        assert_eq!(failed[0].0, missing);
+        for path in files.iter().chain([&folder]) {
+            assert!(!path.exists(), "{} is still there", path.display());
+        }
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn a_pasted_copy_keeps_the_modification_time() {
+        // Explorer's copy keeps it, and so did `fs::copy`; the no-replace copy
+        // wrote the file anew with `std::io::copy` and stamped it with the time
+        // of the paste, so a folder of photos pasted elsewhere lost every date.
+        let dir = tempdir().unwrap();
+        let long_ago = std::time::SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(1_000_000_000);
+        let file = dir.path().join("foto.jpg");
+        fs::write(&file, "payload").unwrap();
+        fs::File::options().write(true).open(&file).unwrap().set_modified(long_ago).unwrap();
+        let tree = dir.path().join("album");
+        fs::create_dir(&tree).unwrap();
+        fs::copy(&file, tree.join("dentro.jpg")).unwrap();
+
+        copy_path_no_replace(&file, &dir.path().join("copia.jpg")).unwrap();
+        copy_path_no_replace(&tree, &dir.path().join("album copia")).unwrap();
+
+        let modified = |path: PathBuf| fs::metadata(path).unwrap().modified().unwrap();
+        assert_eq!(modified(dir.path().join("copia.jpg")), long_ago);
+        assert_eq!(modified(dir.path().join("album copia").join("dentro.jpg")), long_ago);
+        assert_eq!(fs::read_to_string(dir.path().join("copia.jpg")).unwrap(), "payload");
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn a_pasted_copy_keeps_a_read_only_file_read_only() {
+        let dir = tempdir().unwrap();
+        let file = dir.path().join("contrato.pdf");
+        fs::write(&file, "x").unwrap();
+        let mut permissions = fs::metadata(&file).unwrap().permissions();
+        permissions.set_readonly(true);
+        fs::set_permissions(&file, permissions).unwrap();
+        let copy = dir.path().join("copia.pdf");
+
+        copy_path_no_replace(&file, &copy).unwrap();
+
+        assert!(fs::metadata(&copy).unwrap().permissions().readonly());
+        // So the temp folder can be removed.
+        for path in [&file, &copy] {
+            let mut permissions = fs::metadata(path).unwrap().permissions();
+            #[allow(clippy::permissions_set_readonly_false)]
+            permissions.set_readonly(false);
+            fs::set_permissions(path, permissions).unwrap();
+        }
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn a_source_another_program_holds_leaves_nothing_at_the_destination() {
+        use std::os::windows::fs::OpenOptionsExt;
+        // Opened with no sharing, the way a program holding a file exclusively
+        // does: the copy fails reading it, and the failure has to say the
+        // destination was never taken, or an overwrite rollback would go
+        // looking for a half-copy to clear.
+        let dir = tempdir().unwrap();
+        let file = dir.path().join("em uso.mp4");
+        fs::write(&file, "x").unwrap();
+        let _held = fs::OpenOptions::new().read(true).share_mode(0).open(&file).unwrap();
+        let copy = dir.path().join("copia.mp4");
+
+        let failure = copy_path_no_replace(&file, &copy).unwrap_err();
+
+        assert_eq!(failure.leftover(), Leftover::Nothing);
+        assert!(!copy.exists());
+        // ERROR_SHARING_VIOLATION, unwrapped from the HRESULT.
+        assert!(matches!(&failure.into_error(), Error::Io(io) if io.raw_os_error() == Some(32)));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn a_move_within_one_drive_is_a_rename_and_not_a_copy() {
+        // Until 04/11/2026 Windows had no no-replace rename here, and Cut +
+        // Paste of a folder copied every byte and deleted the source. A copy
+        // writes the file anew, so its modification time becomes now; a rename
+        // keeps it, which is what tells the two apart from outside.
+        let dir = tempdir().unwrap();
+        let src = dir.path().join("pasta");
+        fs::create_dir(&src).unwrap();
+        let file = src.join("foto.jpg");
+        fs::write(&file, "payload").unwrap();
+        let long_ago = std::time::SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(1_000_000_000);
+        fs::File::options().write(true).open(&file).unwrap().set_modified(long_ago).unwrap();
+        let dst = dir.path().join("movida");
+
+        let kind = move_path_no_replace(&src, &dst).unwrap();
+
+        assert_eq!(kind, MoveKind::Rename);
+        assert!(!src.exists());
+        let moved = dst.join("foto.jpg");
+        assert_eq!(fs::read_to_string(&moved).unwrap(), "payload");
+        assert_eq!(fs::metadata(&moved).unwrap().modified().unwrap(), long_ago);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn a_folder_holding_a_junction_moves_within_one_drive() {
+        // The copy fallback refuses links on Windows (`symlink_no_replace`), so
+        // while every move went through it, a folder with a junction inside
+        // (node_modules, a game's mods folder) could not be moved at all.
+        // A junction needs no administrator, unlike a symbolic link.
+        let dir = tempdir().unwrap();
+        let target = dir.path().join("alvo");
+        fs::create_dir(&target).unwrap();
+        fs::write(target.join("dentro.txt"), "theirs").unwrap();
+        let src = dir.path().join("projeto");
+        fs::create_dir(&src).unwrap();
+        let junction = src.join("atalho");
+        let made = std::process::Command::new("cmd")
+            .args(["/C", "mklink", "/J"])
+            .arg(&junction)
+            .arg(&target)
+            .output()
+            .unwrap();
+        assert!(made.status.success(), "{}", String::from_utf8_lossy(&made.stderr));
+        let dst = dir.path().join("projeto-movido");
+
+        assert_eq!(move_path_no_replace(&src, &dst).unwrap(), MoveKind::Rename);
+
+        let moved = dst.join("atalho");
+        assert!(fs::symlink_metadata(&moved).unwrap().is_symlink(), "still a link, not a copy");
+        assert_eq!(fs::read_to_string(moved.join("dentro.txt")).unwrap(), "theirs");
+        assert_eq!(fs::read_to_string(target.join("dentro.txt")).unwrap(), "theirs");
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn the_no_replace_rename_reports_windows_codes_as_plain_io_errors() {
+        // `is_cross_device` and every `AlreadyExists` check read the raw Win32
+        // code; an HRESULT left wrapped would turn a cross-drive move into a
+        // failure instead of a copy.
+        let dir = tempdir().unwrap();
+        let src = dir.path().join("a.txt");
+        let dst = dir.path().join("b.txt");
+        fs::write(&src, "mine").unwrap();
+        fs::write(&dst, "theirs").unwrap();
+
+        let error = rename_no_replace(&src, &dst).unwrap().unwrap_err();
+
+        // ERROR_ALREADY_EXISTS.
+        assert_eq!(error.raw_os_error(), Some(183), "{error}");
+        assert_eq!(error.kind(), std::io::ErrorKind::AlreadyExists);
+        let missing = rename_no_replace(&dir.path().join("nada.txt"), &dir.path().join("c.txt"))
+            .unwrap()
+            .unwrap_err();
+        assert_eq!(missing.kind(), std::io::ErrorKind::NotFound, "{missing}");
+    }
+
     #[test]
     fn the_fallback_move_claims_the_destination_before_writing_to_it() {
         // Exercised directly: a test has one filesystem, so `rename` never
@@ -1822,6 +2342,29 @@ mod tests {
     }
 
     #[test]
+    fn a_rename_that_only_changes_case_collides_with_nothing() {
+        let dir = tempdir().unwrap();
+        let photo = dir.path().join("foto.jpg");
+        fs::write(&photo, "mine").unwrap();
+        let other = dir.path().join("outra.jpg");
+        fs::write(&other, "theirs").unwrap();
+
+        // On a case-insensitive filesystem `Foto.jpg` is taken — by the very
+        // file being renamed. Where case matters it is simply free.
+        assert!(!would_collide_with_another(&photo, &dir.path().join("Foto.jpg")));
+        assert!(would_collide_with_another(&photo, &other), "another file is a collision");
+        assert!(!would_collide_with_another(&photo, &dir.path().join("nova.jpg")));
+
+        let renamed = rename_in_place(&photo, "Foto.jpg").unwrap();
+        let names: Vec<String> = fs::read_dir(dir.path())
+            .unwrap()
+            .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
+            .collect();
+        assert!(names.contains(&"Foto.jpg".to_string()), "{names:?}");
+        assert_eq!(fs::read_to_string(renamed).unwrap(), "mine");
+    }
+
+    #[test]
     fn rename_in_place_changes_name_keeps_dir() {
         let dir = tempdir().unwrap();
         let src = dir.path().join("old.txt");
@@ -1839,6 +2382,34 @@ mod tests {
         let created = create_dir(dir.path(), "fresh").unwrap();
         assert_eq!(created, dir.path().join("fresh"));
         assert!(created.is_dir());
+    }
+
+    // Regression (04/11): a Delete on a pool thread a PDF preview had left in
+    // the multithreaded apartment made the `trash` crate panic, which aborted
+    // the app. The thread here is put in that state on purpose.
+    #[cfg(windows)]
+    #[test]
+    #[allow(unsafe_code)]
+    fn trash_works_from_a_thread_already_in_the_multithreaded_apartment() {
+        #[link(name = "ole32")]
+        unsafe extern "system" {
+            fn CoInitializeEx(reserved: *const std::ffi::c_void, coinit: u32) -> i32;
+        }
+        const COINIT_MULTITHREADED: u32 = 0;
+        let dir = tempdir().unwrap();
+        let file = dir.path().join("nohrs-trash-mta-test.txt");
+        fs::write(&file, "x").unwrap();
+        let outcome = std::thread::spawn({
+            let file = file.clone();
+            move || {
+                assert!(unsafe { CoInitializeEx(std::ptr::null(), COINIT_MULTITHREADED) } >= 0);
+                trash_path(&file, None)
+            }
+        })
+        .join()
+        .expect("trash_path panicked");
+        outcome.unwrap();
+        assert!(!file.exists());
     }
 
     #[test]

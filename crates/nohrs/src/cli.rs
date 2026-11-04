@@ -8,7 +8,14 @@ use nohrs_core::config::{self, ConfigOverride, ThemeMode};
 use std::process::Command as ProcessCommand;
 
 #[derive(Parser, Debug)]
-#[command(name = "nohrs", version, about = "Launcher × Explorer file workspace")]
+#[command(
+    name = "nohrs",
+    version,
+    about = "Launcher × Explorer file workspace",
+    // A path and a subcommand are two different invocations; without this a
+    // path named like a subcommand would be ambiguous.
+    args_conflicts_with_subcommands = true
+)]
 pub struct Cli {
     /// Override the theme mode for this run: system, light, or dark.
     #[arg(long, global = true, value_name = "MODE")]
@@ -17,6 +24,11 @@ pub struct Cli {
     /// Override the accent colour for this run (named colour or hex).
     #[arg(long, global = true, value_name = "COLOR")]
     pub accent: Option<String>,
+
+    /// A folder to open, or a file to open its folder with it selected. When
+    /// Nohrs is already running it opens there, in a new tab.
+    #[arg(value_name = "PATH", value_parser = parse_path)]
+    pub path: Option<std::path::PathBuf>,
 
     #[command(subcommand)]
     pub command: Option<Command>,
@@ -164,5 +176,32 @@ fn edit_config(path: &std::path::Path) -> i32 {
             eprintln!("failed to launch editor {editor:?}: {error}");
             1
         }
+    }
+}
+
+/// Reads the `PATH` argument, repairing a quoted drive root.
+///
+/// Windows hands a folder over as `nohrs.exe "%1"`, and for a drive that is
+/// `"C:\"`: by the rules every program parses its command line with, the
+/// backslash escapes the closing quote, and the argument arrives as `C:"`.
+/// A quote can never be part of a Windows path, so a trailing one is that
+/// backslash.
+fn parse_path(argument: &str) -> Result<std::path::PathBuf, std::convert::Infallible> {
+    Ok(match argument.strip_suffix('"') {
+        Some(root) => std::path::PathBuf::from(format!("{root}\\")),
+        None => std::path::PathBuf::from(argument),
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_drive_root_whose_quote_was_escaped_is_repaired() {
+        let cli = Cli::parse_from(["nohrs", "C:\""]);
+        assert_eq!(cli.path, Some(std::path::PathBuf::from("C:\\")));
+        let cli = Cli::parse_from(["nohrs", r"C:\Users"]);
+        assert_eq!(cli.path, Some(std::path::PathBuf::from(r"C:\Users")));
     }
 }

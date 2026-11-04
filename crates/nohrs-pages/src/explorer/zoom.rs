@@ -14,10 +14,19 @@ pub const STEP: f32 = 0.05;
 const ICON_MIN: f32 = 48.0;
 const ICON_MAX: f32 = 256.0;
 
-/// The view a zoom value shows.
+/// Zoom of the Tree view, between the details table and the List view, as
+/// File Pilot orders them; the List view sits at `LIST_MAX`.
+pub const TREE: f32 = 0.05;
+
+/// The view a zoom value shows: the details table, then Tree, then List up to
+/// `LIST_MAX`, and tiles above it.
 pub fn view_mode(zoom: f32) -> ViewMode {
-    if zoom <= LIST_MAX {
+    if zoom < TREE / 2.0 {
         ViewMode::List
+    } else if zoom < (TREE + LIST_MAX) / 2.0 {
+        ViewMode::Tree
+    } else if zoom <= LIST_MAX {
+        ViewMode::Compact
     } else {
         ViewMode::Grid
     }
@@ -36,15 +45,66 @@ pub fn step(zoom: f32, delta: f32) -> f32 {
 
 /// The name the footer shows for a zoom value.
 pub fn label(zoom: f32) -> &'static str {
-    if zoom <= LIST_MAX {
-        return "List";
+    match view_mode(zoom) {
+        ViewMode::List => return "Detalhes",
+        ViewMode::Tree => return "Árvore",
+        ViewMode::Compact => return "Lista",
+        ViewMode::Grid => {}
     }
     match icon_size(zoom) {
-        size if size < 80.0 => "S Icons",
-        size if size < 136.0 => "M Icons",
-        size if size < 200.0 => "L Icons",
-        _ => "XL Icons",
+        size if size < 80.0 => "Ícones P",
+        size if size < 136.0 => "Ícones M",
+        size if size < 200.0 => "Ícones G",
+        _ => "Ícones XL",
     }
+}
+
+/// The footer's zoom menu, largest first as File Pilot lists them: each
+/// view's name and the zoom it jumps to, inside the band `label` gives it.
+pub const PRESETS: [(&str, f32); 7] = [
+    ("Ícones XL", 0.85),
+    ("Ícones G", 0.6),
+    ("Ícones M", DEFAULT_GRID),
+    ("Ícones P", 0.15),
+    ("Lista", LIST_MAX),
+    ("Árvore", TREE),
+    ("Detalhes", 0.0),
+];
+
+/// The views the zoom menu lists, smallest zoom first: one evenly spaced row
+/// each, which is also where its slider puts them. Small icons are left out,
+/// as File Pilot leaves them out; the slider still passes through them.
+pub const MENU_STOPS: [(&str, f32); 6] = [
+    ("Detalhes", 0.0),
+    ("Árvore", TREE),
+    ("Lista", LIST_MAX),
+    ("Ícones M", DEFAULT_GRID),
+    ("Ícones G", 0.6),
+    ("Ícones XL", 0.85),
+];
+
+/// The zoom menu's slider position (0..=100) for a zoom value. The menu's
+/// rows are evenly spaced, so each step between two rows is the same length
+/// on the slider, and the zoom between them is spread along it.
+pub fn slider_position(zoom: f32) -> f32 {
+    let steps = (MENU_STOPS.len() - 1) as f32;
+    for (index, pair) in MENU_STOPS.windows(2).enumerate() {
+        let (low, high) = (pair[0].1, pair[1].1);
+        if zoom <= high {
+            let along = ((zoom - low) / (high - low)).clamp(0.0, 1.0);
+            return (index as f32 + along) / steps * 100.0;
+        }
+    }
+    100.0
+}
+
+/// The zoom for a position of the zoom menu's slider.
+pub fn zoom_at(position: f32) -> f32 {
+    let steps = (MENU_STOPS.len() - 1) as f32;
+    let at = position.clamp(0.0, 100.0) / 100.0 * steps;
+    let index = (at.floor() as usize).min(MENU_STOPS.len() - 2);
+    let (low, high) = (MENU_STOPS[index].1, MENU_STOPS[index + 1].1);
+    low + (high - low) * (at - index as f32)
 }
 
 /// Edge of the square thumbnail to ask for, in device pixels.
@@ -66,7 +126,8 @@ mod tests {
     #[test]
     fn list_below_the_threshold_tiles_above() {
         assert!(view_mode(0.0) == ViewMode::List);
-        assert!(view_mode(LIST_MAX) == ViewMode::List);
+        assert!(view_mode(TREE) == ViewMode::Tree);
+        assert!(view_mode(LIST_MAX) == ViewMode::Compact);
         assert!(view_mode(LIST_MAX + 0.01) == ViewMode::Grid);
     }
 
@@ -75,6 +136,25 @@ mod tests {
         assert_eq!(icon_size(LIST_MAX), ICON_MIN);
         assert_eq!(icon_size(1.0), ICON_MAX);
         assert!(icon_size(0.5) > icon_size(0.3));
+    }
+
+    #[test]
+    fn every_preset_is_named_by_the_band_it_lands_in() {
+        for (name, zoom) in PRESETS {
+            assert_eq!(label(zoom), name);
+        }
+    }
+
+    #[test]
+    fn the_slider_puts_each_menu_view_one_even_step_apart() {
+        for (index, (_, zoom)) in MENU_STOPS.into_iter().enumerate() {
+            assert!((slider_position(zoom) - index as f32 * 20.0).abs() < 1e-4);
+            assert!((zoom_at(slider_position(zoom)) - zoom).abs() < 1e-5);
+        }
+        // Between rows the zoom is spread, so small icons have a place.
+        assert!(slider_position(0.15) > 40.0 && slider_position(0.15) < 60.0);
+        // Beyond the largest row the knob stays at the top.
+        assert_eq!(slider_position(1.0), 100.0);
     }
 
     #[test]

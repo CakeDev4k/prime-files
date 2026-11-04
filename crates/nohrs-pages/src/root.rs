@@ -7,19 +7,18 @@
 //! (search). The binary just opens a window hosting this view; the future
 //! launcher window will be a symmetric root in `nohrs-launcher`.
 
-use crate::explorer;
 use crate::explorer::ExplorerPage;
 use crate::explorer::StatusLevel;
 use crate::{
-    PageKind, extensions::ExtensionsPage, git::GitPage, s3::S3Page, settings::SettingsPage,
+    PageKind, git::GitPage, s3::S3Page,
+    settings::{SettingsPage, SettingsSection},
 };
 use gpui::{
     AnyElement, App, AsyncWindowContext, Context, Entity, FocusHandle, Focusable,
     InteractiveElement, Render, WeakEntity, Window, div, prelude::*, px, rgb,
 };
 use gpui_component::resizable::ResizableState;
-use gpui_component::slider::{Slider, SliderEvent, SliderState};
-use gpui_component::{Icon, Root, Theme, ThemeMode as GpuiThemeMode};
+use gpui_component::{Icon, IconName, Root, Theme, ThemeMode as GpuiThemeMode};
 use nohrs_core::config::{self, Config, ConfigOverride, ConfigWatcher};
 use nohrs_core::telemetry::LogErr;
 use nohrs_services::fs::trash::Ledger as TrashLedger;
@@ -27,14 +26,13 @@ use nohrs_services::search::SearchService;
 use nohrs_store::KvStore;
 use nohrs_ui::components::layout::footer::{FooterProps, StatusTone, footer};
 use nohrs_ui::components::layout::unified_toolbar::{
-    AccountMenuAction, AccountMenuCommand, UnifiedToolbarProps, unified_toolbar,
+    AccountMenuAction, AccountMenuCommand, unified_toolbar,
 };
 use nohrs_ui::theme::theme;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::mpsc;
 use std::time::Duration;
-use tracing::info;
 
 // The explorer's own status levels, in the terms the footer paints in. Two
 // vocabularies rather than one because `nohrs-ui` knows nothing about file
@@ -55,12 +53,8 @@ pub struct RootView {
     focus_handle: FocusHandle,
     // Page entities
     explorer: Entity<ExplorerPage>,
-    // The footer's zoom slider, in percent. The active pane owns the zoom; this
-    // only mirrors it, so Ctrl+wheel and the keyboard move the slider too.
-    zoom_slider: Entity<SliderState>,
     git: Entity<GitPage>,
     s3: Entity<S3Page>,
-    extensions: Entity<ExtensionsPage>,
     settings: Entity<SettingsPage>,
     search_service: Option<Arc<SearchService>>,
     indexing_progress: Option<f32>,
@@ -110,36 +104,16 @@ impl RootView {
                 cx,
             )
         });
-        let zoom_slider = cx.new(|_| {
-            SliderState::new()
-                .min(0.0)
-                .max(100.0)
-                .step(1.0)
-                .default_value(0.0)
-        });
-        cx.subscribe_in(
-            &zoom_slider,
-            window,
-            |this, _slider, event: &SliderEvent, _window, cx| {
-                let SliderEvent::Change(value) = event;
-                let zoom = value.start() / 100.0;
-                this.explorer.update(cx, |page, cx| page.set_zoom(zoom, cx));
-            },
-        )
-        .detach();
         let git = cx.new(|_cx| GitPage::new());
         let s3 = cx.new(|_cx| S3Page::new());
-        let extensions = cx.new(|_cx| ExtensionsPage::new());
-        let settings = cx.new(|_cx| SettingsPage::new());
+        let settings = cx.new(SettingsPage::new);
 
         let mut view = RootView {
             current_page: PageKind::Explorer,
             focus_handle,
             explorer,
-            zoom_slider,
             git,
             s3,
-            extensions,
             settings,
             search_service,
             indexing_progress: Some(1.0), // Start as hidden/done
@@ -154,6 +128,9 @@ impl RootView {
         view.start_progress_loop(window, cx);
         view.apply_config(config, config_error, window, cx);
         view.start_config_watch(window, cx);
+        crate::ipc::serve(window, cx);
+        crate::file_dialog::watch(window, cx);
+        crate::reveal::watch(window, cx);
         view
     }
 
@@ -177,8 +154,10 @@ impl RootView {
             // `system` follows the OS appearance reported by the window.
             config::ThemeMode::System => GpuiThemeMode::from(window.appearance()),
         };
+        crate::explorer::note_theme_mode(config.theme.mode);
         // Before `restyle_components`, which reads these tokens.
         theme::set_dark(mode.is_dark());
+        theme::set_accent(theme::parse_accent(&config.theme.accent));
         Theme::change(mode, Some(window), cx);
 
         // Applied unconditionally: `Theme::change` restores the shipped palette,
@@ -199,6 +178,8 @@ impl RootView {
             page.apply_config_ui(&ui, cx);
             page.apply_config_explorer(&explorer_cfg, cx);
         });
+        let shown = config.clone();
+        self.settings.update(cx, |page, cx| page.set_config(shown, cx));
 
         self.config = config;
         cx.notify();
@@ -242,34 +223,62 @@ impl RootView {
         editor.editor_active_line_number = Some(rgb(theme::fg_secondary()).into());
     }
 
-    /// The footer's zoom control: the zoom's name, a slider and its percentage,
-    /// the way File Pilot shows it.
-    fn render_zoom_control(&mut self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
-        let zoom = self.explorer.read(cx).zoom(cx);
-        let percent = (zoom * 100.0).round();
-        // Follow a zoom changed elsewhere (Ctrl+wheel, the keyboard, switching
-        // tabs) without echoing back a value the slider itself just sent.
-        if (self.zoom_slider.read(cx).value().start() - percent).abs() >= 1.0 {
-            self.zoom_slider
-                .update(cx, |slider, cx| slider.set_value(percent, window, cx));
-        }
+    /// The strip shown while a browser's Open dialog waits on Nohrs: what is
+    /// waiting, how to answer it, and a way to give the dialog back.
+    fn render_picking_banner(
+        &self,
+        dialog: crate::file_dialog::Dialog,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement + use<> {
+        let browser = dialog.browser.trim_end_matches(".exe").to_string();
         div()
-            .id("footer-zoom")
-            .h(px(24.0))
-            .px(px(8.0))
+            .id("picking-banner")
+            .flex_shrink_0()
+            .h(px(36.0))
+            .px(px(16.0))
             .flex()
             .items_center()
-            .gap_2()
-            .text_xs()
-            .text_color(rgb(theme::gray_700()))
-            .child(explorer::zoom_label(zoom))
+            .gap_3()
+            .bg(rgb(theme::accent_subtle()))
+            .border_b_1()
+            .border_color(rgb(theme::accent()))
+            .text_sm()
             .child(
                 div()
-                    .w(px(110.0))
-                    .child(Slider::new(&self.zoom_slider).horizontal()),
+                    .flex_shrink_0()
+                    .text_color(rgb(theme::accent()))
+                    .font_weight(gpui::FontWeight::SEMIBOLD)
+                    .child(format!("Choosing for {browser} ({})", dialog.title)),
             )
-            .child(div().w(px(32.0)).text_right().child(format!("{percent}%")))
-            .into_any_element()
+            .child(
+                div()
+                    .flex_1()
+                    .min_w(px(0.0))
+                    .overflow_hidden()
+                    .whitespace_nowrap()
+                    .text_ellipsis()
+                    .text_color(rgb(theme::fg_secondary()))
+                    .child("Double-click or press Enter on a file to send it. Esc gives the dialog back."),
+            )
+            .child(
+                div()
+                    .id("picking-cancel")
+                    .flex_shrink_0()
+                    .px(px(10.0))
+                    .py(px(3.0))
+                    .rounded(px(6.0))
+                    .cursor_pointer()
+                    .text_xs()
+                    .border_1()
+                    .border_color(rgb(theme::accent()))
+                    .text_color(rgb(theme::accent()))
+                    .hover(|button| button.bg(rgb(theme::bg_hover())))
+                    .on_click(cx.listener(|_root, _, _, cx| {
+                        crate::file_dialog::cancel();
+                        cx.notify();
+                    }))
+                    .child("Cancel"),
+            )
     }
 
     /// Watch `config.toml` and re-apply on change. The `notify` callback runs on
@@ -336,6 +345,16 @@ impl RootView {
         .detach();
     }
 
+    /// The explorer page, for requests arriving over the IPC channel.
+    pub(crate) fn explorer_entity(&self) -> Entity<ExplorerPage> {
+        self.explorer.clone()
+    }
+
+    /// Switches to the file explorer, from whichever page is showing.
+    pub(crate) fn show_explorer(&mut self, cx: &mut Context<Self>) {
+        self.set_page(PageKind::Explorer, cx);
+    }
+
     /// Switches the active page, notifying for a redraw only if it changed.
     pub fn set_page(&mut self, page: PageKind, cx: &mut Context<Self>) {
         if self.current_page != page {
@@ -379,14 +398,11 @@ impl Focusable for RootView {
 
 impl Render for RootView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let toolbar = unified_toolbar(
-            UnifiedToolbarProps {
-                account_name: "syuya2036".to_string(),
-                account_plan: "Free".to_string(),
-            },
-            window,
-            cx,
-        );
+        // On the explorer with one pane the tab row is the title bar, as in
+        // the Explorer of Windows 11; elsewhere the toolbar holds the buttons.
+        let own_title_bar =
+            self.current_page != PageKind::Explorer || !self.explorer.read(cx).tabs_in_title_bar();
+        let toolbar = own_title_bar.then(|| unified_toolbar(window, cx));
 
         div()
             .size_full()
@@ -396,7 +412,10 @@ impl Render for RootView {
             .relative()
             .track_focus(&self.focus_handle)
             .on_action(cx.listener(Self::handle_account_action))
-            .child(toolbar)
+            .children(toolbar)
+            .when_some(crate::file_dialog::picking(), |this, dialog| {
+                this.child(self.render_picking_banner(dialog, cx))
+            })
             .child(
                 // Main content: toolbar + page
                 div()
@@ -404,10 +423,6 @@ impl Render for RootView {
                     .flex()
                     .flex_row()
                     .min_h(px(0.0))
-                    .child(
-                        // Left navigation toolbar
-                        self.render_navigation(cx),
-                    )
                     .child(
                         // Main content area - render active page
                         div()
@@ -418,7 +433,7 @@ impl Render for RootView {
                             .child(self.render_active_page(window, cx)),
                     ),
             )
-            .child(
+            .children(
                 // Footer status bar
                 {
                     // A config load error takes precedence over the explorer's
@@ -441,9 +456,11 @@ impl Render for RootView {
                         status_tone,
                         ..Default::default()
                     };
-                    let zoom_control = (self.current_page == PageKind::Explorer)
-                        .then(|| self.render_zoom_control(window, cx));
-                    footer(props, zoom_control, cx)
+                    // The explorer has its own bar (filter, counts, zoom), as
+                    // File Pilot does; the footer stays for the other pages
+                    // and for a config file that failed to load.
+                    let shown = self.current_page != PageKind::Explorer || self.config_status.is_some();
+                    shown.then(|| footer(props, None, cx))
                 },
             )
             .children(Root::render_dialog_layer(window, cx))
@@ -456,95 +473,54 @@ impl RootView {
     fn handle_account_action(
         &mut self,
         action: &AccountMenuAction,
-        window: &mut Window,
+        _window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        match action.command {
-            AccountMenuCommand::ProfileSummary => {
-                window.prevent_default();
-            }
-            AccountMenuCommand::Settings => self.set_page(PageKind::Settings, cx),
-            AccountMenuCommand::Extensions => self.set_page(PageKind::Extensions, cx),
-            AccountMenuCommand::Keymap
-            | AccountMenuCommand::Themes
-            | AccountMenuCommand::IconThemes => {
-                info!(?action.command, "Account menu item not yet implemented");
-                window.prevent_default();
-            }
-            AccountMenuCommand::SignOut => {
-                info!("Sign out requested");
-            }
-        }
+        let section = match action.command {
+            AccountMenuCommand::Settings => SettingsSection::Appearance,
+            AccountMenuCommand::Keymap => SettingsSection::Shortcuts,
+            AccountMenuCommand::Themes => SettingsSection::Appearance,
+        };
+        self.settings.update(cx, |page, cx| page.show_section(section, cx));
+        self.set_page(PageKind::Settings, cx);
     }
 
-    fn render_navigation(&self, cx: &mut Context<Self>) -> impl IntoElement + use<> {
-        let active_page = self.current_page;
-
-        div()
-            .w(px(64.0))
-            .h_full()
-            .flex()
-            .flex_col()
-            .items_center()
-            .bg(rgb(theme::toolbar_bg()))
-            .border_r_1()
-            .border_color(rgb(theme::toolbar_border()))
-            .py(px(16.0))
-            .child(
-                // Page navigation buttons
-                div().flex().flex_col().items_center().gap_2().children(
-                    PageKind::all().into_iter().map(|page| {
-                        let is_active = active_page == page;
-                        self.navigation_button(page, is_active, cx)
-                    }),
-                ),
-            )
-    }
-
-    fn navigation_button(
-        &self,
-        page: PageKind,
-        active: bool,
-        cx: &mut Context<Self>,
-    ) -> impl IntoElement + use<> {
-        div()
-            .id(("nav-btn", page as usize))
-            .w(px(48.0))
-            .h(px(48.0))
-            .flex()
-            .items_center()
-            .justify_center()
-            .rounded(px(8.0))
-            .cursor_pointer()
-            .when(active, |this| {
-                this.bg(rgb(theme::toolbar_active_bg())).shadow_sm()
-            })
-            .when(!active, |this| {
-                this.hover(|style| style.bg(rgb(theme::toolbar_hover())))
-            })
-            .on_click(cx.listener(move |view, _event, _window, cx| {
-                view.set_page(page, cx);
-            }))
-            .child(
-                Icon::new(Icon::empty())
-                    .path(page.icon_path())
-                    .size_5()
-                    .text_color(rgb(if active {
-                        theme::toolbar_active_text()
-                    } else {
-                        theme::toolbar_text()
-                    })),
-            )
-    }
-
-    fn render_active_page(&self, _window: &mut Window, _cx: &mut Context<Self>) -> AnyElement {
-        match self.current_page {
-            PageKind::Explorer => self.explorer.clone().into_any_element(),
-
+    fn render_active_page(&self, _window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
+        let page = match self.current_page {
+            PageKind::Explorer => return self.explorer.clone().into_any_element(),
             PageKind::Git => self.git.clone().into_any_element(),
             PageKind::S3 => self.s3.clone().into_any_element(),
-            PageKind::Extensions => self.extensions.clone().into_any_element(),
             PageKind::Settings => self.settings.clone().into_any_element(),
-        }
+        };
+        // The page rail is gone, so the pages the account menu opens carry
+        // their own way back; without it they would be a dead end.
+        div()
+            .size_full()
+            .flex()
+            .flex_col()
+            .child(
+                div()
+                    .id("back-to-explorer")
+                    .flex_shrink_0()
+                    .h(px(36.0))
+                    .px(px(16.0))
+                    .flex()
+                    .items_center()
+                    .gap_2()
+                    .cursor_pointer()
+                    .text_sm()
+                    .text_color(rgb(theme::fg_secondary()))
+                    .border_b_1()
+                    .border_color(rgb(theme::border()))
+                    .hover(|style| style.text_color(rgb(theme::fg())))
+                    .on_click(cx.listener(|view, _event, _window, cx| {
+                        view.set_page(PageKind::Explorer, cx);
+                    }))
+                    .child(Icon::new(IconName::ArrowLeft).size_4())
+                    .child("Voltar aos arquivos"),
+            )
+            .child(div().flex_1().min_h(px(0.0)).child(page))
+            .into_any_element()
     }
 }
+

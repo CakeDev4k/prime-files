@@ -16,7 +16,7 @@ pub mod paths;
 pub mod settings;
 pub mod watcher;
 
-pub use loader::{backup, ensure_exists, needs_migration, reset, write_default};
+pub use loader::{backup, ensure_exists, needs_migration, reset, set_value, write_default};
 pub use settings::{
     CURRENT_SCHEMA_VERSION, Config, ConfigOverride, Diagnostic, DiagnosticLevel, Diagnostics,
     DiagnosticsStore, Explorer, Indexing, IndexingExclude, IndexingMode, Keybindings, Launcher,
@@ -61,8 +61,12 @@ pub const MAX_SNIPPETS: usize = 10;
 /// Files larger than this are not previewed inline (bytes).
 pub const PREVIEW_MAX_FILE_SIZE: u64 = 2 * 1024 * 1024;
 
-/// Maximum number of entries fetched in a single directory listing page.
-pub const DIR_LISTING_LIMIT: usize = 1000;
+/// Maximum number of entries the explorer reads from one directory: all of
+/// them. It was 1,000, and a folder past that showed its first thousand names
+/// with nothing saying the rest existed (System32 has 5,218). Reading the
+/// whole of WinSxS\Manifests, 35,628 entries, costs about 95 ms since the
+/// listing stopped reopening every file (`nohrs-services/examples/listing_ab.rs`).
+pub const DIR_LISTING_LIMIT: usize = usize::MAX;
 
 /// Window during which a `Confirm` event following a double-click is suppressed
 /// so a double-click does not both preview and re-activate the same row.

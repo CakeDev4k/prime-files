@@ -9,7 +9,7 @@ use tantivy::{Index, IndexWriter}; // Import trait for add_text etc? No, Tantivy
 /// Owns the tantivy index and its writer, and performs full and incremental indexing.
 pub struct IndexManager {
     index: Index,
-    _index_path: PathBuf,
+    index_path: PathBuf,
     content_root: PathBuf,
     writer: Arc<Mutex<IndexWriter>>,
 }
@@ -65,7 +65,7 @@ impl IndexManager {
 
         Ok(Self {
             index,
-            _index_path: index_path,
+            index_path,
             content_root,
             writer: Arc::new(Mutex::new(writer)),
         })
@@ -290,7 +290,23 @@ impl IndexManager {
         &self.index
     }
 
+    /// The folder the index covers; changes outside it are not indexed.
+    pub fn content_root(&self) -> &Path {
+        &self.content_root
+    }
+
+    // Whether a change at `path` belongs in the index. The index's own files
+    // never do: indexing them writes the index, which changes them again, and
+    // that loop committed several times a second for as long as Nohrs ran —
+    // with Windows refusing the writes ("Acesso negado") whenever the indexer
+    // had the same file open to read it.
+    fn is_indexable_change(&self, path: &Path) -> bool {
+        path.starts_with(&self.content_root) && !path.starts_with(&self.index_path)
+    }
+
     /// Re-indexes or removes each of `paths` (depending on existence) and commits once.
+    /// Paths outside the content root, or inside the index itself, are ignored;
+    /// a batch left with nothing to index commits nothing.
     #[tracing::instrument(target = "nohrs::op", name = "index.process_changes", level = "debug", skip_all, fields(paths = paths.len()))]
     pub fn process_changes(&self, paths: &[PathBuf]) -> Result<()> {
         let mut writer_guard = self
@@ -303,6 +319,10 @@ impl IndexManager {
         let content_field = schema.get_field("content").context("Schema error")?;
         let is_directory_field = schema.get_field("is_directory").context("Schema error")?;
 
+        let paths: Vec<&PathBuf> = paths.iter().filter(|path| self.is_indexable_change(path)).collect();
+        if paths.is_empty() {
+            return Ok(());
+        }
         for path in paths {
             if path.exists() {
                 if let Err(e) = self.index_single_file(
@@ -441,4 +461,38 @@ fn find_all_match_lines(path: &Path, query: &str) -> Vec<(usize, String)> {
         );
     }
     matches
+}
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used)]
+mod tests {
+    use super::*;
+
+    fn indexed(manager: &IndexManager) -> u64 {
+        let reader = manager.index().reader().unwrap();
+        reader.reload().unwrap();
+        reader.searcher().num_docs()
+    }
+
+    #[test]
+    fn changes_to_the_index_itself_or_outside_the_root_are_not_indexed() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().join("Documents");
+        // Inside the root on purpose: the worst case, where the watcher would
+        // see every commit.
+        let index_path = root.join(".nohrs-index");
+        std::fs::create_dir_all(&root).unwrap();
+        let manager = IndexManager::new_with_path(index_path.clone(), root.clone()).unwrap();
+
+        let outside = dir.path().join("elsewhere.txt");
+        std::fs::write(&outside, "x").unwrap();
+        let own_file = std::fs::read_dir(&index_path).unwrap().next().unwrap().unwrap().path();
+        manager.process_changes(&[own_file, outside]).unwrap();
+        assert_eq!(indexed(&manager), 0);
+
+        let note = root.join("note.txt");
+        std::fs::write(&note, "hello").unwrap();
+        manager.process_changes(&[note]).unwrap();
+        assert_eq!(indexed(&manager), 1);
+    }
 }

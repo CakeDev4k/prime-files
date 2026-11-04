@@ -15,12 +15,20 @@ use nohrs_ui::theme::theme;
 /// The table header indents its "Name" label by the same amount so the column
 /// heading lines up with the file names beneath it.
 pub const NAME_INDENT: f32 = 44.0;
+/// Space between a column's left line and its text, in the cells and the
+/// headings alike.
+pub const CELL_INSET: f32 = 10.0;
+/// Edge of the type icon, in logical pixels.
+pub const ICON_SIZE: f32 = 16.0;
+/// How far each level of an open folder is indented in the Tree view.
+const TREE_INDENT: f32 = 16.0;
 
 /// Renders a single listing row for the given entry at row index `ix`.
 pub fn render(
     page: &ExplorerPane,
     item: &FileEntryDto,
     ix: usize,
+    shell_icon: Option<std::sync::Arc<gpui::RenderImage>>,
     cx: &mut Context<ExplorerPane>,
 ) -> impl IntoElement + use<> {
     use nohrs_ui::components::file_list::{format_date, get_file_type, human_bytes};
@@ -35,6 +43,10 @@ pub fn render(
     };
 
     let is_selected = page.is_selected(ix);
+    let tree_view = page.view_mode == crate::explorer::types::ViewMode::Tree;
+    let depth = if tree_view { page.tree_depth(&item.path) } else { 0 };
+    let tree_folder = tree_view && item.kind == "dir";
+    let tree_open = tree_folder && page.tree_open(&item.path);
 
     let file_type = get_file_type(&item.name, &item.kind);
 
@@ -96,13 +108,14 @@ pub fn render(
         IconName::ChevronRight
     };
 
-    // Create styled filename with highlighted matches
+    // What a filter or search matched, in the accent colour.
     let styled_name = if has_filename_match && !page.search_query.is_empty() {
         let highlights = crate::explorer::view::find_query_highlights(&display_name, &query);
         StyledText::new(display_name.clone()).with_highlights(highlights)
     } else {
-        StyledText::new(display_name.clone())
+        crate::explorer::view::highlighted_name(&display_name, &page.highlight_query())
     };
+    let hit_folder = page.hit_folder(&item.path).map(str::to_string);
 
     // ... rendering ...
     // Note: page.total_table_width() method is needed.
@@ -112,10 +125,33 @@ pub fn render(
     // Copying logic is safer: `page.col_name_width + ...`.
     // I'll copy the logic.
 
-    div()
+    let folder = (item.kind == "dir").then(|| item.path.clone());
+    let row = div()
+        .relative()
         .flex()
         .flex_col()
         .w(px(total_width))
+        .on_mouse_down(
+            gpui::MouseButton::Left,
+            cx.listener(move |this, event: &gpui::MouseDownEvent, _window, cx| {
+                // Right of the Name column a press draws a selection
+                // rectangle, as in Explorer; on the name it picks up the file.
+                if !(this.press_on_row_blank(ix, event.position)
+                    && this.start_marquee(event.position, event.modifiers, Some(ix), cx))
+                {
+                    this.press_entry(ix, event.position, false);
+                }
+            }),
+        )
+        .on_mouse_down(
+                gpui::MouseButton::Right,
+                cx.listener(move |this, event: &gpui::MouseDownEvent, window, cx| {
+                    // The rows sit inside the listing, whose own right click is
+                    // the folder's menu.
+                    cx.stop_propagation();
+                    this.open_context_menu(Some(ix), event.modifiers.shift, window, cx);
+                }),
+            )
         .child(
             ListItem::new(("file-row", ix))
                 .w(px(total_width))
@@ -142,6 +178,7 @@ pub fn render(
                     cx.listener(move |this, event: &gpui::ClickEvent, window, cx| {
                         if let gpui::ClickEvent::Mouse(mouse) = event
                             && mouse.up.button == gpui::MouseButton::Left
+                            && !this.marquee_dragging()
                         {
                             this.record_click(ix, mouse.up.click_count);
                             let modifiers = mouse.up.modifiers;
@@ -152,7 +189,7 @@ pub fn render(
                             } else {
                                 this.select_single(ix);
                             }
-                            if item_for_preview.kind == "file" {
+                            if item_for_preview.kind == "file" || item_for_preview.kind == "dir" {
                                 this.open_preview(item_for_preview.path.clone(), window, cx);
                             }
                             if mouse.up.click_count >= 2 {
@@ -221,8 +258,54 @@ pub fn render(
                                             ),
                                     )
                                 })
-                                .when(!has_content_matches, |this| this.child(div().w(px(20.0))))
-                                .child(Icon::new(icon_name).size_4().text_color(icon_color))
+                                .when(depth > 0, |this| {
+                                    this.child(div().w(px(depth as f32 * TREE_INDENT)).flex_shrink_0())
+                                })
+                                .when(!has_content_matches && !tree_folder, |this| {
+                                    this.child(div().w(px(20.0)).flex_shrink_0())
+                                })
+                                .when(tree_folder, |this| {
+                                    let path = item.path.clone();
+                                    this.child(
+                                        div()
+                                            .id(("tree-toggle", ix))
+                                            .w(px(20.0))
+                                            .h_full()
+                                            .flex()
+                                            .flex_shrink_0()
+                                            .items_center()
+                                            .justify_center()
+                                            .cursor_pointer()
+                                            .on_mouse_down(
+                                                gpui::MouseButton::Left,
+                                                cx.listener(move |this, _, _, cx| {
+                                                    cx.stop_propagation();
+                                                    this.toggle_tree_folder(path.clone(), cx);
+                                                }),
+                                            )
+                                            .child(
+                                                Icon::new(if tree_open {
+                                                    IconName::ChevronDown
+                                                } else {
+                                                    IconName::ChevronRight
+                                                })
+                                                .size_3()
+                                                .text_color(rgb(theme::gray_600())),
+                                            ),
+                                    )
+                                })
+                                // The Windows icon once extracted; until then,
+                                // or when the Shell has none, the generic one.
+                                .child(match shell_icon {
+                                    Some(image) => img(ImageSource::Render(image))
+                                        .size(px(ICON_SIZE))
+                                        .flex_shrink_0()
+                                        .into_any_element(),
+                                    None => Icon::new(icon_name)
+                                        .size_4()
+                                        .text_color(icon_color)
+                                        .into_any_element(),
+                                })
                                 .child(match rename_input {
                                     // Borderless and flush with the label it
                                     // stands in for, so the row keeps its shape
@@ -249,19 +332,33 @@ pub fn render(
                                     None => div()
                                         .flex_1()
                                         .min_w(px(0.0))
-                                        .text_sm()
-                                        .font_weight(gpui::FontWeight::MEDIUM)
-                                        .text_color(rgb(theme::fg()))
+                                        .flex()
+                                        .items_center()
                                         .overflow_hidden()
-                                        .text_ellipsis()
-                                        .whitespace_nowrap()
-                                        .child(styled_name)
+                                        .child(
+                                            div()
+                                                .flex_shrink()
+                                                .min_w(px(0.0))
+                                                .text_sm()
+                                                .font_weight(gpui::FontWeight::MEDIUM)
+                                                .text_color(rgb(theme::fg()))
+                                                .overflow_hidden()
+                                                .text_ellipsis()
+                                                .whitespace_nowrap()
+                                                .child(styled_name),
+                                        )
+                                        .when_some(hit_folder, |this, folder| {
+                                            this.child(crate::explorer::view::hit_folder_label(
+                                                &folder,
+                                            ))
+                                        })
                                         .into_any_element(),
                                 }),
                         )
                         .child(
                             div()
                                 .w(px(page.col_type_width))
+                                .pl(px(CELL_INSET))
                                 .flex_shrink_0()
                                 .text_sm()
                                 .text_color(rgb(theme::fg_secondary()))
@@ -273,7 +370,10 @@ pub fn render(
                         .child(
                             div()
                                 .w(px(page.col_size_width))
+                                .pl(px(CELL_INSET))
                                 .flex_shrink_0()
+                                .overflow_hidden()
+                                .whitespace_nowrap()
                                 .text_sm()
                                 .text_color(rgb(theme::fg_secondary()))
                                 .child(match item.kind.as_str() {
@@ -285,6 +385,7 @@ pub fn render(
                         .child(
                             div()
                                 .w(px(page.col_modified_width))
+                                .pl(px(CELL_INSET))
                                 .flex_shrink_0()
                                 .text_sm()
                                 .text_color(rgb(theme::fg_secondary()))
@@ -337,5 +438,10 @@ pub fn render(
                         )
                 })
                 .collect::<Vec<_>>(),
-        )
+        );
+    let row = page.track_hit(row, ix);
+    match folder {
+        Some(folder) => crate::explorer::drag::drop_into(row, &folder, cx),
+        None => row,
+    }
 }

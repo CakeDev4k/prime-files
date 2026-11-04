@@ -69,6 +69,96 @@ pub fn reset(path: &Path) -> io::Result<Option<PathBuf>> {
     Ok(backup_path)
 }
 
+/// Set `key` in `[section]` of the file at `path` to `value` (already in TOML
+/// form, e.g. `"dark"` with its quotes, or `true`), leaving every other line,
+/// comment and blank as it was. A missing key is added at the end of its
+/// section, and a missing section at the end of the file.
+///
+/// Line-based rather than a parse and re-serialize: the file is the user's,
+/// with comments that document each value, and a round trip through the
+/// parser would throw them away. Keys are only looked up inside a plain
+/// `[section]` header, so a same-named key in another table is never touched.
+///
+/// Callers run this off the UI thread; the hot-reload watcher then applies
+/// the change as if the user had edited the file.
+#[allow(clippy::disallowed_methods)]
+pub fn set_value(path: &Path, section: &str, key: &str, value: &str) -> io::Result<()> {
+    let text = match std::fs::read_to_string(path) {
+        Ok(text) => text,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => Config::default_toml_template(),
+        Err(error) => return Err(error),
+    };
+    ensure_parent_dir(path)?;
+    std::fs::write(path, with_value(&text, section, key, value))
+}
+
+/// The text of [`set_value`], without the file.
+fn with_value(text: &str, section: &str, key: &str, value: &str) -> String {
+    let header = format!("[{section}]");
+    let mut lines: Vec<String> = text.lines().map(str::to_string).collect();
+    let is_header = |line: &str| line.trim_start().starts_with('[');
+    let Some(start) = lines.iter().position(|line| line.trim() == header) else {
+        if lines.last().is_some_and(|line| !line.trim().is_empty()) {
+            lines.push(String::new());
+        }
+        lines.push(header);
+        lines.push(format!("{key} = {value}"));
+        return lines.join("
+") + "
+";
+    };
+    let end = lines[start + 1..]
+        .iter()
+        .position(|line| is_header(line))
+        .map_or(lines.len(), |offset| start + 1 + offset);
+    let found = (start + 1..end).find(|&ix| {
+        let line = lines[ix].trim_start();
+        line.strip_prefix(key)
+            .is_some_and(|rest| rest.trim_start().starts_with('='))
+    });
+    match found {
+        Some(ix) => {
+            // Keep the trailing comment, which documents the allowed values,
+            // with the spacing that aligns it.
+            let comment = comment_start(&lines[ix])
+                .map(|at| lines[ix][at..].to_string())
+                .unwrap_or_default();
+            let indent: String = lines[ix].chars().take_while(|c| c.is_whitespace()).collect();
+            lines[ix] = format!("{indent}{key} = {value}{comment}");
+        }
+        None => {
+            // After the section's last non-blank line, not after the blank
+            // that separates it from the next one.
+            let mut at = end;
+            while at > start + 1 && lines[at - 1].trim().is_empty() {
+                at -= 1;
+            }
+            lines.insert(at, format!("{key} = {value}"));
+        }
+    }
+    lines.join("
+") + "
+"
+}
+
+/// Where the trailing comment of a `key = value` line begins, counting the
+/// whitespace before the `#`. A `#` inside a string (an accent like
+/// `"#ff8800"`) is part of the value.
+fn comment_start(line: &str) -> Option<usize> {
+    let mut in_string = false;
+    let mut escaped = false;
+    for (at, character) in line.char_indices() {
+        match character {
+            _ if escaped => escaped = false,
+            '\\' if in_string => escaped = true,
+            '"' => in_string = !in_string,
+            '#' if !in_string => return Some(line[..at].trim_end().len()),
+            _ => {}
+        }
+    }
+    None
+}
+
 /// Whether a file declaring `version` requires migration before this build can
 /// use it. P1 only knows v1, so this is always `false`; kept as the hook for
 /// future schema bumps.
@@ -80,6 +170,74 @@ pub fn needs_migration(version: u64) -> bool {
 #[allow(clippy::unwrap_used, clippy::disallowed_methods)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn with_value_replaces_in_its_section_and_keeps_the_comment() {
+        let text = "[theme]
+mode = \"system\"   # \"system\" | \"dark\"
+
+[indexing]
+mode = \"auto\"
+";
+        let out = with_value(text, "theme", "mode", "\"dark\"");
+        assert_eq!(
+            out,
+            "[theme]
+mode = \"dark\"   # \"system\" | \"dark\"
+
+[indexing]
+mode = \"auto\"
+"
+        );
+    }
+
+    #[test]
+    fn with_value_adds_missing_keys_and_sections() {
+        let text = "[ui]
+default_sort = \"name\"
+
+[explorer]
+";
+        let out = with_value(text, "ui", "show_hidden", "true");
+        assert_eq!(out, "[ui]
+default_sort = \"name\"
+show_hidden = true
+
+[explorer]
+");
+        let out = with_value(&out, "theme", "mode", "\"light\"");
+        assert!(out.ends_with("[explorer]
+
+[theme]
+mode = \"light\"
+"));
+        // A `#` inside a value is not a comment.
+        let out = with_value("[theme]
+accent = \"#fff\" # hex
+", "theme", "accent", "\"#000\"");
+        assert_eq!(out, "[theme]
+accent = \"#000\" # hex
+");
+        // A key that only shares a prefix is not the key.
+        let out = with_value("[ui]
+show_hidden_x = 1
+", "ui", "show_hidden", "true");
+        assert_eq!(out, "[ui]
+show_hidden_x = 1
+show_hidden = true
+");
+    }
+
+    #[test]
+    fn set_value_round_trips_through_the_loader() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.toml");
+        write_default(&path).unwrap();
+        set_value(&path, "theme", "mode", "\"light\"").unwrap();
+        let (config, diagnostics) = crate::config::load_from_path(&path);
+        assert!(diagnostics.is_empty());
+        assert_eq!(config.theme.mode, crate::config::ThemeMode::Light);
+    }
     use tempfile::tempdir;
 
     #[test]

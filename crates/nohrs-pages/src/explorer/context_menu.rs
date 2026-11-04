@@ -1,0 +1,708 @@
+use std::sync::Mutex;
+
+use gpui::{AppContext as _, AsyncWindowContext, Context, Pixels, Point, WeakEntity, Window};
+use nohrs_core::config::{self, ThemeMode};
+use nohrs_core::telemetry::LogErr;
+
+use super::ExplorerPane;
+use super::grouping::GroupBy;
+use super::types::{SortKey, StatusLevel, ViewMode};
+use crate::shell_menu::{self, Choice, Entry, MenuItem, Request, Session, Target};
+
+// Nohrs's own menu entries. The values are the menu ids, so they stay below
+// the range the Shell's entries are numbered from.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+#[repr(u32)]
+enum Command {
+    ViewList = 1,
+    ViewGrid,
+    ViewTree,
+    ViewCompact,
+    ToggleHidden,
+    ThemeDark,
+    ThemeLight,
+    ThemeSystem,
+    SortName,
+    SortType,
+    SortSize,
+    SortModified,
+    SortAscending,
+    SortDescending,
+    Refresh,
+    Paste,
+    NewFolder,
+    GroupNone,
+    GroupKind,
+    GroupModified,
+    GroupSize,
+    FitColumn,
+    FitAllColumns,
+    ColumnName,
+    ColumnType,
+    ColumnSize,
+    ColumnModified,
+    Cut,
+    Copy,
+    Rename,
+    Delete,
+    MoreOptions,
+}
+
+impl Command {
+    const ALL: [Command; 32] = [
+        Command::ViewList,
+        Command::ViewGrid,
+        Command::ViewTree,
+        Command::ViewCompact,
+        Command::ToggleHidden,
+        Command::ThemeDark,
+        Command::ThemeLight,
+        Command::ThemeSystem,
+        Command::SortName,
+        Command::SortType,
+        Command::SortSize,
+        Command::SortModified,
+        Command::SortAscending,
+        Command::SortDescending,
+        Command::Refresh,
+        Command::Paste,
+        Command::NewFolder,
+        Command::GroupNone,
+        Command::GroupKind,
+        Command::GroupModified,
+        Command::GroupSize,
+        Command::FitColumn,
+        Command::FitAllColumns,
+        Command::ColumnName,
+        Command::ColumnType,
+        Command::ColumnSize,
+        Command::ColumnModified,
+        Command::Cut,
+        Command::Copy,
+        Command::Rename,
+        Command::Delete,
+        Command::MoreOptions,
+    ];
+
+    fn from_id(id: u32) -> Option<Self> {
+        Self::ALL.into_iter().find(|command| *command as u32 == id)
+    }
+}
+
+// The theme mode the config asks for, as last applied by the root view. The
+// pane only needs it to tick the right entry, and `system` cannot be told
+// apart from the palette it resolved to.
+static THEME_MODE: Mutex<ThemeMode> = Mutex::new(ThemeMode::Dark);
+
+/// Records the configured theme mode, for the menu's Theme entries.
+pub(crate) fn note_theme_mode(mode: ThemeMode) {
+    if let Ok(mut current) = THEME_MODE.lock() {
+        *current = mode;
+    }
+}
+
+fn theme_mode() -> ThemeMode {
+    THEME_MODE.lock().map_or(ThemeMode::Dark, |mode| *mode)
+}
+
+/// Which Shell verbs the explorer runs itself. Copy and Cut go through Nohrs's
+/// clipboard, so its own Paste and the conflict dialog see them; Delete goes to
+/// the recycle bin with Nohrs's undo; Rename edits inline. Open on a folder
+/// navigates here instead of opening another window.
+fn intercepted(target_is_one_folder: bool) -> &'static [&'static str] {
+    if target_is_one_folder {
+        &["copy", "cut", "delete", "rename", "open", "explore"]
+    } else {
+        &["copy", "cut", "delete", "rename"]
+    }
+}
+
+/// One of the icons in the row above a file's menu, as in Windows 11.
+pub(crate) struct QuickAction {
+    pub id: u32,
+    pub icon: &'static str,
+    pub label: &'static str,
+}
+
+/// What an open menu was opened for, which decides what its entries do.
+#[derive(Clone)]
+pub(crate) enum MenuPurpose {
+    /// The listing: selected entries, or the folder's empty space.
+    Listing {
+        target: Target,
+        one_folder: bool,
+        extended: bool,
+    },
+    /// A place in the sidebar.
+    Place(super::places::Place),
+    /// The column headings; the column right-clicked, if any.
+    Columns(Option<usize>),
+    /// The funnel's kinds.
+    Filter,
+}
+
+/// A menu on screen: what it shows, where, and what runs its entries.
+pub(crate) struct OpenMenu {
+    pub items: Vec<MenuItem>,
+    pub quick: Vec<QuickAction>,
+    pub position: Point<Pixels>,
+    /// The open submenu at each level, by index.
+    pub open_path: Vec<usize>,
+    session: Option<Session>,
+    purpose: MenuPurpose,
+}
+
+// The filter menu's ids, past the commands' range.
+const FIRST_KIND: u32 = 0x800;
+
+const SHELL_HIDDEN_FOR_ITEMS: &[&str] = &["paste", "cut", "copy", "rename", "delete"];
+
+impl ExplorerPane {
+    /// Opens the right-click menu: for the row `row` (selecting it first if
+    /// it is not part of the selection), or for the folder's empty space.
+    pub(crate) fn open_context_menu(
+        &mut self,
+        row: Option<usize>,
+        extended: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if let Some(row) = row
+            && !self.is_selected(row)
+        {
+            self.select_single(row);
+            cx.notify();
+        }
+        let Some(hwnd) = crate::ipc::window_hwnd(window) else {
+            return;
+        };
+        let paths = if row.is_some() { self.selected_paths() } else { Vec::new() };
+        let one_folder = match paths.as_slice() {
+            [path] => self
+                .filtered_entries
+                .iter()
+                .any(|entry| entry.kind == "dir" && &entry.path == path),
+            _ => false,
+        };
+        let purpose = MenuPurpose::Listing {
+            target: if paths.is_empty() {
+                Target::Background(self.cwd.clone())
+            } else {
+                Target::Items(paths)
+            },
+            one_folder,
+            extended,
+        };
+        let own = self.listing_entries(&purpose, cx);
+        self.show_menu(purpose, own, hwnd, window, cx);
+    }
+
+    // Nohrs's entries for a listing menu: the view and sort submenus on the
+    // folder's empty space, "Show more options" on files.
+    fn listing_entries(&self, purpose: &MenuPurpose, cx: &mut Context<Self>) -> Vec<Entry> {
+        let more = Entry::command(Command::MoreOptions as u32, "Mostrar mais opções")
+            .with_icon("icons/ellipsis.svg")
+            .with_shortcut("Shift+F10");
+        match purpose {
+            MenuPurpose::Listing { target: Target::Background(_), .. } => {
+                let mut entries = self.background_entries(cx);
+                entries.push(Entry::Separator);
+                entries.push(more);
+                entries
+            }
+            _ => vec![more],
+        }
+    }
+
+    // Reads the menu for `purpose` and opens it at the pointer. The Shell is
+    // asked between updates, as its extensions may pump messages.
+    fn show_menu(
+        &mut self,
+        purpose: MenuPurpose,
+        own: Vec<Entry>,
+        hwnd: i64,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let position = window.mouse_position();
+        cx.spawn_in(
+            window,
+            async move |this: WeakEntity<Self>, cx: &mut AsyncWindowContext| {
+                let (target, own_first, extended, intercept, hide, quick) = match &purpose {
+                    MenuPurpose::Listing { target, one_folder, extended } => {
+                        let files = matches!(target, Target::Items(_));
+                        (
+                            target.clone(),
+                            !files,
+                            *extended,
+                            intercepted(*one_folder).to_vec(),
+                            // Paste is Nohrs's own; on files the four in the
+                            // row above replace the Shell's.
+                            if files { SHELL_HIDDEN_FOR_ITEMS } else { &["paste"][..] },
+                            files,
+                        )
+                    }
+                    MenuPurpose::Place(place) => (
+                        Target::Items(vec![place.parsing_name.clone()]),
+                        false,
+                        false,
+                        if place.path.is_some() { vec!["open", "explore"] } else { Vec::new() },
+                        &[][..],
+                        false,
+                    ),
+                    MenuPurpose::Columns(_) | MenuPurpose::Filter => {
+                        (Target::None, true, false, Vec::new(), &[][..], false)
+                    }
+                };
+                let prepared = shell_menu::prepare(&Request {
+                    hwnd: hwnd as isize,
+                    target: &target,
+                    own: &own,
+                    own_first,
+                    extended,
+                    dark: true,
+                    intercept: &intercept,
+                    hide,
+                });
+                this.update(cx, |pane, cx| {
+                    pane.context_menu = Some(OpenMenu {
+                        items: prepared.items,
+                        quick: if quick { quick_actions() } else { Vec::new() },
+                        position,
+                        open_path: Vec::new(),
+                        session: Some(prepared.session),
+                        purpose,
+                    });
+                    cx.notify();
+                })
+                .log_err();
+            },
+        )
+        .detach();
+    }
+
+    /// Closes the open menu without choosing.
+    pub(crate) fn close_menu(&mut self, cx: &mut Context<Self>) {
+        if self.context_menu.take().is_some() {
+            cx.notify();
+        }
+    }
+
+    /// The pointer is over entry `index` of `level`: its submenu opens, and
+    /// any deeper one closes.
+    pub(crate) fn hover_menu_entry(&mut self, level: usize, index: usize, submenu: bool, cx: &mut Context<Self>) {
+        let Some(menu) = self.context_menu.as_mut() else {
+            return;
+        };
+        let wanted: Vec<usize> = menu
+            .open_path
+            .iter()
+            .take(level)
+            .copied()
+            .chain(submenu.then_some(index))
+            .collect();
+        if menu.open_path != wanted {
+            menu.open_path = wanted;
+            cx.notify();
+        }
+    }
+
+    /// Runs entry `id` of the open menu and closes it.
+    pub(crate) fn choose_menu_item(&mut self, id: u32, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(menu) = self.context_menu.take() else {
+            return;
+        };
+        cx.notify();
+        if id == Command::MoreOptions as u32 {
+            self.show_classic_menu(menu.purpose, window, cx);
+            return;
+        }
+        let purpose = menu.purpose;
+        let Some(session) = menu.session else {
+            self.apply_choice(purpose, Choice::Own(id), window, cx);
+            return;
+        };
+        // A Shell command may open its own dialogs: it runs between updates.
+        cx.spawn_in(
+            window,
+            async move |this: WeakEntity<Self>, cx: &mut AsyncWindowContext| {
+                let choice = shell_menu::run(session, id);
+                this.update_in(cx, |pane, window, cx| pane.apply_choice(purpose, choice, window, cx))
+                    .log_err();
+            },
+        )
+        .detach();
+    }
+
+    // What an entry does, by what the menu was opened for.
+    fn apply_choice(&mut self, purpose: MenuPurpose, choice: Choice, window: &mut Window, cx: &mut Context<Self>) {
+        match purpose {
+            MenuPurpose::Listing { .. } => self.apply_menu_choice(choice, window, cx),
+            MenuPurpose::Place(place) => {
+                match choice {
+                    Choice::Verb(_) => self.open_place(&place, window, cx),
+                    // Unpinning, renaming or deleting changes the list.
+                    Choice::Ran => self.refresh_places(),
+                    Choice::Dismissed | Choice::Own(_) => {}
+                }
+                cx.notify();
+            }
+            MenuPurpose::Columns(column) => {
+                if let Choice::Own(id) = choice {
+                    match Command::from_id(id) {
+                        Some(Command::FitColumn) => {
+                            if let Some(column) = column {
+                                self.fit_column(column);
+                            }
+                        }
+                        Some(Command::FitAllColumns) => (0..4).for_each(|column| self.fit_column(column)),
+                        Some(Command::ColumnType) => self.toggle_column(1),
+                        Some(Command::ColumnSize) => self.toggle_column(2),
+                        Some(Command::ColumnModified) => self.toggle_column(3),
+                        _ => {}
+                    }
+                }
+                cx.notify();
+            }
+            MenuPurpose::Filter => {
+                use super::filter::KindFilter;
+                if let Choice::Own(id) = choice
+                    && let Some(kind) = id
+                        .checked_sub(FIRST_KIND)
+                        .and_then(|index| KindFilter::ALL.get(index as usize).copied())
+                {
+                    self.set_kind_filter(kind, cx);
+                }
+            }
+        }
+    }
+
+    // "Show more options": the classic Windows menu, with every entry an
+    // extension draws itself, as Windows 11 keeps it.
+    fn show_classic_menu(&mut self, purpose: MenuPurpose, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(hwnd) = crate::ipc::window_hwnd(window) else {
+            return;
+        };
+        let MenuPurpose::Listing { target, one_folder, extended } = purpose.clone() else {
+            return;
+        };
+        let own = match &target {
+            Target::Background(_) => self.background_entries(cx),
+            _ => Vec::new(),
+        };
+        let dark = nohrs_ui::theme::theme::is_dark();
+        cx.spawn_in(
+            window,
+            async move |this: WeakEntity<Self>, cx: &mut AsyncWindowContext| {
+                let choice = shell_menu::show(&Request {
+                    hwnd: hwnd as isize,
+                    target: &target,
+                    own: &own,
+                    own_first: matches!(target, Target::Background(_)),
+                    extended,
+                    dark,
+                    intercept: intercepted(one_folder),
+                    hide: &["paste"],
+                });
+                this.update_in(cx, |pane, window, cx| pane.apply_choice(purpose, choice, window, cx))
+                    .log_err();
+            },
+        )
+        .detach();
+    }
+
+    /// The Windows menu for a sidebar place: Unpin from Quick access, Open
+    /// in new window, Properties and the rest, as in Explorer's pane.
+    pub(crate) fn open_place_menu(
+        &mut self,
+        place: super::places::Place,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(hwnd) = crate::ipc::window_hwnd(window) else {
+            return;
+        };
+        self.show_menu(MenuPurpose::Place(place), Vec::new(), hwnd, window, cx);
+    }
+
+    /// The column header's menu, as Explorer's: fit one column or all, and
+    /// which columns to show. `column` is the one right-clicked, if any.
+    pub(crate) fn open_column_menu(
+        &mut self,
+        column: Option<usize>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(hwnd) = crate::ipc::window_hwnd(window) else {
+            return;
+        };
+        let own = vec![
+            Entry::command(Command::FitColumn as u32, "Ajustar coluna ao conteúdo")
+                .with_icon("icons/columns.svg")
+                .enabled(column.is_some_and(|column| self.column_visible(column))),
+            Entry::command(Command::FitAllColumns as u32, "Ajustar todas as colunas ao conteúdo")
+                .with_icon("icons/table.svg"),
+            Entry::Separator,
+            Entry::check(Command::ColumnName as u32, "Nome", true).enabled(false),
+            Entry::check(Command::ColumnType as u32, "Tipo", self.column_visible(1)),
+            Entry::check(Command::ColumnSize as u32, "Tamanho", self.column_visible(2)),
+            Entry::check(
+                Command::ColumnModified as u32,
+                "Data de modificação",
+                self.column_visible(3),
+            ),
+        ];
+        self.show_menu(MenuPurpose::Columns(column), own, hwnd, window, cx);
+    }
+
+    /// The bottom bar's filter menu: one entry per kind, the current one
+    /// ticked; picking one shows only that kind.
+    pub(crate) fn open_filter_menu(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        use super::filter::KindFilter;
+        let Some(hwnd) = crate::ipc::window_hwnd(window) else {
+            return;
+        };
+        let current = self.kind_filter;
+        let mut own: Vec<Entry> = Vec::new();
+        for (index, kind) in KindFilter::ALL.into_iter().enumerate() {
+            let icon = match kind {
+                KindFilter::All => "icons/layout-dashboard.svg",
+                KindFilter::Folders => "icons/folder.svg",
+                KindFilter::Files => "icons/file.svg",
+                KindFilter::Images => "icons/image.svg",
+                KindFilter::Videos => "icons/film.svg",
+                KindFilter::Audio => "icons/music.svg",
+                KindFilter::Documents => "icons/file-text.svg",
+                KindFilter::Archives => "icons/archive.svg",
+                KindFilter::Programs => "icons/app-window.svg",
+            };
+            own.push(
+                Entry::check(FIRST_KIND + index as u32, kind.menu_label(), kind == current)
+                    .with_icon(icon),
+            );
+            // "Tudo", then folders and files, then the kinds of file.
+            if matches!(kind, KindFilter::All | KindFilter::Files) {
+                own.push(Entry::Separator);
+            }
+        }
+        self.show_menu(MenuPurpose::Filter, own, hwnd, window, cx);
+    }
+
+    fn background_entries(&self, cx: &mut Context<Self>) -> Vec<Entry> {
+        let theme = theme_mode();
+        let sort = |command, label, key| Entry::radio(command as u32, label, self.sort_key == key);
+        let group = |command, label, by| Entry::radio(command as u32, label, self.group_by == by);
+        vec![
+            Entry::submenu(
+                "Exibir",
+                vec![
+                    Entry::radio(
+                        Command::ViewGrid as u32,
+                        "Ícones",
+                        self.view_mode == ViewMode::Grid,
+                    ),
+                    Entry::radio(
+                        Command::ViewCompact as u32,
+                        "Lista",
+                        self.view_mode == ViewMode::Compact,
+                    ),
+                    Entry::radio(
+                        Command::ViewTree as u32,
+                        "Árvore",
+                        self.view_mode == ViewMode::Tree,
+                    ),
+                    Entry::radio(
+                        Command::ViewList as u32,
+                        "Detalhes",
+                        self.view_mode == ViewMode::List,
+                    ),
+                    Entry::Separator,
+                    Entry::check(Command::ToggleHidden as u32, "Itens ocultos", self.show_hidden),
+                    Entry::Separator,
+                    Entry::submenu(
+                        "Tema",
+                        vec![
+                            Entry::radio(
+                                Command::ThemeDark as u32,
+                                "Escuro",
+                                theme == ThemeMode::Dark,
+                            ),
+                            Entry::radio(
+                                Command::ThemeLight as u32,
+                                "Claro",
+                                theme == ThemeMode::Light,
+                            ),
+                            Entry::radio(
+                                Command::ThemeSystem as u32,
+                                "Igual ao Windows",
+                                theme == ThemeMode::System,
+                            ),
+                        ],
+                    )
+                    .with_icon("icons/palette-2.svg"),
+                ],
+            )
+            .with_icon("icons/eye.svg"),
+            Entry::submenu(
+                "Classificar por",
+                vec![
+                    sort(Command::SortName, "Nome", SortKey::Name),
+                    sort(Command::SortType, "Tipo", SortKey::Type),
+                    sort(Command::SortSize, "Tamanho", SortKey::Size),
+                    sort(Command::SortModified, "Data de modificação", SortKey::Modified),
+                    Entry::Separator,
+                    Entry::radio(Command::SortAscending as u32, "Crescente", self.sort_asc),
+                    Entry::radio(Command::SortDescending as u32, "Decrescente", !self.sort_asc),
+                ],
+            )
+            .with_icon("icons/arrow-up-down.svg"),
+            Entry::submenu(
+                "Agrupar por",
+                vec![
+                    group(Command::GroupNone, "Nenhum", GroupBy::None),
+                    Entry::Separator,
+                    group(Command::GroupKind, "Tipo", GroupBy::Kind),
+                    group(Command::GroupModified, "Data de modificação", GroupBy::Modified),
+                    group(Command::GroupSize, "Tamanho", GroupBy::Size),
+                ],
+            )
+            .with_icon("icons/layers.svg"),
+            Entry::command(Command::Refresh as u32, "Atualizar")
+                .with_icon("icons/refresh-cw.svg")
+                .with_shortcut("F5"),
+            Entry::Separator,
+            Entry::command(Command::Paste as u32, "Colar")
+                .with_icon("icons/clipboard.svg")
+                .with_shortcut("Ctrl+V")
+                .enabled(self.can_paste(cx)),
+            Entry::command(Command::NewFolder as u32, "Nova pasta")
+                .with_icon("icons/folder-plus.svg")
+                .with_shortcut("Ctrl+Shift+N"),
+        ]
+    }
+
+    fn apply_menu_choice(&mut self, choice: Choice, window: &mut Window, cx: &mut Context<Self>) {
+        match choice {
+            Choice::Dismissed => {}
+            Choice::Own(id) => {
+                if let Some(command) = Command::from_id(id) {
+                    self.run_command(command, window, cx);
+                }
+            }
+            Choice::Verb(verb) => match verb.as_str() {
+                "copy" => self.copy_selection(cx),
+                "cut" => self.cut_selection(cx),
+                "delete" => self.trash_selection(cx),
+                "rename" => {
+                    if let Some(row) = self.active_row() {
+                        self.begin_rename(row, window, cx);
+                    }
+                }
+                "open" | "explore" => {
+                    let folder = self
+                        .selected_paths()
+                        .into_iter()
+                        .next()
+                        .and_then(|path| {
+                            self.filtered_entries.iter().find(|entry| entry.path == path).cloned()
+                        });
+                    if let Some(folder) = folder {
+                        self.activate_entry(folder, window, cx);
+                    }
+                }
+                _ => {}
+            },
+            // The Shell may have created, moved or deleted something ("New",
+            // "Send to", an archiver); the listing is read again either way.
+            Choice::Ran => self.reload(cx),
+        }
+        cx.notify();
+    }
+
+    fn run_command(&mut self, command: Command, window: &mut Window, cx: &mut Context<Self>) {
+        match command {
+            Command::ViewList => self.set_view_mode(ViewMode::List, cx),
+            Command::ViewGrid => self.set_view_mode(ViewMode::Grid, cx),
+            Command::ViewTree => self.set_view_mode(ViewMode::Tree, cx),
+            Command::ViewCompact => self.set_view_mode(ViewMode::Compact, cx),
+            // Written to the config like the theme, so it lasts; the reload
+            // that follows is what applies it.
+            Command::ToggleHidden => {
+                let value = if self.show_hidden { "false" } else { "true" };
+                self.write_config("ui", "show_hidden", value.to_string(), cx);
+            }
+            Command::ThemeDark => self.write_config("theme", "mode", "\"dark\"".into(), cx),
+            Command::ThemeLight => self.write_config("theme", "mode", "\"light\"".into(), cx),
+            Command::ThemeSystem => self.write_config("theme", "mode", "\"system\"".into(), cx),
+            Command::SortName => self.set_sort(SortKey::Name, self.sort_asc, cx),
+            Command::SortType => self.set_sort(SortKey::Type, self.sort_asc, cx),
+            Command::SortSize => self.set_sort(SortKey::Size, self.sort_asc, cx),
+            Command::SortModified => self.set_sort(SortKey::Modified, self.sort_asc, cx),
+            Command::SortAscending => self.set_sort(self.sort_key, true, cx),
+            Command::SortDescending => self.set_sort(self.sort_key, false, cx),
+            Command::Refresh => self.reload(cx),
+            Command::Paste => self.paste_into_cwd(window, cx),
+            Command::NewFolder => self.create_new_folder(window, cx),
+            Command::GroupNone => self.set_group_by(GroupBy::None),
+            Command::GroupKind => self.set_group_by(GroupBy::Kind),
+            Command::GroupModified => self.set_group_by(GroupBy::Modified),
+            Command::GroupSize => self.set_group_by(GroupBy::Size),
+            Command::Cut => self.cut_selection(cx),
+            Command::Copy => self.copy_selection(cx),
+            Command::Delete => self.trash_selection(cx),
+            Command::Rename => {
+                if let Some(row) = self.active_row() {
+                    self.begin_rename(row, window, cx);
+                }
+            }
+            Command::FitColumn
+            | Command::FitAllColumns
+            | Command::ColumnName
+            | Command::ColumnType
+            | Command::ColumnSize
+            | Command::ColumnModified
+            | Command::MoreOptions => {}
+        }
+    }
+
+    fn write_config(&mut self, section: &'static str, key: &'static str, value: String, cx: &mut Context<Self>) {
+        let path = config::paths::config_file();
+        let write = cx.background_spawn(async move { config::set_value(&path, section, key, &value) });
+        cx.spawn(async move |this: WeakEntity<Self>, cx| {
+            if let Err(error) = write.await {
+                this.update(cx, |pane, cx| {
+                    pane.set_status(
+                        StatusLevel::Error,
+                        format!("Could not save {section}.{key}: {error}"),
+                    );
+                    cx.notify();
+                })
+                .log_err();
+            }
+        })
+        .detach();
+    }
+}
+
+fn quick_actions() -> Vec<QuickAction> {
+    vec![
+        QuickAction { id: Command::Cut as u32, icon: "icons/scissors.svg", label: "Recortar (Ctrl+X)" },
+        QuickAction { id: Command::Copy as u32, icon: "icons/copy.svg", label: "Copiar (Ctrl+C)" },
+        QuickAction { id: Command::Rename as u32, icon: "icons/pencil.svg", label: "Renomear (F2)" },
+        QuickAction { id: Command::Delete as u32, icon: "icons/trash-2.svg", label: "Excluir (Delete)" },
+    ]
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn command_ids_round_trip_and_stay_below_the_shell_range() {
+        for command in Command::ALL {
+            assert_eq!(Command::from_id(command as u32), Some(command));
+            assert!((command as u32) < 0x1000);
+        }
+        assert_eq!(Command::from_id(0), None);
+    }
+}

@@ -12,7 +12,13 @@ pub enum SortKey {
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum ViewMode {
+    /// The details table.
     List,
+    /// The details table with folders that open in place.
+    Tree,
+    /// Names only, in columns (Explorer's and File Pilot's "List").
+    Compact,
+    /// Icon tiles.
     Grid,
 }
 

@@ -3,7 +3,7 @@
 // the inner module name is part of the established public path.
 #[allow(clippy::module_inception)]
 pub mod theme {
-    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 
     // The tokens are read during render, on every frame, by code that has no
     // `cx` to hand in some places (free helper functions building elements). A
@@ -19,6 +19,74 @@ pub mod theme {
     /// Whether the dark palette is the one in use.
     pub fn is_dark() -> bool {
         DARK.load(Ordering::Relaxed)
+    }
+
+    // The accent the user picked, as `0x01rrggbb`; zero means the palette's
+    // own orange. The marker byte keeps black (`#000000`) distinguishable from
+    // "nothing picked".
+    static ACCENT: AtomicU32 = AtomicU32::new(0);
+    const ACCENT_SET: u32 = 0x0100_0000;
+
+    /// The accents the settings page offers, by their `config.toml` name.
+    /// Orange is the palette's own and carries no colour here: the two
+    /// palettes tune it separately, which a single base colour cannot.
+    pub const NAMED_ACCENTS: &[(&str, Option<u32>)] = &[
+        ("orange", None),
+        ("blue", Some(0x3B82F6)),
+        ("teal", Some(0x14B8A6)),
+        ("green", Some(0x22C55E)),
+        ("purple", Some(0x8B5CF6)),
+        ("pink", Some(0xEC4899)),
+        ("red", Some(0xEF4444)),
+    ];
+
+    /// The colour a `theme.accent` value names: one of [`NAMED_ACCENTS`] or a
+    /// `#rrggbb` hex. `None` for orange and for anything unrecognized, so a
+    /// typo leaves the window looking as it always did.
+    pub fn parse_accent(value: &str) -> Option<u32> {
+        let value = value.trim();
+        if let Some(hex) = value.strip_prefix('#') {
+            return (hex.len() == 6).then(|| u32::from_str_radix(hex, 16).ok()).flatten();
+        }
+        NAMED_ACCENTS
+            .iter()
+            .find(|(name, _)| name.eq_ignore_ascii_case(value))
+            .and_then(|(_, color)| *color)
+    }
+
+    /// Replaces the palette's accent with `color`, or restores it with `None`.
+    pub fn set_accent(color: Option<u32>) {
+        ACCENT.store(color.map_or(0, |color| ACCENT_SET | (color & 0xFF_FFFF)), Ordering::Relaxed);
+    }
+
+    fn picked_accent() -> Option<u32> {
+        let value = ACCENT.load(Ordering::Relaxed);
+        (value & ACCENT_SET != 0).then_some(value & 0xFF_FFFF)
+    }
+
+    // Linear blend of two `0xrrggbb` colours, `amount` of the way to `to`.
+    fn mix(from: u32, to: u32, amount: f32) -> u32 {
+        let channel = |shift: u32| {
+            let a = ((from >> shift) & 0xFF) as f32;
+            let b = ((to >> shift) & 0xFF) as f32;
+            ((a + (b - a) * amount).round() as u32).min(0xFF) << shift
+        };
+        channel(16) | channel(8) | channel(0)
+    }
+
+    // Relative luminance, enough to choose black or white text on a fill.
+    fn luminance(color: u32) -> f32 {
+        let linear = |shift: u32| {
+            let c = ((color >> shift) & 0xFF) as f32 / 255.0;
+            if c <= 0.03928 { c / 12.92 } else { ((c + 0.055) / 1.055).powf(2.4) }
+        };
+        0.2126 * linear(16) + 0.7152 * linear(8) + 0.0722 * linear(0)
+    }
+
+    // A picked accent, shaded for the palette in use the way the orange is:
+    // darker on white so text on it still reads, lighter on the dark grays.
+    fn shaded_accent(base: u32) -> u32 {
+        if is_dark() { mix(base, 0xFFFFFF, 0.12) } else { mix(base, 0x000000, 0.18) }
     }
 
     struct Palette {
@@ -150,6 +218,44 @@ pub mod theme {
         };
     }
 
+    /// Primary accent color.
+    pub fn accent() -> u32 {
+        picked_accent().map_or(palette().accent, shaded_accent)
+    }
+
+    /// The palette's own accent (the orange), whatever the user picked; for
+    /// the swatch that offers it back.
+    pub fn palette_accent() -> u32 {
+        palette().accent
+    }
+
+    /// Accent color on hover / pressed.
+    pub fn accent_hover() -> u32 {
+        match picked_accent() {
+            Some(base) if is_dark() => mix(shaded_accent(base), 0xFFFFFF, 0.15),
+            Some(base) => mix(shaded_accent(base), 0x000000, 0.2),
+            None => palette().accent_hover,
+        }
+    }
+
+    /// Faint accent tint, for selected rows and active chip backgrounds.
+    pub fn accent_subtle() -> u32 {
+        match picked_accent() {
+            Some(base) if is_dark() => mix(palette().bg, base, 0.2),
+            Some(base) => mix(palette().bg, base, 0.1),
+            None => palette().accent_subtle,
+        }
+    }
+
+    /// Text and icon color on top of an `accent`-filled surface.
+    pub fn accent_fg() -> u32 {
+        match picked_accent() {
+            Some(_) if luminance(accent()) > 0.4 => 0x1B1C1F,
+            Some(_) => 0xFFFFFF,
+            None => palette().accent_fg,
+        }
+    }
+
     tokens! {
         /// Faintest step of the gray ramp.
         gray_50;
@@ -197,14 +303,6 @@ pub mod theme {
         toolbar_active_bg;
         /// Toolbar border color.
         toolbar_border;
-        /// Primary accent color.
-        accent;
-        /// Accent color on hover / pressed.
-        accent_hover;
-        /// Faint accent tint, for selected rows and active chip backgrounds.
-        accent_subtle;
-        /// Text and icon color on top of an `accent`-filled surface.
-        accent_fg;
         /// Danger color, used for error messages and destructive actions.
         danger;
         /// Warning color, for an operation that did what was asked and left

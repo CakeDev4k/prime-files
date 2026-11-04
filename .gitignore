@@ -35,3 +35,8 @@ result-*
 # Python bytecode
 __pycache__/
 *.pyc
+
+# Build output of the Listary plugin (integrations/listary): DLLs and caches
+# holding paths of the machine that built them.
+integrations/**/bin/
+integrations/**/obj/

@@ -239,13 +239,13 @@
       "description": "Appearance settings.",
       "properties": {
         "accent": {
-          "default": "blue",
-          "description": "Accent colour, given as a named colour or a hex string. Full\ncustomization lands in P5; P1 stores the value and applies the mode.",
+          "default": "orange",
+          "description": "Accent colour: one of the named colours the settings page offers\n(`orange`, `blue`, `teal`, `green`, `purple`, `pink`, `red`) or a\n`#rrggbb` hex string. Anything else falls back to orange.",
           "type": "string"
         },
         "mode": {
           "$ref": "#/$defs/ThemeMode",
-          "default": "system",
+          "default": "dark",
           "description": "Light/dark selection, or following the OS."
         }
       },
@@ -279,10 +279,27 @@
           "default": "name",
           "description": "Column the listing is sorted by on load."
         },
+        "default_sort_descending": {
+          "default": false,
+          "description": "Whether that default runs from Z to A, largest or newest first.",
+          "type": "boolean"
+        },
         "icon_pack": {
           "default": "default",
           "description": "Identifier of the icon pack used to render entries.",
           "type": "string"
+        },
+        "name_lines": {
+          "default": 0,
+          "description": "Most lines a name takes under an icon in the icons view, the last\none ending in \"…\" when the name needs more; 0 = no limit.",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "scroll_smoothness": {
+          "default": 50,
+          "description": "How smoothly the mouse wheel scrolls the listing, 0..=100: 0 moves\nin steps, 100 glides for longest.",
+          "minimum": 0,
+          "type": "integer"
         },
         "show_hidden": {
           "default": false,
@@ -364,8 +381,8 @@
     "theme": {
       "$ref": "#/$defs/Theme",
       "default": {
-        "accent": "blue",
-        "mode": "system"
+        "accent": "orange",
+        "mode": "dark"
       },
       "description": "Appearance settings."
     },
@@ -373,7 +390,10 @@
       "$ref": "#/$defs/Ui",
       "default": {
         "default_sort": "name",
+        "default_sort_descending": false,
         "icon_pack": "default",
+        "name_lines": 0,
+        "scroll_smoothness": 50,
         "show_hidden": false
       },
       "description": "Explorer / view settings."

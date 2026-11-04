@@ -158,6 +158,10 @@ pub(crate) struct PastePlan {
     // When ticked, the next choice in the dialog applies to every remaining
     // `pending` entry at once (§1.2 "Apply to all").
     pub(crate) apply_to_all: bool,
+    // Whether the sources came off the clipboard. Only then does a move
+    // consume the clipboard and put back what failed; a drag never touched
+    // it and must leave whatever the user copied there alone.
+    from_clipboard: bool,
 }
 
 // The display name (final path component) of `path`, if it has one.
@@ -617,7 +621,7 @@ impl ExplorerPane {
                 // whole record of what went wrong with it.
                 let (level, text) = report.footer(total, &success_label);
                 if let Err(error) = this.update(&mut cx, |pane, cx| {
-                    pane.reload();
+                    pane.reload(cx);
                     pane.set_status(level, text);
                     cx.notify();
                 }) {
@@ -654,19 +658,22 @@ impl ExplorerPane {
         let label = format!("{total} item(s) moved to trash");
         self.run_fs_op(total, label, cx, move || {
             let mut report = OpReport::default();
-            for path in paths {
-                // Re-read per item rather than captured once: `to_record`
-                // borrows from `ledger`, which this closure owns.
-                let record = match ledger.to_record() {
-                    Ok(record) => record,
-                    Err(error) => {
+            // Read in here rather than captured: `to_record` borrows from
+            // `ledger`, which this closure owns.
+            let record = match ledger.to_record() {
+                Ok(record) => record,
+                Err(error) => {
+                    for path in &paths {
                         report.failed(format!("{path}: {error}"));
-                        continue;
                     }
-                };
-                if let Err(error) = ops::trash_path(Path::new(&path), record) {
-                    report.failed(format!("{path}: {error}"));
+                    return report;
                 }
+            };
+            // One call for the whole selection: on Windows that is one Shell
+            // operation instead of one per item (`ops::trash_paths`).
+            let paths: Vec<PathBuf> = paths.iter().map(PathBuf::from).collect();
+            for (path, error) in ops::trash_paths(&paths, record) {
+                report.failed(format!("{}: {error}", path.display()));
             }
             report
         });
@@ -712,6 +719,11 @@ impl ExplorerPane {
         };
         self.set_status(StatusLevel::Info, format!("{} item(s) {verb}", paths.len()));
         cx.notify();
+    }
+
+    /// Whether Paste has anything to paste.
+    pub(crate) fn can_paste(&self, cx: &App) -> bool {
+        self.read_clipboard(cx).is_some()
     }
 
     fn read_clipboard(&self, cx: &App) -> Option<(ClipMode, Vec<PathBuf>)> {
@@ -762,6 +774,20 @@ impl ExplorerPane {
             return false;
         };
         let dest_dir = PathBuf::from(&self.cwd);
+        self.prepare_transfer(mode, sources, dest_dir, true)
+    }
+
+    // The plan for copying or moving `sources` into `dest_dir`, in
+    // `self.paste_plan`; returns whether a conflict needs the dialog. Shared by
+    // paste and by files dropped on the window.
+    pub(crate) fn prepare_transfer(
+        &mut self,
+        mode: ClipMode,
+        sources: Vec<PathBuf>,
+        dest_dir: PathBuf,
+        from_clipboard: bool,
+    ) -> bool {
+        self.paste_plan = None;
         let mut clear = Vec::new();
         let mut pending = VecDeque::new();
         let mut resolved = Vec::new();
@@ -804,6 +830,7 @@ impl ExplorerPane {
             pending,
             resolved,
             apply_to_all: false,
+            from_clipboard,
         });
         has_pending
     }
@@ -855,6 +882,7 @@ impl ExplorerPane {
             dest_dir,
             clear,
             resolved,
+            from_clipboard,
             ..
         } = plan;
         // Skips do nothing, so drop them before counting — otherwise the success
@@ -872,7 +900,7 @@ impl ExplorerPane {
         // second time. Whatever fails to move is put back afterwards by
         // `retain_failed_cut`, which uses this generation to recognize the
         // clipboard state it left behind.
-        let cut_generation = (mode == ClipMode::Cut).then(|| {
+        let cut_generation = (mode == ClipMode::Cut && from_clipboard).then(|| {
             ExplorerClipboard::begin_cut(cx);
             ExplorerClipboard::write(None, cx)
         });
@@ -1033,6 +1061,7 @@ impl ExplorerPane {
     /// Commits the in-progress rename, resolving a name collision by numbering
     /// (§1.2 "Rename"). An empty or unchanged name cancels.
     pub(crate) fn commit_rename(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        use nohrs_core::telemetry::LogErr as _;
         let Some(state) = self.renaming.take() else {
             return;
         };
@@ -1046,23 +1075,66 @@ impl ExplorerPane {
             cx.notify();
             return;
         }
-        // Typed by the user, so it can be anything. A name that is not a single
-        // plain component is left as it is, for `rename_in_place` to reject with
-        // the one message for it: numbering `../notes.txt` would quietly turn a
-        // rename that was going to fail into one that renames the entry to a
-        // sibling of whatever `..` reached.
-        let final_name = match original_path.parent() {
-            Some(parent)
-                if ops::destination_in(parent, OsStr::new(&new_name))
-                    .is_ok_and(|dst| ops::would_conflict(&dst)) =>
-            {
-                ops::unique_name(parent, &new_name)
-            }
-            _ => new_name,
-        };
-        match ops::rename_in_place(&original_path, &final_name) {
-            Ok(_) => {
-                self.reload();
+        // Everything from here asks the disk — whether the name is taken, which
+        // number is free, the rename itself — and in a folder on a share that
+        // stopped answering any of those would freeze the window (OTIMIZACAO.md
+        // §2.12). Until 04/11/2026 they ran on the UI thread. The field is
+        // already closed; the row keeps its old name until the answer.
+        let task = cx.background_spawn(async move {
+            // Typed by the user, so it can be anything. A name that is not a
+            // single plain component is left as it is, for `rename_in_place` to
+            // reject with the one message for it: numbering `../notes.txt`
+            // would quietly turn a rename that was going to fail into one that
+            // renames the entry to a sibling of whatever `..` reached. And a
+            // name taken only by the entry itself (`foto.jpg` to `Foto.jpg`)
+            // is not taken: numbering it was a defect.
+            let final_name = match original_path.parent() {
+                Some(parent)
+                    if ops::destination_in(parent, OsStr::new(&new_name))
+                        .is_ok_and(|dst| ops::would_collide_with_another(&original_path, &dst)) =>
+                {
+                    ops::unique_name(parent, &new_name)
+                }
+                _ => new_name,
+            };
+            let renamed = ops::rename_in_place(&original_path, &final_name);
+            (original_path, final_name, renamed)
+        });
+        cx.spawn(async move |this: WeakEntity<Self>, cx| {
+            let (original_path, final_name, renamed) = task.await;
+            this.update(cx, |pane, cx| pane.finish_rename(&original_path, &final_name, renamed, cx))
+                .log_err();
+        })
+        .detach();
+        cx.notify();
+    }
+
+    // The rename's answer, back on the UI thread.
+    fn finish_rename(
+        &mut self,
+        original_path: &Path,
+        final_name: &str,
+        renamed: Result<PathBuf>,
+        cx: &mut Context<Self>,
+    ) {
+        match renamed {
+            Ok(renamed) => {
+                // The selection is kept by path, so without this the refresh
+                // drops the row just renamed from it; Explorer keeps it
+                // selected.
+                let (old, new) = (
+                    original_path.to_string_lossy().into_owned(),
+                    renamed.to_string_lossy().into_owned(),
+                );
+                if self.selection.remove(&old) {
+                    self.selection.insert(new.clone());
+                }
+                for held in [&mut self.selection_anchor, &mut self.active_path] {
+                    if held.as_deref() == Some(old.as_str()) {
+                        *held = Some(new.clone());
+                    }
+                }
+                self.reload(cx);
                 self.set_status(StatusLevel::Info, format!("Renamed to {final_name}"));
             }
             Err(error) => {
@@ -1079,7 +1151,7 @@ impl ExplorerPane {
         let name = ops::unique_name(&parent, "New Folder");
         match ops::create_dir(&parent, &name) {
             Ok(path) => {
-                self.reload();
+                self.reload(cx);
                 let created = path.to_string_lossy();
                 if let Some(index) = self
                     .filtered_entries

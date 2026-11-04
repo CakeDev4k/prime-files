@@ -1,17 +1,24 @@
 //! Top-level page views for the nohrs application, including the explorer,
-//! git, S3, extensions, and settings pages, along with the root view that
+//! git, S3, and settings pages, along with the root view that
 //! hosts them.
 
 use gpui::AnyElement;
 
+/// Making Nohrs the folder handler of the Windows user.
+pub mod default_explorer;
 /// The file explorer page and its supporting state and views.
 pub mod explorer;
-/// The extensions management page.
-pub mod extensions;
 /// The git page.
 pub mod git;
+/// Picking files for a browser's "Open" dialog from Nohrs.
+pub mod file_dialog;
+/// The local channel other programs (a second `nohrs.exe`, the Listary
+/// plugin) reach the running instance through.
+pub mod ipc;
 /// A reusable 2-way split/tab container shared across pages.
 pub mod pane_group;
+/// Other programs' "show in folder", answered by Nohrs.
+pub mod reveal;
 /// The application root view that hosts the sidebar and active page.
 pub mod root;
 /// The S3 page.
@@ -19,6 +26,8 @@ pub mod s3;
 // removed search
 /// The settings page.
 pub mod settings;
+/// The right-click menu: the Windows context menu with Nohrs's entries.
+pub(crate) mod shell_menu;
 
 pub use root::RootView;
 
@@ -32,8 +41,6 @@ pub enum PageKind {
     Git,
     /// The S3 page.
     S3,
-    /// The extensions page.
-    Extensions,
     /// The settings page.
     Settings,
 }
@@ -45,7 +52,6 @@ impl PageKind {
             PageKind::Explorer => "Explorer",
             PageKind::Git => "Git",
             PageKind::S3 => "S3",
-            PageKind::Extensions => "Extensions",
             PageKind::Settings => "Settings",
         }
     }
@@ -57,7 +63,6 @@ impl PageKind {
 
             PageKind::Git => "icons/github.svg",
             PageKind::S3 => "icons/database.svg",
-            PageKind::Extensions => "icons/layout-dashboard.svg",
             PageKind::Settings => "icons/settings.svg",
         }
     }
@@ -68,7 +73,6 @@ impl PageKind {
             PageKind::Explorer,
             PageKind::Git,
             PageKind::S3,
-            PageKind::Extensions,
             PageKind::Settings,
         ]
     }

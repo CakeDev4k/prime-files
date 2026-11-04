@@ -23,6 +23,10 @@ use gpui_component::{Icon, IconName};
 use nohrs_core::config::SplitDirection;
 use nohrs_ui::theme::theme;
 
+/// Width the settings button and the three window buttons take at the end
+/// of the tab row when it is the title bar: 32 + 4 + 3 x 46.
+const TITLE_CONTROLS_WIDTH: f32 = 174.0;
+
 /// Content that a [`PaneGroup`] can host as a tab. Implemented by the views shown
 /// inside a tab (today only `ExplorerPane`).
 pub trait PaneItem: Render + Focusable + 'static {
@@ -459,13 +463,13 @@ impl<T: PaneItem> PaneGroup<T> {
     /// Renders the split. The `callbacks` route every interaction (pane/tab
     /// activate, close, new tab, reorder) back to the embedding view `V` so it
     /// can keep its own state in sync.
-    pub fn render<V>(&self, cx: &mut Context<V>, callbacks: &PaneGroupCallbacks<V>) -> AnyElement
+    pub fn render<V>(&self, window: &Window, cx: &mut Context<V>, callbacks: &PaneGroupCallbacks<V>) -> AnyElement
     where
         V: 'static,
     {
         if self.panes.len() > 1 {
-            let first = self.render_pane(0, cx, callbacks);
-            let second = self.render_pane(1, cx, callbacks);
+            let first = self.render_pane(0, window, cx, callbacks);
+            let second = self.render_pane(1, window, cx, callbacks);
             let group = match self.direction {
                 SplitDirection::Vertical => {
                     h_resizable("pane-group").with_state(&self.pane_resizable)
@@ -479,13 +483,20 @@ impl<T: PaneItem> PaneGroup<T> {
                 .child(resizable_panel().child(second))
                 .into_any_element()
         } else {
-            self.render_pane(0, cx, callbacks)
+            self.render_pane(0, window, cx, callbacks)
         }
+    }
+
+    /// Whether the tab row is the window's title bar: with one pane it
+    /// carries the window's buttons and the toolbar above is not drawn.
+    pub fn tabs_in_title_bar(&self) -> bool {
+        self.panes.len() == 1
     }
 
     fn render_pane<V>(
         &self,
         pane_index: usize,
+        window: &Window,
         cx: &mut Context<V>,
         callbacks: &PaneGroupCallbacks<V>,
     ) -> AnyElement
@@ -515,7 +526,7 @@ impl<T: PaneItem> PaneGroup<T> {
                     on_activate_pane(this, pane_index, window, cx)
                 }),
             )
-            .child(self.render_tab_bar(pane_index, split, cx, callbacks))
+            .child(self.render_tab_bar(pane_index, split, window, cx, callbacks))
             .child(
                 div()
                     .flex_1()
@@ -533,6 +544,7 @@ impl<T: PaneItem> PaneGroup<T> {
         &self,
         pane_index: usize,
         split: bool,
+        window: &Window,
         cx: &mut Context<V>,
         callbacks: &PaneGroupCallbacks<V>,
     ) -> impl IntoElement
@@ -567,14 +579,19 @@ impl<T: PaneItem> PaneGroup<T> {
         let on_new_tab = callbacks.on_new_tab.clone();
         let on_close_pane = callbacks.on_close_pane.clone();
 
+        // Tabs sit on the bar's bottom edge and the active one takes the
+        // content's colour, so it reads as the front of the folder below, as in
+        // Explorer and browsers.
+        let title_bar = !split;
         div()
             .flex()
             .flex_row()
-            .items_center()
-            .h(px(32.0))
+            .items_end()
+            .h(px(if title_bar { 40.0 } else { 36.0 }))
             .w_full()
-            .px(px(6.0))
-            .gap(px(4.0))
+            .pl(px(6.0))
+            .pr(px(if title_bar { 0.0 } else { 6.0 }))
+            .pt(px(if title_bar { 8.0 } else { 4.0 }))
             .bg(rgb(theme::toolbar_bg()))
             .border_b_1()
             .border_color(rgb(theme::border()))
@@ -586,8 +603,10 @@ impl<T: PaneItem> PaneGroup<T> {
                     .flex()
                     .items_center()
                     .justify_center()
-                    .size(px(20.0))
-                    .rounded(px(4.0))
+                    .size(px(26.0))
+                    .ml(px(2.0))
+                    .mb(px(2.0))
+                    .rounded(px(6.0))
                     .cursor_pointer()
                     .hover(|style| style.bg(rgb(theme::toolbar_hover())))
                     // Swallow the press so the pane-wide `on_mouse_down` does not
@@ -603,7 +622,17 @@ impl<T: PaneItem> PaneGroup<T> {
                             .text_color(rgb(theme::muted())),
                     ),
             )
-            .child(div().flex_grow())
+            // The empty stretch beside the tabs moves the window, as it does in
+            // Explorer and browsers; only the thin bar above did, and the tab
+            // strip is where a hand goes to drag. Being a caption to Windows,
+            // a double click there maximizes and Aero Snap works.
+            .child(
+                div()
+                    .id(("tab-bar-drag", pane_index))
+                    .flex_grow()
+                    .h_full()
+                    .window_control_area(WindowControlArea::Drag),
+            )
             .when(split, |this| {
                 this.child(
                     div()
@@ -628,6 +657,22 @@ impl<T: PaneItem> PaneGroup<T> {
                         ),
                 )
             })
+            // One row with the tabs, as the Explorer of Windows 11: the
+            // window's buttons reach the top edge, over the top padding.
+            .when(title_bar, |this| {
+                // Room for them at the end of the row, then the buttons
+                // themselves, pinned to the top right corner.
+                this.relative()
+                    .child(div().flex_shrink_0().w(px(TITLE_CONTROLS_WIDTH)))
+                    .child(
+                        div()
+                            .absolute()
+                            .top_0()
+                            .right_0()
+                            .h(px(40.0))
+                            .child(nohrs_ui::components::layout::unified_toolbar::title_bar_controls(window)),
+                    )
+            })
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -649,28 +694,65 @@ impl<T: PaneItem> PaneGroup<T> {
         let on_close_tab = callbacks.on_close_tab.clone();
         let on_reorder_tab = callbacks.on_reorder_tab.clone();
         let drag_title = SharedString::from(title.clone());
+        let on_middle_close = callbacks.on_close_tab.clone();
+        let group = SharedString::from(format!("tab-group-{pane_index}-{tab_index}"));
 
         div()
             .id(SharedString::from(format!("tab-{pane_index}-{tab_index}")))
+            .group(group.clone())
+            .relative()
             .flex()
             .items_center()
-            .gap(px(6.0))
-            .h(px(24.0))
-            .px(px(10.0))
-            .rounded(px(6.0))
+            .gap(px(8.0))
+            .h(px(32.0))
+            // A fixed band of widths, as browsers do: many tabs shrink
+            // together, and a long folder name cannot push the rest away.
+            .min_w(px(110.0))
+            .max_w(px(220.0))
+            .flex_shrink()
+            .pl(px(12.0))
+            .pr(px(6.0))
+            .rounded_t(px(8.0))
             .text_sm()
             .cursor_pointer()
             .when(is_active, |this| {
-                this.bg(rgb(theme::toolbar_active_bg()))
-                    .text_color(rgb(theme::toolbar_active_text()))
+                this.bg(rgb(theme::bg()))
+                    .text_color(rgb(theme::fg()))
+                    .border_1()
+                    .border_b_0()
+                    .border_color(rgb(theme::border()))
+                    // Covers the bar's bottom border, joining the tab to the
+                    // content beneath it.
+                    .mb(px(-1.0))
+                    .h(px(33.0))
             })
             .when(!is_active, |this| {
                 this.text_color(rgb(theme::toolbar_text()))
                     .hover(|style| style.bg(rgb(theme::toolbar_hover())))
+                    // A hairline between neighbouring inactive tabs.
+                    .child(
+                        div()
+                            .absolute()
+                            .right_0()
+                            .top(px(9.0))
+                            .h(px(14.0))
+                            .w(px(1.0))
+                            .bg(rgb(theme::border())),
+                    )
             })
             .on_click(cx.listener(move |this, _event, window, cx| {
                 on_activate_tab(this, pane_index, tab_index, window, cx)
             }))
+            // Middle click closes, as in every tabbed browser and Explorer.
+            .when(show_close, |this| {
+                this.on_mouse_down(
+                    MouseButton::Middle,
+                    cx.listener(move |this, _event, window, cx| {
+                        cx.stop_propagation();
+                        on_middle_close(this, pane_index, tab_index, window, cx)
+                    }),
+                )
+            })
             .on_drag(
                 TabDrag {
                     pane: pane_index,
@@ -689,8 +771,28 @@ impl<T: PaneItem> PaneGroup<T> {
                     on_reorder_tab(this, pane_index, drag.tab, tab_index, window, cx);
                 }
             }))
-            .when_some(icon, |this, icon| this.child(Icon::new(icon).size_4()))
-            .child(title)
+            .when_some(icon, |this, icon| {
+                this.child(
+                    Icon::new(icon)
+                        .size_4()
+                        .flex_shrink_0()
+                        .text_color(rgb(if is_active {
+                            theme::accent()
+                        } else {
+                            theme::muted()
+                        })),
+                )
+            })
+            .child(
+                div()
+                    .flex_1()
+                    .min_w(px(0.0))
+                    .overflow_hidden()
+                    .text_ellipsis()
+                    .whitespace_nowrap()
+                    .when(is_active, |this| this.font_weight(gpui::FontWeight::MEDIUM))
+                    .child(title),
+            )
             .when(show_close, |this| {
                 this.child(
                     div()
@@ -698,18 +800,29 @@ impl<T: PaneItem> PaneGroup<T> {
                             "close-tab-{pane_index}-{tab_index}"
                         )))
                         .flex()
+                        .flex_shrink_0()
                         .items_center()
                         .justify_center()
-                        .size(px(16.0))
+                        .size(px(20.0))
                         .rounded(px(4.0))
-                        .hover(|style| style.bg(rgb(theme::toolbar_hover())))
+                        // Only on the active tab and the one under the
+                        // pointer, so a row of tabs is not a row of crosses.
+                        .when(!is_active, |this| {
+                            this.opacity(0.0).group_hover(group.clone(), |style| style.opacity(1.0))
+                        })
+                        .text_color(rgb(theme::muted()))
+                        .hover(|style| {
+                            style
+                                .bg(rgb(theme::toolbar_hover()))
+                                .text_color(rgb(theme::fg()))
+                        })
                         // Swallow the press so closing a tab doesn't also activate
                         // it (or start a drag).
                         .on_mouse_down(MouseButton::Left, |_, _window, cx| cx.stop_propagation())
                         .on_click(cx.listener(move |this, _event, window, cx| {
                             on_close_tab(this, pane_index, tab_index, window, cx)
                         }))
-                        .child(Icon::new(IconName::Close).size_4()),
+                        .child(Icon::new(IconName::Close).size_3()),
                 )
             })
             .into_any_element()

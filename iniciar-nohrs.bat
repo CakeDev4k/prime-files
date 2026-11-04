@@ -3,11 +3,8 @@ chcp 65001 >nul
 setlocal
 cd /d "%~dp0"
 
-rem Tema: escuro por padrao. Passe "claro" ou "sistema" para trocar,
-rem por exemplo:  iniciar-nohrs.bat claro
-set "TEMA=dark"
-if /i "%~1"=="claro" set "TEMA=light"
-if /i "%~1"=="sistema" set "TEMA=system"
+rem O tema vem do config (escuro por padrao) e troca pelo menu do botao
+rem direito, em Exibir > Tema. Um --theme aqui travaria essa escolha.
 
 where cargo >nul 2>nul
 if errorlevel 1 (
@@ -16,6 +13,24 @@ if errorlevel 1 (
   exit /b 1
 )
 
+rem Um Nohrs aberto trava o nohrs.exe e a compilacao nao consegue troca-lo.
+rem Ele e fechado do jeito normal, que salva as abas (voltam ao abrir); so se
+rem nao fechar em alguns segundos e encerrado a forca. find e timeout pelo
+rem caminho completo: num terminal do Git os nomes sozinhos sao os do Git.
+set "FIND=%SystemRoot%\System32\find.exe"
+set "WAIT=%SystemRoot%\System32\timeout.exe"
+tasklist /FI "IMAGENAME eq nohrs.exe" 2>nul | "%FIND%" /I "nohrs.exe" >nul
+if errorlevel 1 goto compilar
+echo Fechando o Nohrs aberto para atualizar...
+taskkill /IM nohrs.exe >nul 2>nul
+for /L %%I in (1,1,10) do (
+  tasklist /FI "IMAGENAME eq nohrs.exe" 2>nul | "%FIND%" /I "nohrs.exe" >nul || goto compilar
+  "%WAIT%" /t 1 /nobreak >nul
+)
+taskkill /F /IM nohrs.exe >nul 2>nul
+"%WAIT%" /t 1 /nobreak >nul
+
+:compilar
 rem Release porque a build de debug fica visivelmente lenta para rolar pastas
 rem grandes. A primeira vez leva alguns minutos; depois so recompila o que mudou.
 echo Compilando o Nohrs (release)...
@@ -27,6 +42,6 @@ if errorlevel 1 (
   exit /b 1
 )
 
-echo Abrindo o Nohrs com tema %TEMA%...
-start "" "%~dp0target\release\nohrs.exe" --theme %TEMA%
+echo Abrindo o Nohrs...
+start "" "%~dp0target\release\nohrs.exe"
 endlocal

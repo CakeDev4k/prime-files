@@ -6,13 +6,16 @@ expression: parsed
     Config {
         schema_version: 1,
         theme: Theme {
-            mode: System,
+            mode: Dark,
             accent: "teal",
         },
         ui: Ui {
             default_sort: Name,
+            default_sort_descending: false,
             show_hidden: true,
             icon_pack: "default",
+            name_lines: 0,
+            scroll_smoothness: 50,
         },
         explorer: Explorer {
             split_direction: Vertical,
@@ -51,7 +54,7 @@ expression: parsed
     [
         Diagnostic {
             level: Warning,
-            message: "invalid theme.mode \"neon\"; using System",
+            message: "invalid theme.mode \"neon\"; using Dark",
         },
         Diagnostic {
             level: Warning,

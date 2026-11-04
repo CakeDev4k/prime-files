@@ -34,16 +34,57 @@ pub struct ExplorerPane {
     // not reloaded on every render.
     /// Whether `cwd` has been loaded into `entries` at least once.
     pub loaded: bool,
+    /// Bumped by every read of `cwd`; a read answering for an older one was
+    /// overtaken and is dropped.
+    pub(crate) listing_generation: u64,
+    /// Whether a read of `cwd` is still on its way (the folder is slow).
+    pub(crate) listing_pending: bool,
+    /// The tasks waiting on that read; replacing them cancels them.
+    pub(crate) listing_tasks: Vec<gpui::Task<()>>,
+    /// How long a read may hold the UI thread before it goes on in the
+    /// background (`navigation::LISTING_WAIT`).
+    pub(crate) listing_wait: std::time::Duration,
+    /// A path to select once the pending read arrives.
+    pub(crate) reveal_after_listing: Option<String>,
+    /// The folder the rows on screen were read from. A read of the same folder
+    /// is a refresh and keeps what the user had open (`navigation::reload`).
+    pub(crate) listed_cwd: Option<String>,
+    /// The sort a folder opens with when it was never changed
+    /// (`ui.default_sort`, `ui.default_sort_descending`).
+    pub(crate) default_sort_key: SortKey,
+    pub(crate) default_sort_asc: bool,
+    /// The folder whose remembered view is on screen (`folder_views::folder_key`):
+    /// entering another one applies its view, refreshing this one does not.
+    pub(crate) view_folder: Option<String>,
     /// Column the listing is sorted by.
     pub sort_key: SortKey,
     /// Whether the sort is ascending.
     pub sort_asc: bool,
+    /// Where folders go in the sort (the bottom bar's folder-order button).
+    pub(crate) folder_order: super::entries::FolderOrder,
+    // The `[ui]` section as last applied. A reload only changes what changed
+    // in the file: writing the theme from the menu reloads the config, and
+    // that must not undo a sort picked from the column headers or the menu.
+    applied_ui: Option<config::Ui>,
+    /// What the listing is grouped by (the context menu's Group by).
+    pub(crate) group_by: super::grouping::GroupBy,
+    /// The runs of `filtered_entries` under each group header; empty when
+    /// not grouped. See [`Self::groups`].
+    group_runs: Vec<super::grouping::Group>,
     // Whether dotfiles are listed; driven by `ui.show_hidden` (config.md §5).
     /// Whether dotfiles are listed; driven by `ui.show_hidden`.
     pub show_hidden: bool,
     // Identifier of the active icon pack; driven by `ui.icon_pack`.
     /// Identifier of the active icon pack; driven by `ui.icon_pack`.
     pub icon_pack: String,
+    /// Most lines of a name under an icon, 0 = all; driven by `ui.name_lines`.
+    pub(crate) name_lines: u32,
+    /// How long a wheel glide takes, 0 = none; driven by `ui.scroll_smoothness`.
+    pub(crate) scroll_smoothness: u32,
+    /// Whole size of the listing on screen, for its scrollbar.
+    pub(crate) listing_extent: gpui::Size<gpui::Pixels>,
+    /// The wheel glide under way in the listing.
+    pub(crate) smooth_scroll: Option<super::smooth_scroll::SmoothScroll>,
     /// Current name-filter query for the in-directory listing.
     pub search_query: String,
     /// Whether the search bar is visible.
@@ -87,6 +128,10 @@ pub struct ExplorerPane {
     pub col_modified_width: f32,
     /// Width of the action column.
     pub col_action_width: f32,
+    // The width each column had before it was hidden from the header's menu
+    // (0 while it is shown). A hidden column is one of width 0, so every
+    // layout that sums or reads the widths already leaves it out.
+    pub(crate) hidden_column_widths: [f32; 4],
     // Resize state
     /// The column currently being resized by a drag, if any.
     pub resizing_column: Option<ResizingColumn>,
@@ -100,6 +145,8 @@ pub struct ExplorerPane {
     pub view_mode: ViewMode,
     /// Whether the left quick-access sidebar is shown (toggled with `Cmd/Ctrl+B`).
     pub sidebar_visible: bool,
+    /// What the sidebar lists and which of its nodes are open.
+    pub(crate) sidebar: super::places::SidebarState,
 
     // Search
     /// The full-text search service, when available.
@@ -134,6 +181,51 @@ pub struct ExplorerPane {
     pub preview_markdown: Option<gpui::SharedString>,
     /// Message shown in the preview pane when a file cannot be previewed.
     pub preview_message: Option<String>,
+    /// A folder's contents or a zip's entries, shown as a list in the preview.
+    pub(crate) preview_listing: Option<std::rc::Rc<super::preview_listing::PreviewListing>>,
+    /// The PDF in the preview, its pages arriving as they render.
+    pub(crate) preview_pdf: Option<super::pdf::PdfPreview>,
+    /// The video or audio file playing in the preview.
+    pub(crate) preview_media: Option<super::media::MediaPreview>,
+    /// Player volume, 0..=1, and whether it is muted: kept by the pane, not
+    /// the player, so the next file plays as loud as the last one did.
+    pub(crate) media_volume: f64,
+    pub(crate) media_muted: bool,
+    /// The selection was set without the preview following it (`reveal`);
+    /// the next render opens it.
+    pub(crate) preview_selection_pending: bool,
+    /// The preview waiting for the row the arrow keys left active to stay put
+    /// (`preview::PREVIEW_FOLLOW_DELAY`); replacing it cancels it.
+    pub(crate) preview_follow: Option<gpui::Task<()>>,
+    /// That wait; a field so tests can drive it with the test clock.
+    pub(crate) preview_follow_delay: std::time::Duration,
+    /// The read of the file being previewed and the step that shows it.
+    /// Replacing it drops the read of a file nobody is looking at any more.
+    pub(crate) preview_load: Option<gpui::Task<()>>,
+    /// A drag of the divider beside the sidebar or the preview.
+    pub(crate) divider_drag: Option<super::view::panels::DividerDrag>,
+    /// Width of the sidebar, listing and preview together, measured at paint.
+    pub(crate) columns_width: std::rc::Rc<std::cell::Cell<f32>>,
+    /// The 3D model in the preview, turned by dragging.
+    pub(crate) preview_model: Option<super::model3d::ModelPreview>,
+    /// What the preview showed before an item of a folder listing was
+    /// clicked in it, for its back button. Cleared when the selection in the
+    /// listing opens something new.
+    pub(crate) preview_back: Vec<String>,
+    /// Magnification of the image, video, PDF, waveform or model in the
+    /// preview, 1 = fit. Back to 1 for every file opened.
+    pub(crate) preview_zoom: f32,
+    /// Magnification of a folder or archive listing in the preview. Kept
+    /// across folders: it is how large the user wants the items, not a
+    /// look at one file.
+    pub(crate) preview_listing_zoom: f32,
+    /// Scroll of the zoomed content, so a drag can pan it.
+    pub(crate) preview_scroll: gpui::ScrollHandle,
+    /// Width of the preview's content, measured at paint, which the
+    /// listing's grid lays its columns out by.
+    pub(crate) preview_width: std::rc::Rc<std::cell::Cell<f32>>,
+    /// Last point of a drag panning the zoomed preview.
+    pub(crate) preview_pan: Option<gpui::Point<gpui::Pixels>>,
     /// The editor entity backing a text preview.
     pub preview_editor: Option<Entity<PreviewEditor>>,
     // Transient message shown in the footer status bar.
@@ -147,6 +239,14 @@ pub struct ExplorerPane {
     pub(crate) trash_ledger: TrashLedger,
     /// In-progress inline rename of a listing row, if any.
     pub(crate) renaming: Option<super::file_ops::RenameState>,
+    /// The path bar while it is a text field (double click on it), if open.
+    pub(crate) path_edit: Option<super::path_edit::PathEditState>,
+    /// A left press on an entry that may become a drag.
+    pub(crate) drag_candidate: Option<super::drag::DragCandidate>,
+    /// A selection rectangle being dragged over the listing (`marquee.rs`).
+    pub(crate) marquee: Option<super::marquee::Marquee>,
+    /// Where each entry was painted, for the rectangle's hit test.
+    pub(crate) hit_boxes: super::marquee::HitBoxes,
     /// In-progress paste whose name conflicts are being resolved via the dialog.
     pub(crate) paste_plan: Option<super::file_ops::PastePlan>,
 
@@ -154,6 +254,25 @@ pub struct ExplorerPane {
     /// Listing zoom in 0..=1: the list table at the bottom, ever larger tiles
     /// above (see `zoom.rs`). `view_mode` always follows it.
     pub(crate) zoom: f32,
+    /// Where `zoom` is heading. The wheel, the keys and the menu move the
+    /// target and `tick_zoom` glides `zoom` after it, frame by frame, as File
+    /// Pilot does; dragging the slider sets both at once.
+    pub(crate) zoom_target: f32,
+    /// When the glide last advanced, to step it by elapsed time rather than
+    /// by frame count.
+    pub(crate) zoom_tick: Option<std::time::Instant>,
+    /// Each entry name laid out on one line, kept across frames: a tile
+    /// label is wrapped from it at any width without shaping the text again,
+    /// which is what lets every row's height follow the zoom as it glides.
+    pub(crate) name_layouts: std::collections::HashMap<String, std::sync::Arc<gpui::LineLayout>>,
+    /// Bumped by `update_item_sizes`, which every change to the rows on
+    /// screen goes through. The row layouts below are kept while it, and the
+    /// sizes they were built for, stay the same.
+    pub(crate) rows_generation: u64,
+    /// The grid's rows and their heights, as last built.
+    pub(crate) grid_layout: Option<super::view::listing::grid::GridLayout>,
+    /// The list's rows and their sizes, as last built.
+    pub(crate) list_layout: Option<super::view::listing::list::ListLayout>,
     /// The grid zoom to return to when the grid is chosen again after the list.
     pub(crate) last_grid_zoom: f32,
     /// Tiles per grid row at the last render, for Up/Down to move by a row.
@@ -162,12 +281,47 @@ pub struct ExplorerPane {
     pub(crate) grid_width: f32,
     /// Scroll position of the virtualized grid.
     pub(crate) grid_scroll_handle: VirtualListScrollHandle,
+    /// Scroll position of the folder or archive listing in the preview. Held
+    /// here because `v_virtual_list` without one makes a new handle on every
+    /// render, and the listing jumped back to the top on the next frame.
+    pub(crate) preview_listing_scroll: VirtualListScrollHandle,
+    /// Scroll of the List view's columns.
+    pub(crate) compact_scroll_handle: VirtualListScrollHandle,
+    /// Height the List view's columns are filled to, measured after layout.
+    pub(crate) compact_height: f32,
+    /// Names per column in the List view, from that height.
+    pub(crate) compact_rows: usize,
+    /// Open folders of the Tree view.
+    pub(crate) tree: super::tree::TreeState,
+    // Filter bar (`filter.rs`)
+    /// Whether the filter bar under the header is shown.
+    pub(crate) filter_bar_visible: bool,
+    /// Kind of entry the listing is narrowed to; kept across folders.
+    pub(crate) kind_filter: super::filter::KindFilter,
+    /// Name pattern the listing is narrowed to; cleared on leaving a folder.
+    pub(crate) name_filter: String,
+    /// The filter bar's text field, made the first time the bar is shown
+    /// (it needs a `Window`, which the pane's constructor is not handed).
+    pub(crate) name_filter_input: Option<Entity<InputState>>,
     /// Thumbnails of the directory on screen.
     pub(crate) thumbnails: super::thumbnails::Thumbnails,
-    /// The GIF tile under the pointer, which plays while hovered.
-    pub(crate) hovered_gif: Option<String>,
-    /// Decoded frames of the GIFs playing in the grid, and which ones they are.
-    pub(crate) gif_cache: Option<(Vec<String>, Entity<gpui::RetainAllImageCache>)>,
+    /// The context menu on screen, if any.
+    pub(crate) context_menu: Option<super::context_menu::OpenMenu>,
+    /// Whether the preview pane is shown (the bottom bar's panel button).
+    pub(crate) preview_visible: bool,
+    /// The bottom bar's zoom menu is open.
+    pub(crate) zoom_menu_open: bool,
+    /// The zoom menu's slider knob is being dragged.
+    pub(crate) zoom_dragging: bool,
+    /// Whether the bar under the listing searches subfolders (Ctrl+F) rather
+    /// than filtering the folder on screen.
+    pub(crate) quick_recursive: bool,
+    /// Each search hit's folder, relative to where the search started.
+    pub(crate) hit_folders: std::collections::HashMap<String, String>,
+    /// The subfolder search in progress or last finished.
+    pub(crate) deep_search: Option<super::quick_search::DeepSearch>,
+    /// Decoded frames of the GIF playing in the preview, and which one it is.
+    pub(crate) gif_cache: Option<(String, Entity<gpui::RetainAllImageCache>)>,
 }
 
 impl Focusable for ExplorerPane {
@@ -226,10 +380,27 @@ impl ExplorerPane {
             entries: Vec::new(),
             filtered_entries: Vec::new(),
             loaded: false,
+            listing_generation: 0,
+            listing_pending: false,
+            listing_tasks: Vec::new(),
+            listing_wait: super::navigation::LISTING_WAIT,
+            reveal_after_listing: None,
+            listed_cwd: None,
+            default_sort_key: SortKey::Name,
+            default_sort_asc: true,
+            view_folder: None,
             sort_key: SortKey::Name,
             sort_asc: true,
+            folder_order: Default::default(),
+            applied_ui: None,
+            group_by: Default::default(),
+            group_runs: Vec::new(),
             show_hidden: false,
             icon_pack: "default".to_string(),
+            name_lines: 0,
+            scroll_smoothness: nohrs_core::config::Ui::default().scroll_smoothness,
+            smooth_scroll: None,
+            listing_extent: Default::default(),
             search_query: String::new(),
             search_visible: false,
             search_input,
@@ -248,6 +419,7 @@ impl ExplorerPane {
             col_size_width: config::COL_SIZE_WIDTH,
             col_modified_width: config::COL_MODIFIED_WIDTH,
             col_action_width: config::COL_ACTION_WIDTH,
+            hidden_column_widths: [0.0; 4],
             resizing_column: None,
             focus_handle,
             focus_requested: false,
@@ -256,6 +428,7 @@ impl ExplorerPane {
             // Hidden by default; the root pane is revealed by `ExplorerPage::new`,
             // split-created panes stay collapsed (issue #164, §2).
             sidebar_visible: false,
+            sidebar: Default::default(),
 
             // Search
             search_service,
@@ -273,17 +446,60 @@ impl ExplorerPane {
             preview_image_path: None,
             preview_markdown: None,
             preview_message: None,
+            preview_listing: None,
+            preview_pdf: None,
+            preview_media: None,
+            media_volume: 1.0,
+            preview_selection_pending: false,
+            preview_follow: None,
+            preview_follow_delay: super::preview::PREVIEW_FOLLOW_DELAY,
+            preview_load: None,
+            divider_drag: None,
+            columns_width: Default::default(),
+            preview_model: None,
+            preview_back: Vec::new(),
+            preview_zoom: 1.0,
+            preview_listing_zoom: 1.0,
+            preview_scroll: gpui::ScrollHandle::new(),
+            preview_width: Default::default(),
+            preview_pan: None,
+            media_muted: false,
             status_message: None,
             trash_ledger,
             renaming: None,
+            path_edit: None,
+            drag_candidate: None,
+            marquee: None,
+            hit_boxes: Default::default(),
             paste_plan: None,
             zoom: 0.0,
+            zoom_target: 0.0,
+            zoom_tick: None,
+            name_layouts: std::collections::HashMap::new(),
+            rows_generation: 0,
+            grid_layout: None,
+            list_layout: None,
             last_grid_zoom: super::zoom::DEFAULT_GRID,
             grid_columns: 1,
             grid_width: 0.0,
             grid_scroll_handle: VirtualListScrollHandle::new(),
+            preview_listing_scroll: VirtualListScrollHandle::new(),
+            compact_scroll_handle: VirtualListScrollHandle::new(),
+            compact_height: 400.0,
+            compact_rows: 1,
+            tree: Default::default(),
+            filter_bar_visible: false,
+            kind_filter: Default::default(),
+            name_filter: String::new(),
+            name_filter_input: None,
             thumbnails: Default::default(),
-            hovered_gif: None,
+            context_menu: None,
+            preview_visible: true,
+            zoom_menu_open: false,
+            zoom_dragging: false,
+            quick_recursive: false,
+            deep_search: None,
+            hit_folders: Default::default(),
             gif_cache: None,
         }
     }
@@ -337,72 +553,194 @@ impl ExplorerPane {
     }
 
     pub(crate) fn set_view_mode(&mut self, mode: ViewMode, cx: &mut Context<Self>) {
-        if self.view_mode != mode {
+        // Against where the glide is headed, not the view on screen: choosing
+        // List again while a glide to Grid is still in List would otherwise
+        // be ignored, and the glide would carry on to Grid.
+        if super::zoom::view_mode(self.zoom_target) != mode {
             let zoom = match mode {
                 ViewMode::List => 0.0,
+                ViewMode::Tree => super::zoom::TREE,
+                ViewMode::Compact => super::zoom::LIST_MAX,
                 ViewMode::Grid => self.last_grid_zoom,
             };
-            self.set_zoom(zoom, cx);
+            self.zoom_to(zoom, cx);
         }
     }
 
-    /// The image cache to play the GIF at `path` from, or `None` when that GIF
-    /// should stay still.
+    /// The image cache the preview draws `path` from.
     ///
-    /// Only the selected GIF and the one under the pointer play. GPUI decodes
-    /// every frame at full size, so a folder of animated tiles would hold
-    /// hundreds of megabytes; and the cache is replaced whenever the playing set
-    /// changes, which releases the frames of a GIF the moment it stops.
-    pub(crate) fn gif_animation_cache(
+    /// Only the previewed GIF plays; the grid shows stills. GPUI decodes every
+    /// frame at full size and keeps them, so the cache is replaced when the
+    /// preview moves to another file, which releases the last one's frames.
+    pub(crate) fn preview_image_cache(
         &mut self,
         path: &str,
         cx: &mut Context<Self>,
-    ) -> Option<Entity<gpui::RetainAllImageCache>> {
-        let is_gif = |candidate: &&String| {
-            std::path::Path::new(candidate.as_str())
-                .extension()
-                .is_some_and(|extension| extension.eq_ignore_ascii_case("gif"))
-        };
-        let mut playing: Vec<String> = [self.active_path.as_ref(), self.hovered_gif.as_ref()]
-            .into_iter()
-            .flatten()
-            .filter(is_gif)
-            .cloned()
-            .collect();
-        playing.sort();
-        playing.dedup();
-        if !playing.iter().any(|candidate| candidate == path) {
-            return None;
-        }
+    ) -> Entity<gpui::RetainAllImageCache> {
         match &self.gif_cache {
-            Some((held, cache)) if *held == playing => Some(cache.clone()),
+            Some((held, cache)) if held == path => cache.clone(),
             _ => {
                 let cache = gpui::RetainAllImageCache::new(cx);
-                self.gif_cache = Some((playing, cache.clone()));
-                Some(cache)
+                self.gif_cache = Some((path.to_string(), cache.clone()));
+                cache
             }
+        }
+    }
+
+    /// Shows or hides the filter bar. Hiding it also drops its filters, so a
+    /// listing never stays narrowed by something no longer on screen.
+    pub(crate) fn toggle_filter_bar(&mut self, cx: &mut Context<Self>) {
+        self.filter_bar_visible = !self.filter_bar_visible;
+        if !self.filter_bar_visible {
+            self.kind_filter = Default::default();
+            self.name_filter.clear();
+            self.name_filter_input = None;
+        }
+        self.apply_filter();
+        cx.notify();
+    }
+
+    /// Narrows the listing to one kind of entry.
+    pub(crate) fn set_kind_filter(
+        &mut self,
+        kind: super::filter::KindFilter,
+        cx: &mut Context<Self>,
+    ) {
+        if self.kind_filter != kind {
+            self.kind_filter = kind;
+            self.apply_filter();
+            cx.notify();
+        }
+    }
+
+    /// Drops the name pattern on leaving a folder: it was typed for that
+    /// folder's names. The kind filter is a way of browsing and carries over.
+    pub(crate) fn clear_name_filter(&mut self) {
+        self.name_filter.clear();
+        self.name_filter_input = None;
+    }
+
+    /// Whether the filter bar is narrowing the listing at all.
+    pub(crate) fn is_filtering(&self) -> bool {
+        self.kind_filter != Default::default() || !self.name_filter.trim().is_empty()
+    }
+
+    /// Selects the entry at `path` and scrolls it into view. A filter hiding
+    /// it is dropped first: the entry was asked for by name.
+    pub(crate) fn reveal(&mut self, path: &str) {
+        if self.listing_pending {
+            self.reveal_after_listing = Some(path.to_owned());
+            return;
+        }
+        let find = |pane: &Self| {
+            pane.filtered_entries
+                .iter()
+                .position(|entry| super::same_path(&entry.path, path))
+        };
+        let index = match find(self) {
+            Some(index) => Some(index),
+            None if self.is_filtering() => {
+                self.kind_filter = Default::default();
+                self.clear_name_filter();
+                self.apply_filter();
+                find(self)
+            }
+            None => None,
+        };
+        let Some(index) = index else {
+            return;
+        };
+        self.select_single(index);
+        // Previewed on the next frame, which has the window that opening a
+        // preview needs: a file another program sent was selected with the
+        // preview still on whatever it showed before.
+        self.preview_selection_pending = true;
+        let (list_row, grid_row) = self.visual_rows_of(index);
+        match self.view_mode {
+            ViewMode::List | ViewMode::Tree => self
+                .virtual_scroll_handle
+                .scroll_to_item(list_row, gpui::ScrollStrategy::Center),
+            ViewMode::Compact => self.compact_scroll_handle.scroll_to_item(
+                index / self.compact_rows.max(1),
+                gpui::ScrollStrategy::Center,
+            ),
+            ViewMode::Grid => self
+                .grid_scroll_handle
+                .scroll_to_item(grid_row, gpui::ScrollStrategy::Center),
         }
     }
 
     /// How many entries Up/Down move by: a whole row of tiles in the grid.
     pub(crate) fn row_stride(&self) -> isize {
         match self.view_mode {
-            ViewMode::List => 1,
+            ViewMode::List | ViewMode::Tree | ViewMode::Compact => 1,
             ViewMode::Grid => self.grid_columns.max(1) as isize,
         }
     }
 
-    /// Sets the listing zoom, switching between the list and the grid when it
-    /// crosses the threshold between them.
+    /// Sets the listing zoom at once, with no glide: for the slider, which
+    /// the hand is already moving smoothly.
     pub(crate) fn set_zoom(&mut self, zoom: f32, cx: &mut Context<Self>) {
         let zoom = zoom.clamp(0.0, 1.0);
+        self.zoom_target = zoom;
+        self.zoom_tick = None;
+        self.apply_zoom(zoom, cx);
+        self.remember_folder_view(cx);
+    }
+
+    /// Glides the listing zoom to `target` over the next frames.
+    pub(crate) fn zoom_to(&mut self, target: f32, cx: &mut Context<Self>) {
+        let target = target.clamp(0.0, 1.0);
+        if target != self.zoom_target {
+            self.zoom_target = target;
+            self.remember_folder_view(cx);
+            cx.notify();
+        }
+    }
+
+    /// Advances the glide toward `zoom_target`, asking for another frame
+    /// while it is not there. Called on every render of the pane.
+    pub(crate) fn tick_zoom(&mut self, window: &mut gpui::Window, cx: &mut Context<Self>) {
+        // How long the glide takes to cover about two thirds of the way: the
+        // rest eases out, so a burst of wheel notches reads as one movement.
+        const TIME_CONSTANT: f32 = 0.07;
+        let remaining = self.zoom_target - self.zoom;
+        if remaining.abs() < 0.0005 {
+            self.zoom_tick = None;
+            if remaining != 0.0 {
+                self.apply_zoom(self.zoom_target, cx);
+            }
+            return;
+        }
+        let now = std::time::Instant::now();
+        // The first frame of a glide has no elapsed time to go by; a 60 Hz
+        // frame's worth starts it moving at once.
+        let elapsed = self
+            .zoom_tick
+            .map_or(1.0 / 60.0, |last| now.duration_since(last).as_secs_f32())
+            .min(0.1);
+        self.zoom_tick = Some(now);
+        let advanced = 1.0 - (-elapsed / TIME_CONSTANT).exp();
+        self.apply_zoom(self.zoom + remaining * advanced, cx);
+        window.request_animation_frame();
+    }
+
+    // Shows `zoom`, switching between the list and the grid when it crosses
+    // the threshold between them.
+    fn apply_zoom(&mut self, zoom: f32, cx: &mut Context<Self>) {
         if zoom == self.zoom {
             return;
         }
         self.zoom = zoom;
+        let previous = self.view_mode;
         self.view_mode = super::zoom::view_mode(zoom);
         if self.view_mode == ViewMode::Grid {
             self.last_grid_zoom = zoom;
+        }
+        // The Tree view's rows are the listing with open folders spliced in,
+        // so entering or leaving it rebuilds them.
+        if (previous == ViewMode::Tree) != (self.view_mode == ViewMode::Tree) {
+            self.apply_filter();
         }
         cx.notify();
     }
@@ -557,9 +895,15 @@ impl ExplorerPane {
             self.select_single(next);
         }
         if self.view_mode == ViewMode::Grid {
-            let row = next / self.grid_columns.max(1);
+            let (_, row) = self.visual_rows_of(next);
             self.grid_scroll_handle
                 .scroll_to_item(row, gpui::ScrollStrategy::Center);
+        }
+        if self.view_mode == ViewMode::Compact {
+            self.compact_scroll_handle.scroll_to_item(
+                next / self.compact_rows.max(1),
+                gpui::ScrollStrategy::Center,
+            );
         }
     }
 
@@ -574,6 +918,7 @@ impl ExplorerPane {
     }
 
     pub(crate) fn update_item_sizes(&mut self) {
+        self.rows_generation += 1;
         let total_width = self.total_table_width();
 
         let sizes = self
@@ -612,6 +957,9 @@ impl ExplorerPane {
             + config::TABLE_HORIZONTAL_PADDING
     }
 
+    /// Rebuilds the rows on screen from `entries`, sorted. `entries` itself
+    /// is never sorted: only counts are read from it, and sorting it first
+    /// sorted every folder twice.
     pub(crate) fn apply_filter(&mut self) {
         // The selection is addressed by path, so rebuilding the visible rows
         // keeps it: sorting or filtering no longer throws away what the user
@@ -626,10 +974,14 @@ impl ExplorerPane {
         }
 
         let show_hidden = self.show_hidden;
+        let kind_filter = self.kind_filter;
+        let name_filter = super::filter::NameMatcher::new(&self.name_filter);
         let visible = self
             .entries
             .iter()
-            .filter(move |entry| show_hidden || !is_hidden(&entry.name));
+            .filter(move |entry| show_hidden || !is_hidden(&entry.name))
+            .filter(move |entry| kind_filter.matches(entry))
+            .filter(move |entry| name_filter.matches(&entry.name));
 
         if self.search_query.is_empty() {
             self.filtered_entries = visible.cloned().collect();
@@ -641,9 +993,54 @@ impl ExplorerPane {
                 .collect();
         }
 
-        entries::sort_entries(&mut self.filtered_entries, self.sort_key, self.sort_asc);
+        entries::sort_entries_with(&mut self.filtered_entries, self.sort_key, self.sort_asc, self.folder_order);
+        if self.view_mode == ViewMode::Tree {
+            // Groups would pull a folder's children away from it.
+            self.group_runs.clear();
+            self.splice_tree();
+        } else {
+            self.group_runs = super::grouping::group_entries(
+                &mut self.filtered_entries,
+                self.group_by,
+                &super::grouping::Clock::now(),
+            );
+        }
         self.prune_selection();
         self.update_item_sizes();
+    }
+
+    /// The group runs, when they describe the entries on screen. Search
+    /// results and a folder being read replace `filtered_entries` without
+    /// grouping it, so runs that no longer add up to it are ignored rather
+    /// than drawn over the wrong rows.
+    pub(crate) fn groups(&self) -> &[super::grouping::Group] {
+        let covered: usize = self.group_runs.iter().map(|group| group.len).sum();
+        if self.search_results.is_none() && covered == self.filtered_entries.len() {
+            &self.group_runs
+        } else {
+            &[]
+        }
+    }
+
+    /// Groups the listing by `by`, keeping the sort inside each group.
+    pub(crate) fn set_group_by(&mut self, by: super::grouping::GroupBy) {
+        self.group_by = by;
+        self.apply_filter();
+    }
+
+    /// The list row (counting the column header as row 0) and the grid row
+    /// that show entry `index`, once group headers are taken into account.
+    pub(crate) fn visual_rows_of(&self, index: usize) -> (usize, usize) {
+        let groups = self.groups();
+        let list = super::grouping::list_rows(groups, self.filtered_entries.len())
+            .iter()
+            .position(|row| *row == super::grouping::ListRow::Entry(index))
+            .map_or(index + 1, |row| row + 1);
+        let grid = super::grouping::grid_rows(groups, self.filtered_entries.len(), self.grid_columns)
+            .iter()
+            .position(|row| matches!(row, super::grouping::GridRow::Tiles { first, end } if (*first..*end).contains(&index)))
+            .unwrap_or(index / self.grid_columns.max(1));
+        (list, grid)
     }
 
     /// Apply the `[ui]` config section to this open view, re-sorting and
@@ -651,11 +1048,28 @@ impl ExplorerPane {
     /// reload (config.md §5). Note: `icon_pack` is stored for the row renderer to
     /// consult; there is no icon cache to invalidate yet.
     pub fn apply_config_ui(&mut self, ui: &config::Ui, cx: &mut Context<Self>) {
-        let sort_key = sort_key_from_config(ui.default_sort);
+        let previous = self.applied_ui.replace(ui.clone());
+        self.default_sort_key = sort_key_from_config(ui.default_sort);
+        self.default_sort_asc = !ui.default_sort_descending;
         let mut changed = false;
-        if self.sort_key != sort_key {
-            self.sort_key = sort_key;
-            self.sort_asc = true;
+        let sort_changed_in_file = previous.as_ref().is_none_or(|previous| {
+            (previous.default_sort, previous.default_sort_descending)
+                != (ui.default_sort, ui.default_sort_descending)
+        });
+        // A folder whose sort was chosen keeps it, as in Explorer; the new
+        // default reaches every folder still on the default, this one too.
+        let remembered = self
+            .view_folder
+            .is_some()
+            .then(|| super::folder_views::FolderViews::get(&self.cwd, cx))
+            .flatten()
+            .is_some();
+        if sort_changed_in_file
+            && !remembered
+            && (self.sort_key, self.sort_asc) != (self.default_sort_key, self.default_sort_asc)
+        {
+            self.sort_key = self.default_sort_key;
+            self.sort_asc = self.default_sort_asc;
             changed = true;
         }
         if self.show_hidden != ui.show_hidden {
@@ -666,22 +1080,81 @@ impl ExplorerPane {
             self.icon_pack = ui.icon_pack.clone();
             changed = true;
         }
+        self.scroll_smoothness = ui.scroll_smoothness;
+        if self.name_lines != ui.name_lines {
+            self.name_lines = ui.name_lines;
+            // Every tile row's height follows its longest name.
+            self.rows_generation += 1;
+            cx.notify();
+        }
         if changed {
-            entries::sort_entries(&mut self.entries, self.sort_key, self.sort_asc);
             self.apply_filter();
             cx.notify();
         }
     }
 
-    pub(crate) fn set_sort_key(&mut self, key: SortKey) {
+    /// Sorts by `key` in the given direction, as the context menu chooses it.
+    pub(crate) fn set_sort(&mut self, key: SortKey, ascending: bool, cx: &mut Context<Self>) {
+        self.sort_key = key;
+        self.sort_asc = ascending;
+        self.apply_filter();
+        self.remember_folder_view(cx);
+    }
+
+    pub(crate) fn set_sort_key(&mut self, key: SortKey, cx: &mut Context<Self>) {
         if self.sort_key == key {
             self.sort_asc = !self.sort_asc;
         } else {
             self.sort_key = key;
             self.sort_asc = true;
         }
-        entries::sort_entries(&mut self.entries, self.sort_key, self.sort_asc);
         self.apply_filter();
+        self.remember_folder_view(cx);
+    }
+
+    /// Puts on screen the view `cwd` was left with, or the defaults for a
+    /// folder never changed — whose zoom is the one the tab already had, so
+    /// browsing in icons stays in icons. Does nothing while the folder stays
+    /// the same: a refresh keeps whatever is on screen. The listing is sorted
+    /// by the read that follows.
+    pub(crate) fn enter_folder_view(&mut self, cx: &mut Context<Self>) {
+        let key = super::folder_views::folder_key(&self.cwd);
+        if self.view_folder.as_deref() == Some(key.as_str()) {
+            return;
+        }
+        self.view_folder = Some(key);
+        match super::folder_views::FolderViews::get(&self.cwd, cx) {
+            Some(view) => {
+                self.sort_key = view.sort.into();
+                self.sort_asc = view.ascending;
+                let zoom = view.zoom.clamp(0.0, 1.0);
+                // At once, not gliding: the folder opens the way it was left.
+                self.zoom_target = zoom;
+                self.zoom_tick = None;
+                self.apply_zoom(zoom, cx);
+            }
+            None => {
+                self.sort_key = self.default_sort_key;
+                self.sort_asc = self.default_sort_asc;
+            }
+        }
+    }
+
+    /// Remembers how `cwd` looks now, after the user changed it.
+    fn remember_folder_view(&self, cx: &mut Context<Self>) {
+        // Before a folder was entered there is nothing to attach it to.
+        if self.view_folder.is_none() {
+            return;
+        }
+        super::folder_views::FolderViews::remember(
+            &self.cwd,
+            super::folder_views::FolderView {
+                zoom: self.zoom_target,
+                sort: self.sort_key.into(),
+                ascending: self.sort_asc,
+            },
+            cx,
+        );
     }
 }
 
@@ -694,7 +1167,7 @@ fn sort_key_from_config(order: config::SortOrder) -> SortKey {
     }
 }
 
-fn is_hidden(name: &str) -> bool {
+pub(crate) fn is_hidden(name: &str) -> bool {
     name.starts_with('.')
 }
 

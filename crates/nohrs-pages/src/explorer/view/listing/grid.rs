@@ -1,4 +1,4 @@
-use super::truncate_middle;
+use crate::explorer::grouping::{self, GridRow};
 use crate::explorer::{ExplorerPane, zoom};
 use gpui::prelude::*;
 use gpui::*;
@@ -13,15 +13,13 @@ use std::rc::Rc;
 /// Room around the thumbnail inside a tile, and between tiles.
 const TILE_PADDING: f32 = 10.0;
 const TILE_GAP: f32 = 8.0;
-/// Line heights of the name (`text_sm`) and meta (`text_xs`) lines. Fixed and
-/// unshrinkable: a tile is a fixed height, and when the column ran short flex
-/// took it out of the name line, clipping its descenders.
-const NAME_LINE_HEIGHT: f32 = 20.0;
-const META_LINE_HEIGHT: f32 = 16.0;
-/// The `gap_1` the tile puts between thumbnail, name and meta.
+/// Line height of the name (`text_xs`). The whole name is shown, on as many
+/// lines as it takes, as in Explorer's icon views; each row of tiles is as
+/// tall as its longest name. There is no size or date line under it, as
+/// there is none in Explorer.
+const NAME_LINE_HEIGHT: f32 = 16.0;
+/// The `gap_1` the tile puts between thumbnail and name.
 const TILE_ROW_GAP: f32 = 4.0;
-/// Everything under the thumbnail: both lines and the two gaps above them.
-const TILE_LABEL_HEIGHT: f32 = NAME_LINE_HEIGHT + META_LINE_HEIGHT + TILE_ROW_GAP * 2.0;
 const GRID_PADDING_X: f32 = 16.0;
 
 /// Renders the file listing as a grid of tiles sized by the pane's zoom.
@@ -35,19 +33,45 @@ pub fn render(
 ) -> AnyElement {
     let icon = zoom::icon_size(page.zoom);
     let tile_width = icon + TILE_PADDING * 2.0;
-    let tile_height = icon + TILE_PADDING * 2.0 + TILE_LABEL_HEIGHT;
+    // The tile's inner width: its padding and the 1px border on each side.
+    let name_width = tile_width - TILE_PADDING * 2.0 - 2.0;
+    let tile_height = move |lines: usize| icon + TILE_PADDING * 2.0 + TILE_ROW_GAP + NAME_LINE_HEIGHT * lines as f32;
     let usable = (page.grid_width - GRID_PADDING_X * 2.0).max(tile_width);
     let columns = (((usable + TILE_GAP) / (tile_width + TILE_GAP)).floor() as usize).max(1);
     page.grid_columns = columns;
-    let rows = page.filtered_entries.len().div_ceil(columns);
     let thumbnail_size = zoom::thumbnail_bucket(icon, window.scale_factor());
 
-    let row_size = size(
-        px(page.grid_width.max(tile_width)),
-        px(tile_height + TILE_GAP),
-    );
-    let row_sizes = Rc::new(vec![row_size; rows]);
+    // Every row's height has to be known before the list lays out, so the
+    // names are wrapped for all rows, not just those on screen. That used to
+    // happen on every frame, and every thumbnail that arrives is a frame: in a
+    // folder of 35,000 that was 35,000 wraps per tile loaded. Now it happens
+    // when the rows, the width or the zoom change; while the zoom glides it is
+    // still every frame, but each name was shaped once (`name_layouts`) and
+    // wrapping it at a new width is arithmetic that allocates nothing.
+    let key = GridKey {
+        generation: page.rows_generation,
+        entries: page.filtered_entries.len(),
+        columns,
+        name_width: name_width.to_bits(),
+        width: page.grid_width.max(tile_width).to_bits(),
+        rem: f32::from(window.rem_size()).to_bits(),
+    };
+    let layout = match page.grid_layout.as_ref().filter(|layout| layout.key == key) {
+        Some(layout) => layout.clone(),
+        None => {
+            let layout = build_layout(page, key, name_width, tile_height, window);
+            page.grid_layout = Some(layout.clone());
+            layout
+        }
+    };
+    let GridLayout {
+        rows,
+        row_lines,
+        row_sizes,
+        ..
+    } = layout;
     let entity = cx.entity();
+    page.listing_extent = super::extent(&row_sizes, false);
 
     div()
         .id("grid-area")
@@ -62,9 +86,19 @@ pub fn render(
                 row_sizes,
                 move |page, visible_rows, window, cx| {
                     visible_rows
-                        .map(|row| {
-                            let first = row * columns;
-                            let last = (first + columns).min(page.filtered_entries.len());
+                        .filter_map(|row| {
+                            let (first, last) = match rows.get(row)? {
+                                GridRow::Group(group) => {
+                                    let group = page.groups().get(*group)?;
+                                    return Some(
+                                        div()
+                                            .pt(px(TILE_GAP))
+                                            .child(super::group_header(group, page.grid_width))
+                                            .into_any_element(),
+                                    );
+                                }
+                                GridRow::Tiles { first, end } => (*first, *end),
+                            };
                             let mut line = div()
                                 .flex()
                                 .flex_row()
@@ -76,23 +110,26 @@ pub fn render(
                                     continue;
                                 };
                                 let selected = page.is_selected(ix);
+                                let lines = row_lines.get(row).copied().unwrap_or(1);
                                 let tile = TileSize {
                                     icon,
                                     width: tile_width,
-                                    height: tile_height,
+                                    height: tile_height(lines),
+                                    label_lines: lines,
                                     thumbnail: thumbnail_size,
                                 };
                                 line = line.child(render_grid_item(
                                     page, item, ix, selected, tile, window, cx,
                                 ));
                             }
-                            line
+                            Some(line.into_any_element())
                         })
                         .collect()
                 },
             )
             .track_scroll(&page.grid_scroll_handle),
         )
+
         .child(
             // Measures the width rows are laid out against. A change is only
             // known after layout, so it takes effect on the next frame.
@@ -114,13 +151,86 @@ pub fn render(
         .into_any_element()
 }
 
+/// What the grid's row layout was built for; any change rebuilds it.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) struct GridKey {
+    generation: u64,
+    entries: usize,
+    columns: usize,
+    name_width: u32,
+    width: u32,
+    rem: u32,
+}
+
+/// The grid's rows, the lines of the longest name in each, and their sizes.
+#[derive(Clone)]
+pub(crate) struct GridLayout {
+    key: GridKey,
+    rows: Rc<Vec<GridRow>>,
+    row_lines: Rc<Vec<usize>>,
+    row_sizes: Rc<Vec<Size<Pixels>>>,
+}
+
+fn build_layout(
+    page: &mut ExplorerPane,
+    key: GridKey,
+    name_width: f32,
+    tile_height: impl Fn(usize) -> f32,
+    window: &Window,
+) -> GridLayout {
+    // The cap follows the folder: a fixed 50,000 cleared the cache on every
+    // build in a larger folder, and every name was shaped again each time.
+    if page.name_layouts.len() > NAME_LAYOUTS_KEPT.max(page.filtered_entries.len() * 2) {
+        page.name_layouts.clear();
+    }
+    let rows = grouping::grid_rows(page.groups(), page.filtered_entries.len(), key.columns);
+    let row_lines: Vec<usize> = rows
+        .iter()
+        .map(|row| match row {
+            GridRow::Group(_) => 0,
+            GridRow::Tiles { first, end } => (*first..*end)
+                .filter_map(|ix| page.filtered_entries.get(ix))
+                .map(|entry| {
+                    let layout = name_layout(&mut page.name_layouts, &entry.name, window);
+                    let mut lines = 0;
+                    wrap_layout(&layout, &entry.name, name_width, |_| lines += 1);
+                    limit_lines(lines.max(1), page.name_lines)
+                })
+                .max()
+                .unwrap_or(1),
+        })
+        .collect();
+    let width = px(f32::from_bits(key.width));
+    let row_sizes = rows
+        .iter()
+        .zip(row_lines.iter())
+        .map(|(row, &lines)| match row {
+            GridRow::Group(_) => size(width, px(super::GROUP_HEADER_HEIGHT + TILE_GAP)),
+            GridRow::Tiles { .. } => size(width, px(tile_height(lines) + TILE_GAP)),
+        })
+        .collect();
+    GridLayout {
+        key,
+        rows: Rc::new(rows),
+        row_lines: Rc::new(row_lines),
+        row_sizes: Rc::new(row_sizes),
+    }
+}
+
 #[derive(Clone, Copy)]
 struct TileSize {
     icon: f32,
     width: f32,
     height: f32,
+    /// Lines the tallest name in this row takes; every tile in it gets them.
+    label_lines: usize,
     thumbnail: u32,
 }
+
+/// Names kept laid out before the cache starts over, or twice the folder on
+/// screen if that is more; a folder of tens of thousands of files would
+/// otherwise hold every name it ever showed. Leaving the folder clears it.
+const NAME_LAYOUTS_KEPT: usize = 50_000;
 
 fn render_grid_item(
     page: &mut ExplorerPane,
@@ -128,10 +238,12 @@ fn render_grid_item(
     ix: usize,
     selected: bool,
     tile: TileSize,
-    _window: &mut Window,
+    window: &mut Window,
     cx: &mut Context<ExplorerPane>,
 ) -> AnyElement {
-    use nohrs_ui::components::file_list::{format_date, get_file_type, human_bytes};
+    let name_width = tile.width - 2.0 * TILE_PADDING - 2.0;
+    let name_lines = wrap_name(&mut page.name_layouts, &item.name, name_width, page.name_lines, window);
+    let query = page.highlight_query();
 
     let rename_input = page
         .renaming
@@ -145,34 +257,7 @@ fn render_grid_item(
     };
 
     let is_dir = item.kind == "dir";
-    // Budgeted to the tile's inner width: the label is centered, so anything
-    // wider is clipped at *both* ends rather than ellipsized.
-    let name = truncate_middle(&item.name, ((tile.width / 7.5) as usize).max(12));
     let thumbnail = page.thumbnails.get(&item.path, tile.thumbnail, cx);
-    let is_gif = item.kind == "file"
-        && std::path::Path::new(&item.name)
-            .extension()
-            .is_some_and(|extension| extension.eq_ignore_ascii_case("gif"));
-    let animated = is_gif
-        .then(|| page.gif_animation_cache(&item.path, cx))
-        .flatten();
-    // A folder has no meaningful byte size, so it shows its date alone rather
-    // than repeating "Folder" on a second line.
-    let meta_text = match item.kind.as_str() {
-        "dir" => format_date(&item.modified),
-        "file" => format!(
-            "{} · {}",
-            human_bytes(item.size),
-            format_date(&item.modified)
-        ),
-        // Anything else (a symlink, say) shows the same user-facing label the
-        // list view's Type column uses, not the raw internal kind.
-        other => format!(
-            "{} · {}",
-            get_file_type(&item.name, other),
-            format_date(&item.modified)
-        ),
-    };
     let activation_item = item.clone();
     let preview_item = item.clone();
 
@@ -192,6 +277,7 @@ fn render_grid_item(
 
     div()
         .id(("grid-tile", ix))
+        .relative()
         .flex_shrink_0()
         .w(px(tile.width))
         .h(px(tile.height))
@@ -209,30 +295,30 @@ fn render_grid_item(
         .items_center()
         .text_center()
         .gap_1()
-        .when(is_gif, |this| {
-            let path = item.path.clone();
-            this.on_hover(cx.listener(move |this, hovered: &bool, _, cx| {
-                if *hovered {
-                    this.hovered_gif = Some(path.clone());
-                } else if this.hovered_gif.as_deref() == Some(path.as_str()) {
-                    this.hovered_gif = None;
-                }
-                cx.notify();
-            }))
-        })
+        .on_mouse_down(
+            gpui::MouseButton::Right,
+            cx.listener(move |this, event: &gpui::MouseDownEvent, window, cx| {
+                // The rows sit inside the listing, whose own right click is
+                // the folder's menu.
+                cx.stop_propagation();
+                this.open_context_menu(Some(ix), event.modifiers.shift, window, cx);
+            }),
+        )
         .on_mouse_down(
             gpui::MouseButton::Left,
             cx.listener(move |this, event: &gpui::MouseDownEvent, window, cx| {
                 this.record_click(ix, event.click_count);
                 let modifiers = event.modifiers;
+                let plain = !(modifiers.shift || modifiers.platform || modifiers.control);
+                let keep_selection = this.press_entry(ix, event.position, plain);
                 if modifiers.shift {
                     this.select_range_to(ix);
                 } else if modifiers.platform || modifiers.control {
                     this.toggle_select(ix);
-                } else {
+                } else if !keep_selection {
                     this.select_single(ix);
                 }
-                if preview_item.kind == "file" {
+                if preview_item.kind == "file" || preview_item.kind == "dir" {
                     this.open_preview(preview_item.path.clone(), window, cx);
                 }
                 if event.click_count >= 2 {
@@ -248,29 +334,12 @@ fn render_grid_item(
                 .flex()
                 .items_center()
                 .justify_center()
-                .child(match (animated, thumbnail) {
-                    (Some(cache), still) => {
-                        // Until the frames are decoded the still thumbnail
-                        // stands in, so starting the animation is not a blink.
-                        let still = still.clone();
-                        img(std::path::PathBuf::from(&item.path))
-                            .image_cache(&cache)
-                            .size_full()
-                            .object_fit(ObjectFit::Contain)
-                            .with_loading(move || match &still {
-                                Some(image) => img(ImageSource::Render(image.clone()))
-                                    .size_full()
-                                    .object_fit(ObjectFit::Contain)
-                                    .into_any_element(),
-                                None => div().into_any_element(),
-                            })
-                            .into_any_element()
-                    }
-                    (None, Some(image)) => img(ImageSource::Render(image))
+                .child(match thumbnail {
+                    Some(image) => img(ImageSource::Render(image))
                         .size_full()
                         .object_fit(ObjectFit::Contain)
                         .into_any_element(),
-                    (None, None) => Icon::new(icon_name)
+                    None => Icon::new(icon_name)
                         .size(px((tile.icon * 0.6).max(24.0)))
                         .text_color(rgb(if is_dir {
                             theme::accent()
@@ -283,44 +352,156 @@ fn render_grid_item(
         .child(match rename_input {
             Some(input) => div()
                 .w_full()
-                .h(px(NAME_LINE_HEIGHT))
+                .h(px(20.0))
                 .flex_shrink_0()
                 .child(
-                    // Matches the resting label's typography exactly, so
-                    // committing the rename is not a visible jump.
                     Input::new(&input)
                         .small()
                         .appearance(false)
                         .px(px(0.0))
-                        .text_sm()
-                        .font_weight(gpui::FontWeight::MEDIUM)
+                        .text_xs()
                         .text_color(rgb(theme::fg())),
                 )
                 .into_any_element(),
+            // The whole name, centered under the icon as Explorer draws it.
+            // Each line is laid out by `wrap_name` rather than by gpui's
+            // wrapping, which does not break a run with no spaces
+            // (`PineTools.com_2026-10-12_12h16m40s`) and left a line wider
+            // than the tile, clipped on both sides by the centering.
             None => div()
                 .w_full()
-                .h(px(NAME_LINE_HEIGHT))
+                .h(px(NAME_LINE_HEIGHT * tile.label_lines as f32))
                 .flex_shrink_0()
-                .text_sm()
-                .font_weight(gpui::FontWeight::MEDIUM)
+                .flex()
+                .flex_col()
+                .items_center()
+                .text_xs()
+                .line_height(px(NAME_LINE_HEIGHT))
                 .text_color(rgb(theme::fg()))
                 .overflow_hidden()
-                .text_ellipsis()
-                .whitespace_nowrap()
-                .child(name)
+                .children(name_lines.into_iter().map(|line| {
+                    div()
+                        .max_w_full()
+                        .whitespace_nowrap()
+                        .overflow_hidden()
+                        .child(crate::explorer::view::highlighted_name(&line, &query))
+                }))
                 .into_any_element(),
         })
-        .child(
-            div()
-                .w_full()
-                .h(px(META_LINE_HEIGHT))
-                .flex_shrink_0()
-                .text_xs()
-                .text_color(rgb(theme::muted()))
-                .overflow_hidden()
-                .text_ellipsis()
-                .whitespace_nowrap()
-                .child(meta_text),
-        )
+        .map(|this| page.track_hit(this, ix))
+        .when(is_dir, |this| crate::explorer::drag::drop_into(this, &item.path, cx))
         .into_any_element()
+}
+
+/// Splits a tile's `name` into the lines it shows, each no wider than
+/// `width`, as Explorer wraps icon labels: after a space, `-`, `_` or `.` when
+/// one falls in the second half of the line, mid-word otherwise. Nothing is
+/// cut, unless `ui.name_lines` caps the lines (`max_lines`, 0 = no cap):
+/// then the last one shown ends in "…".
+fn wrap_name(
+    layouts: &mut std::collections::HashMap<String, std::sync::Arc<LineLayout>>,
+    name: &str,
+    width: f32,
+    max_lines: u32,
+    window: &Window,
+) -> Vec<String> {
+    let layout = name_layout(layouts, name, window);
+    let mut lines = Vec::new();
+    wrap_layout(&layout, name, width, |line| lines.push(line.to_string()));
+    if lines.is_empty() {
+        lines.push(String::new());
+    }
+    cap_lines(&mut lines, max_lines);
+    lines
+}
+
+/// Lines a name of `lines` lines takes under a cap of `max_lines` (0 = none).
+fn limit_lines(lines: usize, max_lines: u32) -> usize {
+    match max_lines {
+        0 => lines,
+        cap => lines.min(cap as usize),
+    }
+}
+
+/// Drops the lines past `max_lines` and ends the last one kept with "…".
+/// Two characters make room for it: the line already filled the width, and
+/// "…" is about as wide as two letters of the label's font.
+fn cap_lines(lines: &mut Vec<String>, max_lines: u32) {
+    let keep = limit_lines(lines.len(), max_lines);
+    if keep == lines.len() {
+        return;
+    }
+    lines.truncate(keep);
+    if let Some(last) = lines.last_mut() {
+        let chars = last.chars().count();
+        let kept: String = last.chars().take(chars.saturating_sub(2)).collect();
+        *last = format!("{}…", kept.trim_end());
+    }
+}
+
+/// `name` shaped in the label's font, once per name.
+fn name_layout(
+    layouts: &mut std::collections::HashMap<String, std::sync::Arc<LineLayout>>,
+    name: &str,
+    window: &Window,
+) -> std::sync::Arc<LineLayout> {
+    if let Some(layout) = layouts.get(name) {
+        return layout.clone();
+    }
+    let style = window.text_style();
+    // `text_xs`, which the label is drawn in.
+    let font_size = rems(0.75).to_pixels(window.rem_size());
+    let layout = window
+        .text_system()
+        .layout_line(name, font_size, &[style.to_run(name.len())], None);
+    layouts.insert(name.to_string(), layout.clone());
+    layout
+}
+
+/// Calls `line` with each line of `name` wrapped at `width`. The grid counts
+/// the lines of every name and draws those of a few, so the wrap itself
+/// allocates nothing.
+fn wrap_layout(layout: &LineLayout, name: &str, width: f32, mut line: impl FnMut(&str)) {
+    let width = px(width);
+    let mut start = 0;
+    while start < name.len() {
+        // The first character that does not fit after `start`; none when the
+        // rest of the name does.
+        let Some(fits) = layout.index_for_x(layout.x_for_index(start) + width) else {
+            line(&name[start..]);
+            break;
+        };
+        let at_least_one = start + name[start..].chars().next().map_or(1, char::len_utf8);
+        let end = name[start..fits]
+            .rfind([' ', '-', '_', '.'])
+            .map(|at| start + at + 1)
+            .filter(|&at| at > start + (fits - start) / 2)
+            .unwrap_or(fits)
+            .max(at_least_one);
+        line(name[start..end].trim_end());
+        start = end + name[end..].len() - name[end..].trim_start_matches(' ').len();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    // Not `super::*`: that brings in gpui's `test` attribute in place of std's.
+    use super::{cap_lines, limit_lines};
+
+    #[test]
+    fn a_cap_keeps_the_first_lines_and_ends_with_an_ellipsis() {
+        let mut lines = vec!["um nome ".to_string(), "bem longo".to_string(), "demais".to_string()];
+        cap_lines(&mut lines, 2);
+        assert_eq!(lines, ["um nome ", "bem lon…"]);
+        assert_eq!(limit_lines(3, 2), 2);
+    }
+
+    #[test]
+    fn no_cap_leaves_every_line() {
+        let mut lines = vec!["a".to_string(), "b".to_string()];
+        cap_lines(&mut lines, 0);
+        assert_eq!(lines, ["a", "b"]);
+        cap_lines(&mut lines, 5);
+        assert_eq!(lines, ["a", "b"]);
+    }
 }

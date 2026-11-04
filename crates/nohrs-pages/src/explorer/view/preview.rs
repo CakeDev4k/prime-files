@@ -95,7 +95,6 @@ pub fn render(
         div()
             .flex_1()
             .min_h(px(0.0))
-            .min_w(px(0.0))
             .overflow_hidden()
             .px(px(16.0))
             .py(px(12.0))
@@ -148,9 +147,10 @@ pub fn render(
             .justify_center()
             .gap_3()
             .p(px(16.0))
-            // Without these the image's own 512px became the pane's minimum
-            // width and pushed the divider over.
-            .min_w(px(0.0))
+            // Without this the image's own 512px became the pane's minimum
+            // width and pushed the divider over. Not `min_w(0)`: on a
+            // stretched item of a column taffy then measured the text at its
+            // narrowest, one letter a line, and kept that height.
             .overflow_hidden()
             .when_some(thumbnail, |this, image| {
                 this.child(
@@ -309,8 +309,8 @@ fn with_preview_wheel(content: AnyElement, cx: &mut Context<ExplorerPane>) -> An
         .flex_1()
         .flex()
         .flex_col()
-        .min_w(px(0.0))
         .min_h(px(0.0))
+        .overflow_hidden()
         .child(content)
         .child(
             canvas(
@@ -475,18 +475,22 @@ fn zoom_frame(
 ) -> AnyElement {
     let zoom = page.preview_zoom;
     let grown = zoom.max(1.0);
-    div()
+    let frame = div()
         .id(id)
-        .flex_1()
-        // The whole width of what holds it. The player centres its children,
-        // and without this the frame took the video's own width (1280 px in a
-        // pane of 340): at 100% the video showed cropped, the zoom kept still
-        // a point of that oversized frame instead of the one under the mouse,
-        // and with nothing left over to scroll the wheel-button drag did not
-        // move it.
-        .w_full()
-        .min_h(px(0.0))
-        .min_w(px(0.0))
+        // Laid over a holder rather than in the flow: the frame must be the
+        // size of the room it is given, never of what it shows. In the flow
+        // the picture's own size (a 512 px icon, a 1280 px video) came up as
+        // the frame's minimum width: at 100% it showed cropped, the zoom kept
+        // still a point of that oversized frame instead of the one under the
+        // mouse, and with nothing left over to scroll the wheel-button drag
+        // did not move it. `min_w(0)` used to hold it, but on the preview's
+        // columns it also measured every text at its narrowest, one letter a
+        // line; an absolute child adds nothing to its holder's size at all.
+        .absolute()
+        .top_0()
+        .left_0()
+        .right_0()
+        .bottom_0()
         .bg(rgb(theme::preview_backdrop()))
         .overflow_scroll()
         .track_scroll(&page.preview_scroll)
@@ -539,7 +543,13 @@ fn zoom_frame(
                 .items_center()
                 .justify_center()
                 .child(div().w(relative(zoom.min(1.0))).h(relative(zoom.min(1.0))).child(child)),
-        )
+        );
+    div()
+        .relative()
+        .flex_1()
+        .w_full()
+        .min_h(px(0.0))
+        .child(frame)
         .into_any_element()
 }
 
@@ -566,7 +576,7 @@ fn render_model(page: &mut ExplorerPane, window: &mut Window, cx: &mut Context<E
     div()
         .flex_1()
         .min_h(px(0.0))
-        .min_w(px(0.0))
+        .overflow_hidden()
         .flex()
         .flex_col()
         .child(
@@ -649,7 +659,7 @@ fn render_pdf(page: &ExplorerPane) -> AnyElement {
     div()
         .flex_1()
         .min_h(px(0.0))
-        .min_w(px(0.0))
+        .overflow_hidden()
         .flex()
         .flex_col()
         .child(
@@ -711,7 +721,7 @@ fn render_media(page: &ExplorerPane, cx: &mut Context<ExplorerPane>) -> AnyEleme
         .id("preview-media-screen")
         .flex_1()
         .min_h(px(0.0))
-        .min_w(px(0.0))
+        .overflow_hidden()
         .flex()
         .flex_col()
         .items_center()
@@ -849,7 +859,7 @@ fn render_media(page: &ExplorerPane, cx: &mut Context<ExplorerPane>) -> AnyEleme
     div()
         .flex_1()
         .min_h(px(0.0))
-        .min_w(px(0.0))
+        .overflow_hidden()
         .flex()
         .flex_col()
         .child(screen)
@@ -1061,7 +1071,6 @@ fn render_listing(
     div()
         .flex_1()
         .min_h(px(0.0))
-        .min_w(px(0.0))
         .flex()
         .flex_col()
         .child(

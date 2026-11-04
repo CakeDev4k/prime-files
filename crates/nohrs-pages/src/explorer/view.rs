@@ -463,7 +463,7 @@ fn render_body(
             let pushed = if !overlay && framed {
                 // The frame's width again between the bar and the card, as
                 // on the window's side of it.
-                let padded = div().size_full().pr(px(frame)).child(element);
+                let padded = div().size_full().flex().flex_col().pr(px(frame)).child(element);
                 left_of_card = Some(compact::slider(Edge::Left, 0.0, width + frame, amount, None, padded).into_any_element());
                 None
             } else if !overlay {
@@ -512,7 +512,7 @@ fn render_body(
             let room = page.columns_width.get();
             let width = if overlay && room > 0.0 { width.min(room * 0.9) } else { width };
             let pushed = if !overlay && framed {
-                let padded = div().size_full().pl(px(frame)).child(element);
+                let padded = div().size_full().flex().flex_col().pl(px(frame)).child(element);
                 right_of_card = Some(compact::slider(Edge::Right, 0.0, width + frame, amount, None, padded).into_any_element());
                 None
             } else if !overlay {

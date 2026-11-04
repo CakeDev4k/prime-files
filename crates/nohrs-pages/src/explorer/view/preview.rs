@@ -164,6 +164,7 @@ pub fn render(
             })
             .child(
                 div()
+                    .whitespace_nowrap()
                     .text_xs()
                     .text_color(rgb(theme::muted()))
                     .child(msg.clone()),
@@ -183,7 +184,10 @@ pub fn render(
                     .text_color(rgb(theme::gray_300())),
             )
             .child(
+                // On one line: under `items_center` a text is laid out at its
+                // narrowest, one letter a line, and `w_full` there came out 0.
                 div()
+                    .whitespace_nowrap()
                     .text_sm()
                     .text_color(rgb(theme::muted()))
                     .child("No file selected"),

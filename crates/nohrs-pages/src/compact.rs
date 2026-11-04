@@ -179,8 +179,12 @@ pub fn slider(
     content: impl IntoElement,
 ) -> Div {
     let shown = lead + extent * amount;
+    // A flex column: in a plain block a `size_full` bar (the preview) came
+    // out as wide as its contents.
     let inner = div()
         .absolute()
+        .flex()
+        .flex_col()
         .opacity(0.4 + 0.6 * amount)
         .child(content)
         .when_some(measure, |this, measure| {

@@ -209,6 +209,11 @@ pub(crate) fn render(
                     .w(px(preview_w))
                     .flex_shrink_0()
                     .h_full()
+                    // A flex column, as the listing's is: in a plain block the
+                    // preview's `size_full` came out as wide as its contents
+                    // ("No file selected" wrapped in a 65 px strip).
+                    .flex()
+                    .flex_col()
                     .overflow_hidden()
                     .when(amounts.1 > 0.0, |column| column.border_l_1())
                     .border_color(rgb(theme::border()))

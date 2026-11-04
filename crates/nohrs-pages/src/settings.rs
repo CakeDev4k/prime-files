@@ -66,6 +66,7 @@ const SHORTCUTS: &[(&str, &[(&str, &str)])] = &[
             ("Ctrl+X", "Recortar"),
             ("Ctrl+V", "Colar"),
             ("F2", "Renomear"),
+            ("F5", "Atualizar a pasta"),
             ("Delete", "Mandar para a Lixeira"),
             ("Shift+Delete", "Excluir para sempre"),
             ("Ctrl+Shift+N", "Nova pasta"),

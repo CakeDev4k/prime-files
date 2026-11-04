@@ -163,6 +163,13 @@ pub fn render(
                     cx.stop_propagation();
                     return;
                 }
+                // F5 rereads the folder, as in Explorer. The right-click menu
+                // already showed "Atualizar  F5" with nothing behind the key.
+                "f5" if !with_modifier => {
+                    this.reload(cx);
+                    cx.stop_propagation();
+                    return;
+                }
                 // Rename: F2 everywhere, plus Enter on macOS (§6).
                 "f2" => {
                     if let Some(index) = this.active_row() {

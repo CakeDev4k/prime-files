@@ -148,6 +148,21 @@ pub fn render(
                 .child(bc)
                 .into_any_element(),
         })
+        // Explorer keeps its refresh button at the end of the address bar.
+        .child(
+            ListItem::new("nav-refresh")
+                .flex_shrink_0()
+                .px(px(8.0))
+                .py(px(6.0))
+                .rounded(px(6.0))
+                .on_click(cx.listener(|view, _, _, cx| view.reload(cx)))
+                .child(
+                    Icon::new(Icon::empty())
+                        .path("icons/refresh-cw.svg")
+                        .size_4()
+                        .text_color(rgb(theme::gray_600())),
+                ),
+        )
         .child(
             div()
                 .flex()

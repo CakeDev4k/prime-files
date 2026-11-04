@@ -976,12 +976,15 @@ impl WindowsWindowInner {
             let handled = !result.propagate || result.default_prevented;
             self.state.borrow_mut().callbacks.input = Some(func);
 
-            // NOHRS: a press on a caption always goes on to DefWindowProc,
-            // which is what starts moving the window. Every focusable
-            // element calls `prevent_default` on a mouse down, so with a
-            // focusable view under the drag area (any app's root) the press
-            // counted as handled and the window could never be dragged.
-            if handled && wparam.0 as u32 != HTCAPTION {
+            // NOHRS: a press on a caption or one of the caption buttons always
+            // goes on: to DefWindowProc, which starts moving the window, or to
+            // `nc_button_pressed` below, which the release then acts on. Every
+            // focusable element calls `prevent_default` on a mouse down, so with
+            // a focusable view under them (any app's root) the press counted
+            // as handled and the window could be neither dragged nor
+            // minimized, maximized or closed.
+            let caption = matches!(wparam.0 as u32, HTCAPTION | HTMINBUTTON | HTMAXBUTTON | HTCLOSE);
+            if handled && !caption {
                 return Some(0);
             }
         } else {
@@ -1028,7 +1031,10 @@ impl WindowsWindowInner {
             let handled = !func(input).propagate;
             self.state.borrow_mut().callbacks.input = Some(func);
 
-            if handled {
+            // NOHRS: the release of a caption button is what runs it, so an
+            // element that stops the mouse up must not swallow it either.
+            let button_up = matches!(wparam.0 as u32, HTMINBUTTON | HTMAXBUTTON | HTCLOSE);
+            if handled && !button_up {
                 return Some(0);
             }
         } else {

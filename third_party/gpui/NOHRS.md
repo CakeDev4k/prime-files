@@ -22,5 +22,13 @@ with `track_focus` calls `prevent_default` on one; the result counted as
 handled and the message was swallowed, so a window whose root tracks focus
 (Nohrs's does) could not be moved by its title bar at all (04/11/2026).
 
-When gpui is upgraded: check whether a caption press still returns `Some(0)`
-when the dispatch was "handled" (the line is marked `NOHRS`).
+The same goes for the caption buttons (`HTMINBUTTON`, `HTMAXBUTTON`,
+`HTCLOSE`), on the press and on the release: the press records the button in
+`nc_button_pressed`, the release acts on it, and a "handled" dispatch skipped
+both, so minimize, maximize and close did nothing whenever the root under them
+saw the press (seen 04/11/2026; it only worked where an element that occludes
+hid the root from the pointer).
+
+When gpui is upgraded: check whether a caption or caption-button press, or a
+caption-button release, still returns `Some(0)` when the dispatch was
+"handled" (the lines are marked `NOHRS`).

@@ -1019,9 +1019,9 @@ async fn new_tab_appends_and_activates(cx: &mut TestAppContext) {
             assert_eq!(page.tab_count(0), 2, "a new tab is appended");
             assert_eq!(page.active_tab(0), 1, "the new tab becomes active");
             // A new tab defaults to home (§4).
-            if let Ok(home) = std::env::var("HOME") {
-                assert_eq!(page.tab_cwd(0, 1, cx).as_deref(), Some(home.as_str()));
-            }
+            let home = super::page::home_dir();
+            assert_eq!(page.tab_cwd(0, 1, cx).as_deref(), Some(home.as_str()));
+            assert!(std::path::Path::new(&home).is_dir(), "home is a real folder");
 
             // Switching back to the first tab makes it active again.
             page.test_activate_tab(0, 0, window, cx);

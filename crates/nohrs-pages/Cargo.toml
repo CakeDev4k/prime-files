@@ -32,6 +32,8 @@ tracing.workspace    = true
 # `local-offset`: "Today" and "Yesterday" in Group by are local days.
 time = { workspace = true, features = ["local-offset"] }
 notify = "8"
+# The profile folder for a new tab: Windows has no `HOME`.
+dirs = "6"
 # Hands a finished thumbnail from a worker thread back to the pane's task.
 async-channel = "2"
 # Reads the Explorer window's HWND for the IPC endpoint; the version gpui uses.

@@ -164,17 +164,16 @@ pub fn rebind_shortcuts(cx: &mut App) {
     *bound = wanted.into_iter().map(|(keys, _)| keys).collect();
 }
 
-/// Home directory used as the root of a freshly opened tab (§4). Mirrors the
-/// sidebar's `HOME` lookup; falls back to the current directory.
-fn home_dir() -> String {
-    std::env::var("HOME")
-        .ok()
-        .or_else(|| {
-            std::env::current_dir()
-                .ok()
-                .map(|path| path.to_string_lossy().into_owned())
-        })
-        .unwrap_or_else(|| ".".into())
+/// Home directory used as the root of a freshly opened tab (§4).
+///
+/// Windows has no `HOME`, so reading it fell through to the process's current
+/// directory: a new tab opened wherever the app was launched from (the repo
+/// folder, under `cargo run`). `dirs` asks the Shell for the profile folder.
+/// The current directory is no longer a fallback, for the same reason.
+pub(crate) fn home_dir() -> String {
+    dirs::home_dir()
+        .map(|path| path.to_string_lossy().into_owned())
+        .unwrap_or_else(|| "C:\\".into())
 }
 
 /// Clamp `index` into `0..len` (or `0` when `len` is zero), for restoring a

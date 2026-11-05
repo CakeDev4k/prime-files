@@ -1,8 +1,23 @@
-## Prime Files 0.3.2
+## Prime Files 0.3.3
 
 Explorador de arquivos para Windows, rápido, escrito em Rust.
 
 ### Novidades
+
+- **Fotos nítidas no visualizador**: a imagem agora é lida do próprio arquivo, no tamanho do painel e na orientação em que a foto foi tirada. Antes vinha da miniatura guardada pelo Windows, que deixava fotos nítidas borradas e em blocos.
+- **Painéis em qualquer lado**: a barra lateral, o visualizador e o terminal podem ficar à esquerda, à direita, em cima ou embaixo da lista (Configurações › Geral › Layout). Arraste a borda para mudar o tamanho; puxada até o fim, ela esconde o painel, e a borda de um painel escondido o traz de volta.
+- **Escolher o que abre na borda**: puxe qualquer borda livre da lista e aparece uma bolha para cada coisa que pode abrir ali (nova divisão, barra lateral, visualizador, terminal). Deslize ao longo da borda para escolher e solte; Esc cancela.
+- **Abas verticais** (opcional), numa coluna que vira só ícones quando fica estreita.
+- **Tags**: marque arquivos e pastas pelo menu do botão direito (Tags). As tags aparecem na barra lateral, e um clique lista tudo que tem aquela tag; renomear, mudar a cor e excluir pelo botão direito.
+- **Rede dentro do Prime Files**: Rede mostra os computadores, as unidades mapeadas e os locais adicionados; `\\servidor` lista os compartilhamentos, e um compartilhamento que pede login abre a janela de credenciais do Windows. "Adicionar local de rede" aceita caminhos `\\servidor\pasta`, `smb://` e WebDAV.
+- **Mais formatos no visualizador**: Word, OpenDocument e RTF formatados; .doc, .ppt e .xls pelo leitor do próprio Windows; Photoshop (PSD/PSB); Illustrator; miniatura do Affinity; resumo de projetos do Premiere e do After Effects, com a mídia que está faltando; SVG.
+- **Editar Markdown**: arquivos `.md` podem ser editados no visualizador e salvos com Ctrl+S.
+
+### Correções da 0.3.3
+
+- No visualizador de PDF, sobrava um vão enorme entre as páginas. Agora cada página ocupa só a própria altura.
+
+### Novidades da 0.3.2
 
 - **Tela de boas-vindas**: no primeiro uso (e quando você quiser, em Configurações › Sobre), quatro passos para escolher idioma e tema, deixar o Prime Files como explorador padrão, iniciar com o Windows e ligar as integrações.
 - **Arquivo em destaque**: quando outro programa pede para mostrar um arquivo (Premiere em "Revelar no Explorador", o navegador em "Mostrar na pasta" depois de baixar, o menu Iniciar em "Abrir local do arquivo"), a pasta abre no Prime Files com o arquivo selecionado e piscando na cor de destaque.
@@ -62,7 +77,7 @@ Quem tem a 0.2.0 ou mais nova recebe esta sozinho. Quem tem a 0.1.0 precisa inst
 
 ### Instalar
 
-Baixe **PrimeFiles-Setup-0.3.2.exe** abaixo e execute. A instalação é só para o seu usuário e não pede administrador. O instalador baixa o que faltar:
+Baixe **PrimeFiles-Setup-0.3.3.exe** abaixo e execute. A instalação é só para o seu usuário e não pede administrador. O instalador baixa o que faltar:
 
 - o **Visual C++ Runtime** da Microsoft, se o computador não tiver;
 - o **7-Zip**, se você marcar a opção (para ver .rar, .7z e .iso no visualizador);

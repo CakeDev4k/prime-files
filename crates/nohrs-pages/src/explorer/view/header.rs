@@ -20,7 +20,7 @@ pub fn render(
 ) -> impl IntoElement + use<> {
     // This PC is an address, not a path: one crumb with its name. Under a
     // drive, a crumb for it comes first, as in Explorer, leading back to it.
-    let location = page.location_name();
+    let location = page.location_name(cx);
     let parts = if location.is_some() { Vec::new() } else { path_parts(&page.cwd) };
     let under_this_pc = location.is_none() && starts_with_drive(&page.cwd);
     let this_pc_name = page
@@ -38,12 +38,27 @@ pub fn render(
     };
 
     let mut bc = Breadcrumb::new();
+    // On a share, Network and the server come first, as in Explorer, each
+    // leading back to its list.
+    let unc_server = crate::explorer::network::server_of(&page.cwd).map(str::to_string);
+    if unc_server.is_some() {
+        bc = bc.child(
+            BreadcrumbItem::new(i18n::tr(crate::explorer::network::NETWORK_NAME).to_string()).on_click(cx.listener(
+                |this, _, window, cx| this.change_dir(crate::explorer::network::NETWORK.to_string(), window, cx),
+            )),
+        );
+    }
     if let Some(name) = location {
         bc = bc.child(BreadcrumbItem::new(name));
     } else if under_this_pc {
         bc = bc.child(BreadcrumbItem::new(this_pc_name).on_click(cx.listener(|this, _, window, cx| {
             this.change_dir(crate::explorer::places::THIS_PC.to_string(), window, cx)
         })));
+    } else if let Some(server) = unc_server.clone() {
+        let address = format!("\\\\{server}");
+        bc = bc.child(
+            BreadcrumbItem::new(server).on_click(cx.listener(move |this, _, window, cx| this.change_dir(address.clone(), window, cx))),
+        );
     }
 
     if is_truncated {
@@ -56,6 +71,9 @@ pub fn render(
         let actual_i = start_idx + display_i;
         let text = if p.is_empty() {
             String::from("/")
+        } else if actual_i == 0 && unc_server.is_some() {
+            // `\\nas\edicao\`: the server has its crumb already.
+            p.trim_end_matches('\\').rsplit('\\').next().unwrap_or(p).to_string()
         } else {
             p.clone()
         };

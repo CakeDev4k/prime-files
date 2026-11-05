@@ -53,10 +53,14 @@ enum Command {
     OpenPowerShell,
     OpenWindowsTerminal,
     OpenFileExplorer,
+    NewTag,
+    RenameTag,
+    DeleteTag,
+    RemoveNetworkPlace,
 }
 
 impl Command {
-    const ALL: [Command; 36] = [
+    const ALL: [Command; 40] = [
         Command::ViewList,
         Command::ViewGrid,
         Command::ViewTree,
@@ -93,6 +97,10 @@ impl Command {
         Command::OpenPowerShell,
         Command::OpenWindowsTerminal,
         Command::OpenFileExplorer,
+        Command::NewTag,
+        Command::RenameTag,
+        Command::DeleteTag,
+        Command::RemoveNetworkPlace,
     ];
 
     fn from_id(id: u32) -> Option<Self> {
@@ -150,6 +158,10 @@ pub(crate) enum MenuPurpose {
     Columns(Option<usize>),
     /// The funnel's kinds.
     Filter,
+    /// A tag in the sidebar.
+    Tag(u32),
+    /// A network place added by hand.
+    NetworkPlace(String),
 }
 
 /// A menu on screen: what it shows, where, and what runs its entries.
@@ -165,6 +177,12 @@ pub(crate) struct OpenMenu {
 
 // The filter menu's ids, past the commands' range.
 const FIRST_KIND: u32 = 0x800;
+// A tag's tick in a file's Tags submenu: this plus the tag's id, for the
+// first TAG_IDS tags (the Shell's own entries start at 0x1000).
+const FIRST_TAG: u32 = 0x900;
+const TAG_IDS: u32 = 0x400;
+// A colour in a tag's menu: this plus its place in `tags::COLORS`.
+const FIRST_TAG_COLOR: u32 = 0x8F0;
 
 const SHELL_HIDDEN_FOR_ITEMS: &[&str] = &["paste", "cut", "copy", "rename", "delete"];
 
@@ -221,6 +239,20 @@ impl ExplorerPane {
                 entries.push(more);
                 entries
             }
+            MenuPurpose::Listing { target: Target::Items(paths), .. } => {
+                // Ticked when every selected item has it; a click puts it on
+                // all of them, or takes it off all of them.
+                let mut tags: Vec<Entry> = super::tags::Tags::all(cx)
+                    .into_iter()
+                    .filter(|tag| tag.id < TAG_IDS)
+                    .map(|tag| {
+                        Entry::check(FIRST_TAG + tag.id, &tag.name, super::tags::Tags::all_have(paths, tag.id, cx))
+                    })
+                    .collect();
+                tags.push(Entry::Separator);
+                tags.push(Entry::command(Command::NewTag as u32, t!("Nova tag…")).with_icon("icons/plus.svg"));
+                vec![Entry::submenu(t!("Tags"), tags).with_icon("icons/tag.svg"), Entry::Separator, more]
+            }
             _ => vec![more],
         }
     }
@@ -261,7 +293,7 @@ impl ExplorerPane {
                         &[][..],
                         false,
                     ),
-                    MenuPurpose::Columns(_) | MenuPurpose::Filter => {
+                    MenuPurpose::Columns(_) | MenuPurpose::Filter | MenuPurpose::Tag(_) | MenuPurpose::NetworkPlace(_) => {
                         (Target::None, true, false, Vec::new(), &[][..], false)
                     }
                 };
@@ -375,6 +407,39 @@ impl ExplorerPane {
                 }
                 cx.notify();
             }
+            MenuPurpose::Tag(tag) => {
+                if let Choice::Own(id) = choice {
+                    match Command::from_id(id) {
+                        Some(Command::RenameTag) => {
+                            let name = super::tags::Tags::get(tag, cx).map(|tag| tag.name).unwrap_or_default();
+                            self.begin_sidebar_input(super::places::SidebarInputPurpose::RenameTag(tag), name, window, cx);
+                        }
+                        Some(Command::DeleteTag) => {
+                            super::tags::Tags::delete(tag, cx);
+                            if super::tags::tag_of_location(&self.cwd) == Some(tag) {
+                                self.go_back(window, cx);
+                            }
+                        }
+                        _ => {
+                            if let Some((color, _)) = id
+                                .checked_sub(FIRST_TAG_COLOR)
+                                .and_then(|index| super::tags::COLORS.get(index as usize))
+                            {
+                                super::tags::Tags::recolor(tag, *color, cx);
+                            }
+                        }
+                    }
+                }
+                cx.notify();
+            }
+            MenuPurpose::NetworkPlace(address) => {
+                if let Choice::Own(id) = choice
+                    && Command::from_id(id) == Some(Command::RemoveNetworkPlace)
+                {
+                    super::network::NetworkPlaces::remove(&address, cx);
+                }
+                cx.notify();
+            }
             MenuPurpose::Filter => {
                 use super::filter::KindFilter;
                 if let Choice::Own(id) = choice
@@ -434,6 +499,39 @@ impl ExplorerPane {
             return;
         };
         self.show_menu(MenuPurpose::Place(place), Vec::new(), hwnd, window, cx);
+    }
+
+    /// A tag's menu in the sidebar: rename, colour, delete.
+    pub(crate) fn open_tag_menu(&mut self, tag: u32, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(hwnd) = crate::ipc::window_hwnd(window) else {
+            return;
+        };
+        let current = super::tags::Tags::get(tag, cx).map(|tag| tag.color);
+        let colors = super::tags::COLORS
+            .iter()
+            .enumerate()
+            .map(|(index, (color, name))| {
+                Entry::radio(FIRST_TAG_COLOR + index as u32, nohrs_core::i18n::tr(name), current == Some(*color))
+            })
+            .collect();
+        let own = vec![
+            Entry::command(Command::RenameTag as u32, t!("Renomear")).with_icon("icons/pencil.svg"),
+            Entry::submenu(t!("Cor"), colors).with_icon("icons/palette-2.svg"),
+            Entry::Separator,
+            Entry::command(Command::DeleteTag as u32, t!("Excluir tag")).with_icon("icons/trash-2.svg"),
+        ];
+        self.show_menu(MenuPurpose::Tag(tag), own, hwnd, window, cx);
+    }
+
+    /// A network place's menu in the sidebar.
+    pub(crate) fn open_network_place_menu(&mut self, address: String, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(hwnd) = crate::ipc::window_hwnd(window) else {
+            return;
+        };
+        let own = vec![
+            Entry::command(Command::RemoveNetworkPlace as u32, t!("Remover dos locais de rede")).with_icon("icons/trash-2.svg"),
+        ];
+        self.show_menu(MenuPurpose::NetworkPlace(address), own, hwnd, window, cx);
     }
 
     /// The column header's menu, as Explorer's: fit one column or all, and
@@ -622,6 +720,10 @@ impl ExplorerPane {
             Choice::Own(id) => {
                 if let Some(command) = Command::from_id(id) {
                     self.run_command(command, window, cx);
+                } else if (FIRST_TAG..FIRST_TAG + TAG_IDS).contains(&id) {
+                    let tag = id - FIRST_TAG;
+                    let paths = self.selected_paths();
+                    super::tags::Tags::toggle(&paths, tag, cx);
                 }
             }
             Choice::Verb(verb) => match verb.as_str() {
@@ -690,12 +792,23 @@ impl ExplorerPane {
                     self.begin_rename(row, window, cx);
                 }
             }
+            Command::NewTag => {
+                // Made, put on the selection, and named in the sidebar.
+                let paths = self.selected_paths();
+                let name = t!("Nova tag").to_string();
+                let id = super::tags::Tags::create(name.clone(), &paths, cx);
+                self.sidebar_visible = true;
+                self.begin_sidebar_input(super::places::SidebarInputPurpose::RenameTag(id), name, window, cx);
+            }
             Command::FitColumn
             | Command::FitAllColumns
             | Command::ColumnName
             | Command::ColumnType
             | Command::ColumnSize
             | Command::ColumnModified
+            | Command::RenameTag
+            | Command::DeleteTag
+            | Command::RemoveNetworkPlace
             | Command::MoreOptions => {}
             Command::OpenCommandPrompt => self.open_in(OpenIn::CommandPrompt, cx),
             Command::OpenPowerShell => self.open_in(OpenIn::PowerShell, cx),

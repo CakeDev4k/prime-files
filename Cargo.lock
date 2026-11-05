@@ -4494,6 +4494,7 @@ dependencies = [
  "anyhow",
  "async-channel 2.5.0",
  "fbxcel",
+ "flate2",
  "gltf",
  "gpui",
  "gpui-component",

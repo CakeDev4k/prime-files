@@ -55,6 +55,8 @@ pub struct Config {
     pub explorer: Explorer,
     /// Compact mode: the tab row hidden until the pointer reaches it.
     pub compact: Compact,
+    /// Where the sidebar, preview and terminal dock, and the tabs' layout.
+    pub layout: Layout,
     /// Automatic updates from the project's releases.
     pub updates: Updates,
     /// Keybinding overrides (draft; full support in P3). Empty means the
@@ -80,6 +82,7 @@ impl Default for Config {
             ui: Ui::default(),
             explorer: Explorer::default(),
             compact: Compact::default(),
+            layout: Layout::default(),
             updates: Updates::default(),
             keybindings: Keybindings::default(),
             plugins: Plugins::default(),
@@ -244,6 +247,77 @@ impl Default for Compact {
             edge_px: 8,
             frame_px: 8,
         }
+    }
+}
+
+/// Where the window's panels sit and how the tabs are laid out. Each panel
+/// docks to one side of what it accompanies: the sidebar and the preview to a
+/// side of the listing, the terminal to a side of the panes.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(default)]
+pub struct Layout {
+    /// The side the sidebar with the places docks to.
+    pub sidebar: DockSide,
+    /// The side the preview docks to.
+    pub preview: DockSide,
+    /// The side the terminal docks to.
+    pub terminal: DockSide,
+    /// Tabs in a column down the left of the window, as in Zen Browser,
+    /// instead of a row along the top.
+    pub vertical_tabs: bool,
+}
+
+impl Default for Layout {
+    fn default() -> Self {
+        Self {
+            sidebar: DockSide::Left,
+            preview: DockSide::Right,
+            terminal: DockSide::Bottom,
+            vertical_tabs: false,
+        }
+    }
+}
+
+/// A side of the area a panel docks to.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "lowercase")]
+pub enum DockSide {
+    /// A column on the left.
+    Left,
+    /// A column on the right.
+    Right,
+    /// A band along the top.
+    Top,
+    /// A band along the bottom.
+    Bottom,
+}
+
+impl DockSide {
+    /// Parse the `config.toml` spelling (`left`/`right`/`top`/`bottom`).
+    pub fn parse(value: &str) -> Option<Self> {
+        match value {
+            "left" => Some(Self::Left),
+            "right" => Some(Self::Right),
+            "top" => Some(Self::Top),
+            "bottom" => Some(Self::Bottom),
+            _ => None,
+        }
+    }
+
+    /// The `config.toml` spelling.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Left => "left",
+            Self::Right => "right",
+            Self::Top => "top",
+            Self::Bottom => "bottom",
+        }
+    }
+
+    /// Whether a panel on this side is a column (left or right), sized by
+    /// its width, rather than a band sized by its height.
+    pub fn is_column(self) -> bool {
+        matches!(self, Self::Left | Self::Right)
     }
 }
 
@@ -675,6 +749,12 @@ impl Config {
                 None => diagnostics.push(Diagnostic::warn("[compact] is not a table; ignoring")),
             }
         }
+        if let Some(value) = table.get("layout") {
+            match value.as_table() {
+                Some(layout) => read_layout(layout, &mut config.layout, &mut diagnostics),
+                None => diagnostics.push(Diagnostic::warn("[layout] is not a table; ignoring")),
+            }
+        }
         if let Some(value) = table.get("keybindings") {
             match value.as_table() {
                 Some(keys) => read_keybindings(keys, &mut config.keybindings, &mut diagnostics),
@@ -724,6 +804,7 @@ impl Config {
                 "ui",
                 "explorer",
                 "compact",
+                "layout",
                 "updates",
                 "keybindings",
                 "plugins",
@@ -1085,6 +1166,34 @@ fn read_compact(table: &toml::Table, compact: &mut Compact, diagnostics: &mut Ve
         "compact.",
         diagnostics,
     );
+}
+
+fn read_layout(table: &toml::Table, layout: &mut Layout, diagnostics: &mut Vec<Diagnostic>) {
+    for (key, slot) in [
+        ("sidebar", &mut layout.sidebar),
+        ("preview", &mut layout.preview),
+        ("terminal", &mut layout.terminal),
+    ] {
+        if let Some(value) = table.get(key) {
+            match value.as_str().and_then(DockSide::parse) {
+                Some(side) => *slot = side,
+                None => diagnostics.push(Diagnostic::warn(format!(
+                    "invalid layout.{key} {value}; using {:?}",
+                    slot
+                ))),
+            }
+        }
+    }
+    if let Some(value) = table.get("vertical_tabs") {
+        match value.as_bool() {
+            Some(flag) => layout.vertical_tabs = flag,
+            None => diagnostics.push(Diagnostic::warn(format!(
+                "invalid layout.vertical_tabs {value}; using {}",
+                layout.vertical_tabs
+            ))),
+        }
+    }
+    warn_unknown_keys(table, &["sidebar", "preview", "terminal", "vertical_tabs"], "layout.", diagnostics);
 }
 
 fn read_keybindings(

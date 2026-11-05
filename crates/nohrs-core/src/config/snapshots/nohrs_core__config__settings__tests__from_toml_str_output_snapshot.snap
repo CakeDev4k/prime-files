@@ -43,6 +43,12 @@ expression: parsed
             edge_px: 8,
             frame_px: 8,
         },
+        layout: Layout {
+            sidebar: Left,
+            preview: Right,
+            terminal: Bottom,
+            vertical_tabs: false,
+        },
         updates: Updates {
             automatic: true,
         },

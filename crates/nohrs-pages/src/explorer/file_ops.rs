@@ -1136,6 +1136,8 @@ impl ExplorerPane {
                         *held = Some(new.clone());
                     }
                 }
+                // Its tags go with it.
+                super::tags::Tags::moved(&old, &new, cx);
                 self.reload(cx);
                 self.set_status(StatusLevel::Info, tf!("Renomeado para {name}", name = final_name));
             }

@@ -20,6 +20,8 @@ pub mod listary;
 pub mod locale;
 /// A reusable 2-way split/tab container shared across pages.
 pub mod compact;
+/// Panels docked to any side: the shared gestures and drawing.
+pub(crate) mod dock;
 pub mod pane_group;
 /// Automatic updates from the project's GitHub releases.
 pub mod updater;

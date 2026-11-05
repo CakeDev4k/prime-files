@@ -53,8 +53,14 @@ struct RefreshExtras {
 /// This PC from a drive's root. `None` at This PC itself and at a root with
 /// nothing above it (a network share).
 pub(crate) fn parent_location(path: &str) -> Option<String> {
-    if path.eq_ignore_ascii_case(super::places::THIS_PC) {
+    if path.eq_ignore_ascii_case(super::places::THIS_PC) || super::tags::tag_of_location(path).is_some() {
         return None;
+    }
+    if path.eq_ignore_ascii_case(super::network::NETWORK) {
+        return None;
+    }
+    if let Some(parent) = super::network::parent_location(path) {
+        return Some(parent);
     }
     let bytes = path.trim_end_matches(['\\', '/']).as_bytes();
     if bytes.len() == 2 && bytes[0].is_ascii_alphabetic() && bytes[1] == b':' {
@@ -68,6 +74,16 @@ fn read_folder(path: &str) -> Listing {
     if path.eq_ignore_ascii_case(super::places::THIS_PC) {
         return Ok(super::places::this_pc_entries());
     }
+    // A tag's items, wherever each is.
+    if let Some(id) = super::tags::tag_of_location(path) {
+        return Ok(super::tags::read_items(id));
+    }
+    // The Network place and a server's shares are no folders either.
+    if let Some(rows) = super::network::read_location(path) {
+        return rows;
+    }
+    // A share that wants a login gets the credential window first.
+    super::network::log_in_if_asked(path);
     list_dir_sync(ListParams {
         path,
         limit: config::DIR_LISTING_LIMIT,
@@ -295,6 +311,11 @@ impl ExplorerPane {
                     self.preview_image_path = None;
                     self.preview_markdown = None;
                     self.preview_message = None;
+                    self.preview_picture = None;
+                    self.preview_caption = None;
+                    self.preview_editing = false;
+                    self.preview_dirty = false;
+                    self.preview_editor_changes = None;
                     // Its file belonged to the folder left behind.
                     self.quick_look = false;
                 }

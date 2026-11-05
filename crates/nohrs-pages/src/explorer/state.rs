@@ -181,6 +181,22 @@ pub struct ExplorerPane {
     pub preview_markdown: Option<gpui::SharedString>,
     /// Message shown in the preview pane when a file cannot be previewed.
     pub preview_message: Option<String>,
+    /// A picture the preview decoded itself (a Photoshop file, an Affinity
+    /// or Illustrator thumbnail), drawn like an image.
+    pub(crate) preview_picture: Option<std::sync::Arc<gpui::RenderImage>>,
+    /// A line about what the preview shows (a picture's size), in its header.
+    pub(crate) preview_caption: Option<String>,
+    /// Whether a Markdown file is shown as its source, to be edited.
+    pub(crate) preview_editing: bool,
+    /// Whether the text in the preview's editor differs from the file's.
+    pub(crate) preview_dirty: bool,
+    /// Whether the editor's text is the file as written, so saving it
+    /// writes only what was typed (a re-indented JSON is not).
+    pub(crate) preview_saveable: bool,
+    /// Whether the file's lines end in CRLF, which saving keeps.
+    pub(crate) preview_crlf: bool,
+    /// Watches the editor's changes, to know when there is something to save.
+    pub(crate) preview_editor_changes: Option<gpui::Subscription>,
     /// A folder's contents or a zip's entries, shown as a list in the preview.
     pub(crate) preview_listing: Option<std::rc::Rc<super::preview_listing::PreviewListing>>,
     /// The PDF in the preview, its pages arriving as they render.
@@ -202,10 +218,13 @@ pub struct ExplorerPane {
     /// The read of the file being previewed and the step that shows it.
     /// Replacing it drops the read of a file nobody is looking at any more.
     pub(crate) preview_load: Option<gpui::Task<()>>,
-    /// A drag of the divider beside the sidebar or the preview.
-    pub(crate) divider_drag: Option<super::view::panels::DividerDrag>,
-    /// Width of the sidebar, listing and preview together, measured at paint.
-    pub(crate) columns_width: std::rc::Rc<std::cell::Cell<f32>>,
+    /// A drag of a docked panel's edge or grip, or of an edge that splits.
+    pub(crate) dock_drag: Option<super::view::panels::DockDrag>,
+    /// The area the listing and its docked panels share, measured at paint.
+    pub(crate) columns_bounds: std::rc::Rc<std::cell::Cell<gpui::Bounds<gpui::Pixels>>>,
+    /// Whether the window has room for another pane, so a free edge of the
+    /// listing drags one out. Set by the pane group on every render.
+    pub(crate) split_available: bool,
     /// The 3D model in the preview, turned by dragging.
     pub(crate) preview_model: Option<super::model3d::ModelPreview>,
     /// What the preview showed before an item of a folder listing was
@@ -392,14 +411,18 @@ impl Focusable for ExplorerPane {
 impl EventEmitter<PaneEvent> for ExplorerPane {}
 
 impl crate::pane_group::PaneItem for ExplorerPane {
-    fn tab_title(&self, _cx: &gpui::App) -> String {
-        if let Some(name) = self.location_name() {
+    fn tab_title(&self, cx: &gpui::App) -> String {
+        if let Some(name) = self.location_name(cx) {
             return name;
         }
         std::path::Path::new(&self.cwd)
             .file_name()
             .map(|name| name.to_string_lossy().to_string())
             .unwrap_or_else(|| self.cwd.clone())
+    }
+
+    fn set_split_available(&mut self, available: bool) {
+        self.split_available = available;
     }
 
     fn attach_compact(
@@ -526,6 +549,13 @@ impl ExplorerPane {
             preview_image_path: None,
             preview_markdown: None,
             preview_message: None,
+            preview_picture: None,
+            preview_caption: None,
+            preview_editing: false,
+            preview_dirty: false,
+            preview_saveable: false,
+            preview_crlf: false,
+            preview_editor_changes: None,
             preview_listing: None,
             preview_pdf: None,
             preview_media: None,
@@ -534,8 +564,9 @@ impl ExplorerPane {
             preview_follow: None,
             preview_follow_delay: super::preview::PREVIEW_FOLLOW_DELAY,
             preview_load: None,
-            divider_drag: None,
-            columns_width: Default::default(),
+            dock_drag: None,
+            columns_bounds: Default::default(),
+            split_available: false,
             preview_model: None,
             preview_back: Vec::new(),
             preview_zoom: 1.0,

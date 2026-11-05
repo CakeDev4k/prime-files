@@ -67,6 +67,12 @@ pub fn subfolders(path: &str, show_hidden: bool) -> Vec<Place> {
     folders
 }
 
+/// The computers network discovery finds, as the Network folder lists them.
+/// Slow (discovery may take seconds), so it runs off the UI thread.
+pub fn network_children() -> Vec<Place> {
+    platform::network_children()
+}
+
 /// Opens a place that has no folder on disk (Recycle Bin, Network) in
 /// Explorer, the only program that can show it.
 pub fn open_in_explorer(parsing_name: &str) {
@@ -123,6 +129,26 @@ pub struct SidebarState {
     /// The sidebar's icons. Its own cache: the listing's is emptied on every
     /// change of folder, and these stay the same.
     pub icons: Thumbnails,
+    /// A field open in the sidebar: a network address being added, or a
+    /// tag being named.
+    pub input: Option<SidebarInput>,
+}
+
+/// What a field open in the sidebar is for.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SidebarInputPurpose {
+    /// A network address to add to the places (`\\nas\edicao`, `smb://…`).
+    NetworkPlace,
+    /// A new name for tag `id`.
+    RenameTag(u32),
+}
+
+/// A field open in the sidebar.
+pub struct SidebarInput {
+    pub purpose: SidebarInputPurpose,
+    pub input: gpui::Entity<gpui_component::input::InputState>,
+    // Drives Enter and Blur while the field is open; dropped with it.
+    _subscription: gpui::Subscription,
 }
 
 impl Default for SidebarState {
@@ -134,6 +160,7 @@ impl Default for SidebarState {
             expanded: HashSet::from([THIS_PC.to_string()]),
             children: HashMap::new(),
             icons: Thumbnails::default(),
+            input: None,
         }
     }
 }
@@ -203,13 +230,106 @@ impl ExplorerPane {
             None if place.parsing_name.eq_ignore_ascii_case(THIS_PC) => {
                 self.change_dir(THIS_PC.to_string(), window, cx)
             }
+            // Network opens here too: its computers, mapped drives and the
+            // places added by hand (`network.rs`). Until 05/11/2026 it opened
+            // Explorer, and shares were out of reach.
+            None if place.parsing_name.eq_ignore_ascii_case(super::network::NETWORK) => {
+                self.change_dir(super::network::NETWORK.to_string(), window, cx)
+            }
+            // A server or a share found on the network.
+            None if super::network::is_unc(&place.parsing_name) => {
+                self.change_dir(place.parsing_name.clone(), window, cx)
+            }
             None => open_in_explorer(&place.parsing_name),
         }
     }
 
+    /// Opens a field in the sidebar for `purpose`, holding `text` selected.
+    pub(crate) fn begin_sidebar_input(
+        &mut self,
+        purpose: SidebarInputPurpose,
+        text: String,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        use gpui::EntityInputHandler as _;
+        use gpui_component::input::{InputEvent, InputState};
+        let input = cx.new(|cx| {
+            let state = InputState::new(window, cx);
+            match purpose {
+                SidebarInputPurpose::NetworkPlace => state.placeholder(nohrs_core::t!("\\\\servidor\\pasta ou smb://servidor/pasta")),
+                SidebarInputPurpose::RenameTag(_) => state,
+            }
+        });
+        input.update(cx, |state, cx| {
+            let length = text.encode_utf16().count();
+            state.replace_and_mark_text_in_range(Some(0..0), &text, Some(0..length), window, cx);
+            state.unmark_text(window, cx);
+            state.focus(window, cx);
+        });
+        let subscription = cx.subscribe_in(&input, window, |this, _input, event: &InputEvent, window, cx| match event {
+            InputEvent::PressEnter { .. } => this.commit_sidebar_input(window, cx),
+            InputEvent::Blur => this.cancel_sidebar_input(window, cx),
+            _ => {}
+        });
+        self.sidebar.input = Some(SidebarInput { purpose, input, _subscription: subscription });
+        cx.notify();
+    }
+
+    pub(crate) fn cancel_sidebar_input(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.sidebar.input.take().is_some() {
+            cx.focus_self(window);
+            cx.notify();
+        }
+    }
+
+    // Enter in the sidebar's field: adds the network place and opens it, or
+    // renames the tag.
+    fn commit_sidebar_input(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(field) = self.sidebar.input.take() else {
+            return;
+        };
+        let text = field.input.read(cx).value().to_string();
+        cx.focus_self(window);
+        match field.purpose {
+            SidebarInputPurpose::NetworkPlace => {
+                if text.trim().is_empty() {
+                    cx.notify();
+                    return;
+                }
+                match super::network::NetworkPlaces::add(&text, cx) {
+                    Some(address) => self.change_dir(address, window, cx),
+                    None => {
+                        self.set_status(
+                            super::types::StatusLevel::Error,
+                            nohrs_core::tf!("Não é um endereço de rede: {address}", address = text.trim()),
+                        );
+                    }
+                }
+            }
+            SidebarInputPurpose::RenameTag(id) => super::tags::Tags::rename(id, text, cx),
+        }
+        cx.notify();
+    }
+
     /// The name of where the pane is, when the address is not a folder's
-    /// path: This PC's localized name.
-    pub(crate) fn location_name(&self) -> Option<String> {
+    /// path: This PC's localized name, Network's, a server's or a tag's.
+    pub(crate) fn location_name(&self, cx: &gpui::App) -> Option<String> {
+        if self.cwd.eq_ignore_ascii_case(super::network::NETWORK) {
+            let shell_name = self
+                .sidebar
+                .places
+                .as_ref()
+                .and_then(|places| places.other.iter().find(|place| place.parsing_name.eq_ignore_ascii_case(super::network::NETWORK)))
+                .map(|place| place.name.clone());
+            return Some(shell_name.unwrap_or_else(|| nohrs_core::i18n::tr(super::network::NETWORK_NAME).to_string()));
+        }
+        if super::network::is_server(&self.cwd) {
+            return super::network::server_of(&self.cwd).map(str::to_string);
+        }
+        if let Some(id) = super::tags::tag_of_location(&self.cwd) {
+            return Some(super::tags::Tags::get(id, cx).map(|tag| tag.name).unwrap_or_else(|| self.cwd.clone()));
+        }
         if !self.cwd.eq_ignore_ascii_case(THIS_PC) {
             return None;
         }
@@ -275,6 +395,13 @@ mod platform {
             tracing::debug!("CoInitializeEx: {error}");
         }
         children(THIS_PC).into_iter().filter_map(|item| place(&item)).collect()
+    }
+
+    pub fn network_children() -> Vec<Place> {
+        if let Err(error) = unsafe { CoInitializeEx(None, COINIT_APARTMENTTHREADED) }.ok() {
+            tracing::debug!("CoInitializeEx: {error}");
+        }
+        children(NETWORK).into_iter().filter_map(|item| place(&item)).collect()
     }
 
     fn item(parsing_name: &str) -> Option<IShellItem> {
@@ -346,6 +473,10 @@ mod platform {
     }
 
     pub fn this_pc() -> Vec<Place> {
+        Vec::new()
+    }
+
+    pub fn network_children() -> Vec<Place> {
         Vec::new()
     }
 

@@ -19,7 +19,7 @@ use gpui::{
 };
 use gpui_component::input::{Input, InputState};
 use gpui_component::{Icon, Sizable as _};
-use nohrs_core::config::{self, Config, SortOrder, SplitDirection, ThemeMode};
+use nohrs_core::config::{self, Config, DockSide, SortOrder, SplitDirection, ThemeMode};
 use nohrs_core::i18n::{self, Lang, tr};
 use nohrs_core::telemetry::LogErr;
 use nohrs_core::shortcuts::{self, Action, Chord};
@@ -586,6 +586,7 @@ impl SettingsPage {
 
     fn general(&self, cx: &mut Context<Self>) -> Vec<Group> {
         let explorer = &self.config.explorer;
+        let layout = &self.config.layout;
         vec![
             Group::new(vec![self.language_row(cx)]),
             Group::titled(
@@ -619,7 +620,64 @@ impl SettingsPage {
                     .reset(("explorer", "synced_panes"), !explorer.synced_panes, "false"),
                 ],
             ),
+            Group::titled(
+                t!("Layout"),
+                vec![
+                    self.dock_row("sidebar", "dock-sidebar", t!("Barra lateral"), layout.sidebar, DockSide::Left, cx),
+                    self.dock_row("preview", "dock-preview", t!("Visualizador"), layout.preview, DockSide::Right, cx),
+                    self.dock_row("terminal", "dock-terminal", t!("Terminal"), layout.terminal, DockSide::Bottom, cx),
+                    Row::hint(
+                        t!("Abas verticais"),
+                        t!("As abas numa coluna à esquerda, como no Zen. Estreita, mostra só os ícones."),
+                        self.switch("vertical-tabs", layout.vertical_tabs, ("layout", "vertical_tabs"), cx),
+                    )
+                    .reset(("layout", "vertical_tabs"), !layout.vertical_tabs, "false"),
+                ],
+            ),
         ]
+    }
+
+    // Which side of the window a panel docks to. The same choice the grip in
+    // the middle of its edge makes by dragging.
+    fn dock_row(
+        &self,
+        key: &'static str,
+        id: &'static str,
+        label: &'static str,
+        side: DockSide,
+        default: DockSide,
+        cx: &mut Context<Self>,
+    ) -> Row {
+        let options = [
+            (t!("Esquerda"), DockSide::Left),
+            (t!("Direita"), DockSide::Right),
+            (t!("Em cima"), DockSide::Top),
+            (t!("Embaixo"), DockSide::Bottom),
+        ];
+        let options: Vec<(&'static str, bool, &'static str)> = options
+            .into_iter()
+            .map(|(name, option)| {
+                let value: &'static str = match option {
+                    DockSide::Left => "\"left\"",
+                    DockSide::Right => "\"right\"",
+                    DockSide::Top => "\"top\"",
+                    DockSide::Bottom => "\"bottom\"",
+                };
+                (name, side == option, value)
+            })
+            .collect();
+        let default_value = match default {
+            DockSide::Left => "\"left\"",
+            DockSide::Right => "\"right\"",
+            DockSide::Top => "\"top\"",
+            DockSide::Bottom => "\"bottom\"",
+        };
+        Row::hint(
+            label,
+            t!("Também dá para arrastar pela alça no meio da borda do painel até outro lado."),
+            self.config_choice(id, &options, ("layout", key), cx),
+        )
+        .reset(("layout", key), side == default, default_value)
     }
 
     // Languages are offered by their own names, untranslated, so a person who

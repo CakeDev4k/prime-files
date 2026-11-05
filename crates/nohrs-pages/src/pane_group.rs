@@ -14,12 +14,12 @@
 //! sync, config replay, per-tab subscriptions) live in the embedder, which drives
 //! create/remove through the group's primitives.
 
+use std::cell::Cell;
 use std::rc::Rc;
 use std::time::Instant;
 
 use gpui::prelude::FluentBuilder;
 use gpui::*;
-use gpui_component::resizable::{ResizableState, h_resizable, resizable_panel, v_resizable};
 use gpui_component::{Icon, IconName};
 use nohrs_core::config::{Compact, SplitDirection};
 use nohrs_ui::theme::theme;
@@ -45,6 +45,39 @@ pub trait PaneItem: Render + Focusable + 'static {
     /// which the item's own top bar shares with the tab row. Called on every
     /// render of the active tab, before it renders; defaults to ignoring it.
     fn attach_compact(&mut self, _settings: &Compact, _top: &Rc<Reveal>) {}
+
+    /// Tells the item whether its group has room for another pane, so a
+    /// gesture of its own can ask for one. Called on every render of the
+    /// active tab; defaults to ignoring it.
+    fn set_split_available(&mut self, _available: bool) {}
+}
+
+/// Width of the column of vertical tabs as a fresh window opens.
+const TAB_COLUMN_DEFAULT: f32 = 220.0;
+/// Under this the column shows only the tabs' icons, at [`TAB_COLUMN_ICONS`].
+const TAB_COLUMN_LABELS_MIN: f32 = 120.0;
+const TAB_COLUMN_ICONS: f32 = 48.0;
+const TAB_COLUMN_MAX: f32 = 420.0;
+/// A pane dragged smaller than this by the divider closes when let go.
+const PANE_COLLAPSE: f32 = 120.0;
+const DIVIDER_GRIP: f32 = 7.0;
+
+thread_local! {
+    // One width for every pane's column, as Zen keeps one sidebar.
+    static TAB_COLUMN_WIDTH: Cell<f32> = const { Cell::new(TAB_COLUMN_DEFAULT) };
+}
+
+/// A press on something of the group's own that the mouse then drags: the
+/// divider between the panes, or the edge of the column of vertical tabs.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum GroupDrag {
+    /// The divider; `collapsing` names the pane squeezed past
+    /// [`PANE_COLLAPSE`], which closes when the button comes up.
+    Divider { collapsing: Option<usize> },
+    /// A double click on the divider: the panes share the room evenly.
+    EvenOut,
+    /// The tab column's edge: where the pointer started and the width then.
+    TabColumn { start_x: f32, start_width: f32 },
 }
 
 /// Builds a fresh tab entity. Separate from [`PaneItem`] because construction
@@ -100,6 +133,8 @@ type PaneHook<V> = Rc<dyn Fn(&mut V, usize, &mut Window, &mut Context<V>)>;
 type TabHook<V> = Rc<dyn Fn(&mut V, usize, usize, &mut Window, &mut Context<V>)>;
 /// A tab-reorder render hook: `(view, pane, from, to, window, cx)`.
 type ReorderHook<V> = Rc<dyn Fn(&mut V, usize, usize, usize, &mut Window, &mut Context<V>)>;
+/// A press that starts one of the group's drags: `(view, drag, window, cx)`.
+type DragHook<V> = Rc<dyn Fn(&mut V, GroupDrag, &mut Window, &mut Context<V>)>;
 
 /// The view-state hooks a [`PaneGroup`] needs to render its interactive chrome.
 /// Bundled into one struct because the tab bar wires up six distinct actions;
@@ -118,6 +153,10 @@ pub struct PaneGroupCallbacks<V: 'static> {
     pub on_close_tab: TabHook<V>,
     /// A tab was dragged onto another within the same pane: `(pane, from, to)`.
     pub on_reorder_tab: ReorderHook<V>,
+    /// The divider or the tab column's edge was pressed: the embedder hands
+    /// the drag to [`PaneGroup::begin_drag`] and the mouse after it to
+    /// [`PaneGroup::drag_to`] and [`PaneGroup::finish_drag`].
+    pub on_group_drag: DragHook<V>,
 }
 
 // Manual `Clone` (derive would wrongly demand `V: Clone`; `Rc` clones regardless).
@@ -130,6 +169,7 @@ impl<V: 'static> Clone for PaneGroupCallbacks<V> {
             on_activate_tab: self.on_activate_tab.clone(),
             on_close_tab: self.on_close_tab.clone(),
             on_reorder_tab: self.on_reorder_tab.clone(),
+            on_group_drag: self.on_group_drag.clone(),
         }
     }
 }
@@ -169,31 +209,39 @@ pub struct PaneGroup<T: PaneItem> {
     active: usize,
     /// Orientation a split uses; toggled by the split shortcuts.
     direction: SplitDirection,
-    /// Resizable state for the divider between the two panes.
-    pane_resizable: Entity<ResizableState>,
+    /// The first pane's share of the room, across or down.
+    ratio: f32,
+    /// The area the panes share, measured at paint, for the divider's drag.
+    bounds: Rc<Cell<Bounds<Pixels>>>,
+    drag: Option<GroupDrag>,
     build_pane: BuildPane<T>,
     /// Compact mode: tab rows hidden until the pointer reaches them.
     compact: Compact,
+    /// Tabs in a column down each pane's left side, as in Zen.
+    vertical_tabs: bool,
+    /// Whether the tab row may be the window's title bar. Not while a panel
+    /// beside the panes (the terminal on a side) reaches the window's top:
+    /// the window's buttons would sit in the middle of the window.
+    title_bar_allowed: bool,
 }
 
 impl<T: PaneItem> PaneGroup<T> {
     /// Builds a group with a single pane holding a single tab. Returns that tab
     /// so the embedder can wire it up (subscribe, replay config, set initial
     /// state).
-    pub fn new(
-        build_pane: BuildPane<T>,
-        pane_resizable: Entity<ResizableState>,
-        window: &mut Window,
-        cx: &mut App,
-    ) -> (Self, Entity<T>) {
+    pub fn new(build_pane: BuildPane<T>, window: &mut Window, cx: &mut App) -> (Self, Entity<T>) {
         let first = build_pane(window, cx);
         let group = Self {
             panes: vec![Pane::with_tab(first.clone())],
             active: 0,
             direction: SplitDirection::default(),
-            pane_resizable,
+            ratio: 0.5,
+            bounds: Rc::default(),
+            drag: None,
             build_pane,
             compact: Compact::default(),
+            vertical_tabs: false,
+            title_bar_allowed: true,
         };
         (group, first)
     }
@@ -216,12 +264,112 @@ impl<T: PaneItem> PaneGroup<T> {
     /// configuration. Does not change the active pane or notify; that is the
     /// embedder's responsibility.
     pub fn add_pane(&mut self, window: &mut Window, cx: &mut App) -> Option<(usize, Entity<T>)> {
+        self.add_pane_at(self.panes.len(), window, cx)
+    }
+
+    /// [`Self::add_pane`] at `index` (0 puts it before the open one, for a
+    /// pane dragged out of the left or top edge). The active pane keeps
+    /// pointing at the same pane.
+    pub fn add_pane_at(&mut self, index: usize, window: &mut Window, cx: &mut App) -> Option<(usize, Entity<T>)> {
         if self.panes.len() >= MAX_PANES {
             return None;
         }
+        let index = index.min(self.panes.len());
         let tab = (self.build_pane)(window, cx);
-        self.panes.push(Pane::with_tab(tab.clone()));
-        Some((self.panes.len() - 1, tab))
+        self.panes.insert(index, Pane::with_tab(tab.clone()));
+        if index <= self.active && self.panes.len() > 1 {
+            self.active += 1;
+        }
+        Some((index, tab))
+    }
+
+    /// Sets the first pane's share of the room.
+    pub fn set_ratio(&mut self, ratio: f32) {
+        self.ratio = ratio.clamp(0.1, 0.9);
+    }
+
+    /// Lays the tabs out in a column on each pane's left (`true`) or in a
+    /// row along its top.
+    pub fn set_vertical_tabs(&mut self, vertical: bool) {
+        self.vertical_tabs = vertical;
+    }
+
+    /// Whether the tabs are laid out in a column.
+    pub fn vertical_tabs(&self) -> bool {
+        self.vertical_tabs
+    }
+
+    /// Lets the tab row be the title bar (`true`), or keeps it a row of tabs
+    /// under the window's own title bar.
+    pub fn set_title_bar_allowed(&mut self, allowed: bool) {
+        self.title_bar_allowed = allowed;
+    }
+
+    /// Starts one of the group's drags.
+    pub fn begin_drag(&mut self, drag: GroupDrag) {
+        if drag == GroupDrag::EvenOut {
+            self.ratio = 0.5;
+            self.drag = None;
+            return;
+        }
+        self.drag = Some(drag);
+    }
+
+    /// Whether one of the group's drags is under way.
+    pub fn dragging(&self) -> bool {
+        self.drag.is_some()
+    }
+
+    /// Follows the group's drag to `pointer`. Returns whether one is under way.
+    pub fn drag_to(&mut self, pointer: Point<Pixels>) -> bool {
+        match self.drag {
+            Some(GroupDrag::Divider { .. }) => {
+                let bounds = self.bounds.get();
+                let (start, length, at) = match self.direction {
+                    SplitDirection::Vertical => (bounds.left(), bounds.size.width, pointer.x),
+                    SplitDirection::Horizontal => (bounds.top(), bounds.size.height, pointer.y),
+                };
+                let length = f32::from(length);
+                if length <= 0.0 {
+                    return true;
+                }
+                let first = f32::from(at - start);
+                let collapsing = if first < PANE_COLLAPSE {
+                    Some(0)
+                } else if length - first < PANE_COLLAPSE {
+                    Some(1)
+                } else {
+                    None
+                };
+                self.ratio = (first / length).clamp(0.02, 0.98);
+                self.drag = Some(GroupDrag::Divider { collapsing });
+                true
+            }
+            Some(GroupDrag::TabColumn { start_x, start_width }) => {
+                let width = start_width + f32::from(pointer.x) - start_x;
+                // Under the labels' minimum the column snaps to its icons.
+                let width = if width < TAB_COLUMN_LABELS_MIN { TAB_COLUMN_ICONS } else { width.min(TAB_COLUMN_MAX) };
+                TAB_COLUMN_WIDTH.set(width);
+                true
+            }
+            Some(GroupDrag::EvenOut) | None => false,
+        }
+    }
+
+    /// Ends the group's drag. Returns the pane the divider squeezed shut,
+    /// for the embedder to close (it owns the per-tab state to drop).
+    pub fn finish_drag(&mut self) -> Option<usize> {
+        match self.drag.take() {
+            Some(GroupDrag::Divider { collapsing: Some(index) }) => {
+                self.ratio = 0.5;
+                Some(index)
+            }
+            Some(GroupDrag::Divider { collapsing: None }) => {
+                self.ratio = self.ratio.clamp(0.1, 0.9);
+                None
+            }
+            _ => None,
+        }
     }
 
     /// Removes the pane at `index`, keeping at least one open. Returns the entity
@@ -494,24 +642,71 @@ impl<T: PaneItem> PaneGroup<T> {
     where
         V: 'static,
     {
-        if self.panes.len() > 1 {
-            let first = self.render_pane(0, window, cx, callbacks);
-            let second = self.render_pane(1, window, cx, callbacks);
-            let group = match self.direction {
-                SplitDirection::Vertical => {
-                    h_resizable("pane-group").with_state(&self.pane_resizable)
-                }
-                SplitDirection::Horizontal => {
-                    v_resizable("pane-group").with_state(&self.pane_resizable)
-                }
-            };
-            group
-                .child(resizable_panel().child(first))
-                .child(resizable_panel().child(second))
-                .into_any_element()
-        } else {
-            self.render_pane(0, window, cx, callbacks)
+        if self.panes.len() < 2 {
+            return self.render_pane(0, window, cx, callbacks);
         }
+        let first = self.render_pane(0, window, cx, callbacks);
+        let second = self.render_pane(1, window, cx, callbacks);
+        let across = self.direction == SplitDirection::Vertical;
+        let collapsing = match self.drag {
+            Some(GroupDrag::Divider { collapsing }) => collapsing,
+            _ => None,
+        };
+        let held = matches!(self.drag, Some(GroupDrag::Divider { .. }));
+        let bounds = self.bounds.get();
+        let length = f32::from(if across { bounds.size.width } else { bounds.size.height });
+        // A pane about to close fades, so letting go is no surprise.
+        let fade = |index: usize, element: AnyElement| {
+            div()
+                .size_full()
+                .when(collapsing == Some(index), |this| this.opacity(0.35))
+                .child(element)
+        };
+        let on_group_drag = callbacks.on_group_drag.clone();
+        let side = if across { nohrs_core::config::DockSide::Left } else { nohrs_core::config::DockSide::Top };
+        let at = length * self.ratio - DIVIDER_GRIP / 2.0;
+        let divider = crate::dock::strip("pane-divider", side, held)
+            .absolute()
+            .when(across, |this| this.top_0().bottom_0().w(px(DIVIDER_GRIP)).left(px(at)))
+            .when(!across, |this| this.left_0().right_0().h(px(DIVIDER_GRIP)).top(px(at)))
+            .on_mouse_down(
+                MouseButton::Left,
+                cx.listener(move |this, event: &MouseDownEvent, window, cx| {
+                    cx.stop_propagation();
+                    let drag = if event.click_count >= 2 {
+                        GroupDrag::EvenOut
+                    } else {
+                        GroupDrag::Divider { collapsing: None }
+                    };
+                    on_group_drag(this, drag, window, cx);
+                }),
+            );
+        div()
+            .relative()
+            .size_full()
+            .flex()
+            .when(across, |this| this.flex_row())
+            .when(!across, |this| this.flex_col())
+            .child(
+                div()
+                    .flex_shrink_0()
+                    .overflow_hidden()
+                    .when(across, |this| this.w(relative(self.ratio)).h_full().border_r_1())
+                    .when(!across, |this| this.h(relative(self.ratio)).w_full().border_b_1())
+                    .border_color(rgb(theme::border()))
+                    .child(fade(0, first)),
+            )
+            .child(
+                div()
+                    .flex_1()
+                    .min_w(px(0.0))
+                    .min_h(px(0.0))
+                    .overflow_hidden()
+                    .child(fade(1, second)),
+            )
+            .child(crate::dock::measure(self.bounds.clone()))
+            .child(divider)
+            .into_any_element()
     }
 
     /// Whether the tab row slides out of compact mode's frame, floating or
@@ -523,7 +718,7 @@ impl<T: PaneItem> PaneGroup<T> {
     /// Whether the tab row is the window's title bar: with one pane it
     /// carries the window's buttons and the toolbar above is not drawn.
     pub fn tabs_in_title_bar(&self) -> bool {
-        self.panes.len() == 1
+        self.panes.len() == 1 && !self.vertical_tabs && self.title_bar_allowed
     }
 
     fn render_pane<V>(
@@ -540,6 +735,32 @@ impl<T: PaneItem> PaneGroup<T> {
         let split = self.panes.len() > 1;
         let is_active = split && pane_index == self.active;
         let on_activate_pane = callbacks.on_activate_pane.clone();
+        let split_available = self.panes.len() < MAX_PANES;
+        content.update(cx, |item, _| item.set_split_available(split_available));
+        if self.vertical_tabs {
+            // The column stays out in compact mode: its left edge is the
+            // sidebar's to slide from.
+            let reveal = self.panes[pane_index].reveal.clone();
+            reveal.set_inset(0.0);
+            let compact = Compact { hide_tabs: false, ..self.compact.clone() };
+            content.update(cx, |item, _| item.attach_compact(&compact, &reveal));
+            let column = self.render_tab_column(pane_index, split, cx, callbacks);
+            return div()
+                .flex()
+                .flex_row()
+                .size_full()
+                .min_w(px(0.0))
+                .min_h(px(0.0))
+                .when(is_active, |this| this.border_t_2().border_color(rgb(theme::accent())))
+                .when(split && !is_active, |this| this.border_t_2().border_color(rgb(theme::bg())))
+                .on_mouse_down(
+                    MouseButton::Left,
+                    cx.listener(move |this, _event, window, cx| on_activate_pane(this, pane_index, window, cx)),
+                )
+                .child(column)
+                .child(div().flex_1().min_w(px(0.0)).h_full().overflow_hidden().child(content))
+                .into_any_element();
+        }
         let tab_bar = self
             .render_tab_bar(pane_index, split, window, cx, callbacks)
             .into_any_element();
@@ -699,7 +920,7 @@ impl<T: PaneItem> PaneGroup<T> {
         // Tabs sit on the bar's bottom edge and the active one takes the
         // content's colour, so it reads as the front of the folder below, as in
         // Explorer and browsers.
-        let title_bar = !split;
+        let title_bar = self.tabs_in_title_bar();
         div()
             .flex()
             .flex_row()
@@ -792,6 +1013,226 @@ impl<T: PaneItem> PaneGroup<T> {
                             .child(nohrs_ui::components::layout::unified_toolbar::title_bar_controls(window)),
                     )
             })
+    }
+
+    // The column of vertical tabs, as Zen's sidebar: one row per tab (icon,
+    // name, close), a row to open another, and an edge that resizes it.
+    // Narrow, it shows the icons alone. Reordered by dragging, as the row is.
+    fn render_tab_column<V>(
+        &self,
+        pane_index: usize,
+        split: bool,
+        cx: &mut Context<V>,
+        callbacks: &PaneGroupCallbacks<V>,
+    ) -> AnyElement
+    where
+        V: 'static,
+    {
+        let width = TAB_COLUMN_WIDTH.get();
+        let labels = width >= TAB_COLUMN_LABELS_MIN;
+        let pane = &self.panes[pane_index];
+        let tab_count = pane.tabs.len();
+        let active_tab = pane.active_tab;
+        let rows: Vec<AnyElement> = pane
+            .tabs
+            .iter()
+            .enumerate()
+            .map(|(tab_index, tab)| {
+                let (title, icon) = {
+                    let item = tab.read(cx);
+                    (item.tab_title(cx), item.tab_icon(cx))
+                };
+                let is_active = tab_index == active_tab;
+                let on_activate_tab = callbacks.on_activate_tab.clone();
+                let on_close_tab = callbacks.on_close_tab.clone();
+                let on_middle_close = callbacks.on_close_tab.clone();
+                let on_reorder_tab = callbacks.on_reorder_tab.clone();
+                let drag_title = SharedString::from(title.clone());
+                let group = SharedString::from(format!("vtab-group-{pane_index}-{tab_index}"));
+                let show_close = tab_count > 1;
+                div()
+                    .id(SharedString::from(format!("vtab-{pane_index}-{tab_index}")))
+                    .group(group.clone())
+                    .flex()
+                    .flex_shrink_0()
+                    .items_center()
+                    .gap(px(8.0))
+                    .h(px(34.0))
+                    .px(px(if labels { 10.0 } else { 0.0 }))
+                    .when(!labels, |this| this.justify_center())
+                    .rounded(px(8.0))
+                    .text_sm()
+                    .cursor_pointer()
+                    .when(is_active, |this| {
+                        this.bg(rgb(theme::bg()))
+                            .text_color(rgb(theme::fg()))
+                            .border_1()
+                            .border_color(rgb(theme::border()))
+                    })
+                    .when(!is_active, |this| {
+                        this.text_color(rgb(theme::toolbar_text()))
+                            .hover(|style| style.bg(rgb(theme::toolbar_hover())))
+                    })
+                    .on_click(cx.listener(move |this, _event, window, cx| {
+                        on_activate_tab(this, pane_index, tab_index, window, cx)
+                    }))
+                    .when(show_close, |this| {
+                        this.on_mouse_down(
+                            MouseButton::Middle,
+                            cx.listener(move |this, _event, window, cx| {
+                                cx.stop_propagation();
+                                on_middle_close(this, pane_index, tab_index, window, cx)
+                            }),
+                        )
+                    })
+                    .on_drag(
+                        TabDrag {
+                            pane: pane_index,
+                            tab: tab_index,
+                        },
+                        move |_drag, _offset, _window, cx| {
+                            cx.new(|_cx| TabDragPreview {
+                                title: drag_title.clone(),
+                            })
+                        },
+                    )
+                    .on_drop(cx.listener(move |this, drag: &TabDrag, window, cx| {
+                        if drag.pane == pane_index {
+                            on_reorder_tab(this, pane_index, drag.tab, tab_index, window, cx);
+                        }
+                    }))
+                    .child(
+                        Icon::new(icon.unwrap_or(IconName::Folder))
+                            .size_4()
+                            .flex_shrink_0()
+                            .text_color(rgb(if is_active { theme::accent() } else { theme::muted() })),
+                    )
+                    .when(labels, |this| {
+                        this.child(
+                            div()
+                                .flex_1()
+                                .min_w(px(0.0))
+                                .overflow_hidden()
+                                .text_ellipsis()
+                                .whitespace_nowrap()
+                                .when(is_active, |this| this.font_weight(gpui::FontWeight::MEDIUM))
+                                .child(title),
+                        )
+                    })
+                    .when(labels && show_close, |this| {
+                        this.child(
+                            div()
+                                .id(SharedString::from(format!("vtab-close-{pane_index}-{tab_index}")))
+                                .flex()
+                                .flex_shrink_0()
+                                .items_center()
+                                .justify_center()
+                                .size(px(20.0))
+                                .rounded(px(4.0))
+                                .when(!is_active, |this| {
+                                    this.opacity(0.0).group_hover(group.clone(), |style| style.opacity(1.0))
+                                })
+                                .text_color(rgb(theme::muted()))
+                                .hover(|style| {
+                                    style.bg(rgb(theme::toolbar_hover())).text_color(rgb(theme::fg()))
+                                })
+                                .on_mouse_down(MouseButton::Left, |_, _window, cx| cx.stop_propagation())
+                                .on_click(cx.listener(move |this, _event, window, cx| {
+                                    on_close_tab(this, pane_index, tab_index, window, cx)
+                                }))
+                                .child(Icon::new(IconName::Close).size_3()),
+                        )
+                    })
+                    .into_any_element()
+            })
+            .collect();
+        let on_new_tab = callbacks.on_new_tab.clone();
+        let on_close_pane = callbacks.on_close_pane.clone();
+        let on_group_drag = callbacks.on_group_drag.clone();
+        let new_tab = div()
+            .id(SharedString::from(format!("vtab-new-{pane_index}")))
+            .flex()
+            .flex_shrink_0()
+            .items_center()
+            .gap(px(8.0))
+            .h(px(32.0))
+            .px(px(if labels { 10.0 } else { 0.0 }))
+            .when(!labels, |this| this.justify_center())
+            .rounded(px(8.0))
+            .text_sm()
+            .text_color(rgb(theme::muted()))
+            .cursor_pointer()
+            .hover(|style| style.bg(rgb(theme::toolbar_hover())))
+            .on_mouse_down(MouseButton::Left, |_, _window, cx| cx.stop_propagation())
+            .on_click(cx.listener(move |this, _event, window, cx| on_new_tab(this, pane_index, window, cx)))
+            .child(Icon::new(IconName::Plus).size_4().flex_shrink_0())
+            .when(labels, |this| this.child(nohrs_core::t!("Nova aba").to_string()));
+        div()
+            .relative()
+            .flex_shrink_0()
+            .w(px(width))
+            .h_full()
+            .flex()
+            .flex_col()
+            .gap(px(2.0))
+            .p(px(6.0))
+            .bg(rgb(theme::toolbar_bg()))
+            .border_r_1()
+            .border_color(rgb(theme::border()))
+            .when(split, |this| {
+                this.child(
+                    div()
+                        .id(("vtab-close-pane", pane_index))
+                        .flex()
+                        .flex_shrink_0()
+                        .items_center()
+                        .justify_center()
+                        .h(px(24.0))
+                        .rounded(px(6.0))
+                        .cursor_pointer()
+                        .text_color(rgb(theme::muted()))
+                        .hover(|style| style.bg(rgb(theme::toolbar_hover())))
+                        .on_mouse_down(MouseButton::Left, |_, _window, cx| cx.stop_propagation())
+                        .on_click(cx.listener(move |this, _event, window, cx| {
+                            on_close_pane(this, pane_index, window, cx)
+                        }))
+                        .child(Icon::new(IconName::Close).size_3()),
+                )
+            })
+            .child(
+                div()
+                    .id(("vtab-list", pane_index))
+                    .flex_1()
+                    .min_h(px(0.0))
+                    .flex()
+                    .flex_col()
+                    .gap(px(2.0))
+                    .overflow_y_scroll()
+                    .children(rows)
+                    .child(new_tab),
+            )
+            .child(
+                crate::dock::place_on_inner_edge(
+                    crate::dock::strip(("vtab-edge", pane_index), nohrs_core::config::DockSide::Left, false),
+                    nohrs_core::config::DockSide::Left,
+                )
+                .on_mouse_down(
+                    MouseButton::Left,
+                    cx.listener(move |this, event: &MouseDownEvent, window, cx| {
+                        cx.stop_propagation();
+                        on_group_drag(
+                            this,
+                            GroupDrag::TabColumn {
+                                start_x: f32::from(event.position.x),
+                                start_width: TAB_COLUMN_WIDTH.get(),
+                            },
+                            window,
+                            cx,
+                        );
+                    }),
+                ),
+            )
+            .into_any_element()
     }
 
     #[allow(clippy::too_many_arguments)]

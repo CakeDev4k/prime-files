@@ -108,6 +108,31 @@
       },
       "type": "object"
     },
+    "DockSide": {
+      "description": "A side of the area a panel docks to.",
+      "oneOf": [
+        {
+          "const": "left",
+          "description": "A column on the left.",
+          "type": "string"
+        },
+        {
+          "const": "right",
+          "description": "A column on the right.",
+          "type": "string"
+        },
+        {
+          "const": "top",
+          "description": "A band along the top.",
+          "type": "string"
+        },
+        {
+          "const": "bottom",
+          "description": "A band along the bottom.",
+          "type": "string"
+        }
+      ]
+    },
     "Explorer": {
       "description": "Split-view and pane settings (see `docs/explorer-essentials.md` §3).",
       "properties": {
@@ -213,6 +238,32 @@
         "position_remember": {
           "default": true,
           "description": "Whether the launcher reopens at its last on-screen position.",
+          "type": "boolean"
+        }
+      },
+      "type": "object"
+    },
+    "Layout": {
+      "description": "Where the window's panels sit and how the tabs are laid out. Each panel\ndocks to one side of what it accompanies: the sidebar and the preview to a\nside of the listing, the terminal to a side of the panes.",
+      "properties": {
+        "preview": {
+          "$ref": "#/$defs/DockSide",
+          "default": "right",
+          "description": "The side the preview docks to."
+        },
+        "sidebar": {
+          "$ref": "#/$defs/DockSide",
+          "default": "left",
+          "description": "The side the sidebar with the places docks to."
+        },
+        "terminal": {
+          "$ref": "#/$defs/DockSide",
+          "default": "bottom",
+          "description": "The side the terminal docks to."
+        },
+        "vertical_tabs": {
+          "default": false,
+          "description": "Tabs in a column down the left of the window, as in Zen Browser,\ninstead of a row along the top.",
           "type": "boolean"
         }
       },
@@ -493,6 +544,16 @@
         "position_remember": true
       },
       "description": "Launcher window settings."
+    },
+    "layout": {
+      "$ref": "#/$defs/Layout",
+      "default": {
+        "preview": "right",
+        "sidebar": "left",
+        "terminal": "bottom",
+        "vertical_tabs": false
+      },
+      "description": "Where the sidebar, preview and terminal dock, and the tabs' layout."
     },
     "plugins": {
       "$ref": "#/$defs/Plugins",

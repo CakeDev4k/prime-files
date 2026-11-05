@@ -63,9 +63,15 @@ impl ExplorerPane {
         let Some(state) = &self.path_edit else {
             return;
         };
-        let typed = state.input.read(cx).value().trim().trim_matches('"').to_string();
+        let typed = super::network::normalize_address(&state.input.read(cx).value());
         let path = Path::new(&typed);
-        let target = if path.is_dir() {
+        // A network address is gone to without asking the disk here: a
+        // server that does not answer would freeze the window for as long,
+        // and the listing reads it on a thread of its own (asking for a
+        // login if the share wants one).
+        let target = if super::network::is_unc(&typed) {
+            Some(typed.clone())
+        } else if path.is_dir() {
             Some(typed.clone())
         } else if path.is_file() {
             path.parent().map(|parent| parent.to_string_lossy().into_owned())

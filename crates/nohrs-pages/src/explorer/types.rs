@@ -95,4 +95,10 @@ pub struct StatusMessage {
 pub enum PaneEvent {
     /// The pane navigated to a new directory (carries the new absolute path).
     Navigated(String),
+    /// Its `side` edge was dragged out to `fraction` of the way across: open a
+    /// second pane there, taking that much of the room.
+    SplitRequested {
+        side: nohrs_core::config::DockSide,
+        fraction: f32,
+    },
 }

@@ -116,6 +116,8 @@ pub fn render(
         crate::explorer::view::highlighted_name(&display_name, &page.highlight_query())
     };
     let hit_folder = page.hit_folder(&item.path).map(str::to_string);
+    // A dot per tag the item carries, after its name, as the Files app shows.
+    let tag_colors = crate::explorer::tags::Tags::colors_of(&item.path, cx);
 
     // ... rendering ...
     // Note: page.total_table_width() method is needed.
@@ -349,6 +351,19 @@ pub fn render(
                                                 .whitespace_nowrap()
                                                 .child(styled_name),
                                         )
+                                        .when(!tag_colors.is_empty(), |this| {
+                                            this.child(
+                                                div()
+                                                    .flex_shrink_0()
+                                                    .flex()
+                                                    .items_center()
+                                                    .gap(px(3.0))
+                                                    .pl(px(6.0))
+                                                    .children(tag_colors.iter().map(|color| {
+                                                        div().size(px(8.0)).rounded_full().bg(rgb(*color))
+                                                    })),
+                                            )
+                                        })
                                         .when_some(hit_folder, |this, folder| {
                                             this.child(crate::explorer::view::hit_folder_label(
                                                 &folder,

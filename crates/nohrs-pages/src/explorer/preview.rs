@@ -29,6 +29,10 @@ enum PreviewOutcome {
     Media,
     /// A 3D model, drawn by the pane and turned by dragging.
     Model,
+    /// A document read as formatted text (`documents.rs`), in Markdown.
+    Document(String),
+    /// A creative app's file (`creative.rs`).
+    Creative(super::creative::Creative),
     Unsupported,
 }
 
@@ -95,17 +99,19 @@ fn is_image_path(path: &str) -> bool {
     )
 }
 
-/// Raster image formats that cannot be meaningfully decoded as UTF-8 text.
-/// SVG is intentionally excluded so it still previews as text in the editor.
+/// Image formats read by path and drawn, never decoded as text: the raster
+/// ones, and SVG, which is text but is looked at as the picture it draws.
 fn is_binary_image_path(path: &str) -> bool {
     let extension = std::path::Path::new(path)
         .extension()
         .and_then(|s| s.to_str())
         .unwrap_or("")
         .to_lowercase();
+    // SVG is drawn as the picture it is, as the other images are; until
+    // 05/11/2026 it showed as its XML.
     matches!(
         extension.as_str(),
-        "png" | "jpg" | "jpeg" | "gif" | "bmp" | "webp"
+        "png" | "jpg" | "jpeg" | "gif" | "bmp" | "webp" | "svg"
     )
 }
 
@@ -122,7 +128,7 @@ fn extension_of(path: &str) -> String {
 }
 
 #[allow(clippy::disallowed_methods)]
-fn read_preview(path: &str, show_hidden: bool) -> PreviewOutcome {
+fn read_preview(path: &str, show_hidden: bool, edge: u32) -> PreviewOutcome {
     let metadata = match std::fs::metadata(path) {
         Ok(metadata) => metadata,
         Err(_) => return PreviewOutcome::Unsupported,
@@ -138,6 +144,24 @@ fn read_preview(path: &str, show_hidden: bool) -> PreviewOutcome {
     }
     if extension_of(path) == "pdf" {
         return PreviewOutcome::Pdf;
+    }
+    if super::creative::is_creative(path) {
+        return match super::creative::read(path, edge) {
+            Ok(creative) => PreviewOutcome::Creative(creative),
+            Err(error) => {
+                tracing::debug!("no preview of {path}: {error}");
+                PreviewOutcome::Unsupported
+            }
+        };
+    }
+    if super::documents::is_document(path) {
+        return match super::documents::read(path) {
+            Ok(markdown) => PreviewOutcome::Document(markdown),
+            Err(error) => {
+                tracing::debug!("no preview of {path}: {error}");
+                PreviewOutcome::Unsupported
+            }
+        };
     }
     if super::media::is_media(path) {
         return PreviewOutcome::Media;
@@ -384,6 +408,12 @@ impl ExplorerPane {
         self.preview_listing = None;
         self.close_pdf_preview(cx);
         self.close_media_preview(cx);
+        self.preview_picture = None;
+        self.preview_caption = None;
+        self.preview_editing = false;
+        self.preview_dirty = false;
+        self.preview_saveable = false;
+        self.preview_editor_changes = None;
         self.preview_path = None;
     }
 
@@ -399,9 +429,15 @@ impl ExplorerPane {
         cx.notify();
 
         let show_hidden = self.show_hidden;
+        // A picture decoded here is decoded at the size the panel shows.
+        let edge = super::view::preview::fitted_edge(
+            super::view::panels::preview_width(),
+            f32::from(window.viewport_size().height),
+            window.scale_factor(),
+        );
         let read_task = cx.background_spawn({
             let path = path.clone();
-            async move { read_preview(&path, show_hidden) }
+            async move { read_preview(&path, show_hidden, edge) }
         });
 
         // Held, not detached: the next preview replaces it, which drops the
@@ -465,6 +501,26 @@ impl ExplorerPane {
                 self.preview_path = Some(path);
                 self.preview_message = Some(t!("(Sem visualização para este arquivo)").to_string());
             }
+            PreviewOutcome::Document(markdown) => {
+                self.preview_path = Some(path);
+                self.preview_markdown = Some(markdown.into());
+            }
+            PreviewOutcome::Creative(super::creative::Creative::Pdf) => {
+                self.preview_path = Some(path.clone());
+                self.open_pdf_preview(path, cx);
+            }
+            PreviewOutcome::Creative(super::creative::Creative::Summary(markdown)) => {
+                self.preview_path = Some(path);
+                self.preview_markdown = Some(markdown.into());
+            }
+            PreviewOutcome::Creative(super::creative::Creative::Picture { width, height, bgra, caption }) => {
+                self.preview_path = Some(path);
+                self.preview_picture = super::thumbnails::render_image(width, height, bgra).map(std::sync::Arc::new);
+                self.preview_caption = (!caption.is_empty()).then_some(caption);
+                if self.preview_picture.is_none() {
+                    self.preview_message = Some(t!("(Sem visualização para este arquivo)").to_string());
+                }
+            }
             PreviewOutcome::Text(text) => {
                 self.preview_path = Some(path.clone());
                 let language = detect_language(&path);
@@ -478,16 +534,19 @@ impl ExplorerPane {
                 let from_search = self.search_results.as_ref().is_some_and(|results| {
                     results.iter().any(|result| result.path == path && !result.matches.is_empty())
                 });
+                self.preview_crlf = text.contains("\r\n");
                 if !from_search && language == "markdown" {
                     self.preview_text = Some(text.clone());
+                    self.preview_saveable = true;
                     self.preview_markdown = Some(text.into());
                     cx.notify();
                     return;
                 }
-                let text = match prettify(&language, &text) {
-                    Some(pretty) if !from_search => pretty,
-                    _ => text,
+                let (text, reformatted) = match prettify(&language, &text) {
+                    Some(pretty) if !from_search => (pretty, true),
+                    _ => (text, false),
                 };
+                self.preview_saveable = !reformatted;
                 self.preview_text = Some(text.clone());
 
                 let editor_view = cx.new(|cx| PreviewEditor::new(window, cx));
@@ -497,6 +556,9 @@ impl ExplorerPane {
                         editor.set_language(language, window, cx);
                     }
                 });
+                if self.preview_saveable {
+                    self.watch_preview_editor(&editor_view, window, cx);
+                }
                 self.preview_editor = Some(editor_view);
 
                 // Highlights (search only; syntax handled by editor)
@@ -518,6 +580,100 @@ impl ExplorerPane {
             }
         }
         cx.notify();
+    }
+
+    /// A Markdown file between its rendered view and its source, which can
+    /// be edited and saved. Back to the view, it shows what was typed.
+    pub(crate) fn toggle_preview_editing(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.preview_editing {
+            if let Some(editor) = self.preview_editor.take() {
+                self.preview_markdown = Some(editor.read(cx).text(cx).into());
+            }
+            self.preview_editor_changes = None;
+            self.preview_editing = false;
+            cx.focus_self(window);
+            cx.notify();
+            return;
+        }
+        let Some(text) = self.preview_markdown.as_ref().map(|text| text.to_string()).or_else(|| self.preview_text.clone()) else {
+            return;
+        };
+        let editor = cx.new(|cx| PreviewEditor::new(window, cx));
+        editor.update(cx, |editor, cx| {
+            editor.set_text(text, window, cx);
+            editor.set_language("markdown".to_string(), window, cx);
+            editor.focus(window, cx);
+        });
+        self.watch_preview_editor(&editor, window, cx);
+        self.preview_editor = Some(editor);
+        self.preview_editing = true;
+        cx.notify();
+    }
+
+    // Each change in the editor says whether it now differs from the file.
+    fn watch_preview_editor(&mut self, editor: &gpui::Entity<PreviewEditor>, window: &mut Window, cx: &mut Context<Self>) {
+        let state = editor.read(cx).state().clone();
+        let editor = editor.downgrade();
+        self.preview_editor_changes = Some(cx.subscribe_in(
+            &state,
+            window,
+            move |this, _state, event: &gpui_component::input::InputEvent, _window, cx| {
+                if !matches!(event, gpui_component::input::InputEvent::Change) {
+                    return;
+                }
+                let Some(editor) = editor.upgrade() else {
+                    return;
+                };
+                let text = editor.read(cx).text(cx);
+                let dirty = this.preview_text.as_deref().map(|saved| saved.replace("\r\n", "\n")) != Some(text);
+                if dirty != this.preview_dirty {
+                    this.preview_dirty = dirty;
+                    cx.notify();
+                }
+            },
+        ));
+    }
+
+    /// Writes the editor's text to the file it came from (Ctrl+S, or the
+    /// preview's save button), keeping its line endings.
+    pub(crate) fn save_preview(&mut self, cx: &mut Context<Self>) {
+        let (Some(path), Some(editor)) = (self.preview_path.clone(), self.preview_editor.clone()) else {
+            return;
+        };
+        if !self.preview_saveable {
+            return;
+        }
+        let text = editor.read(cx).text(cx);
+        let written = if self.preview_crlf { text.replace("\r\n", "\n").replace('\n', "\r\n") } else { text.clone() };
+        let write = cx.background_spawn({
+            let path = path.clone();
+            #[allow(clippy::disallowed_methods)]
+            async move { std::fs::write(&path, written) }
+        });
+        cx.spawn(async move |this: gpui::WeakEntity<Self>, cx| {
+            let result = write.await;
+            this.update(cx, |pane, cx| {
+                match result {
+                    Ok(()) => {
+                        if pane.preview_path.as_deref() == Some(path.as_str()) {
+                            pane.preview_text = Some(text);
+                            pane.preview_dirty = false;
+                        }
+                        pane.set_status(
+                            super::types::StatusLevel::Info,
+                            nohrs_core::tf!("Salvo: {name}", name = std::path::Path::new(&path).file_name().map(|name| name.to_string_lossy().into_owned()).unwrap_or_default()),
+                        );
+                    }
+                    Err(error) => pane.set_status(
+                        super::types::StatusLevel::Error,
+                        nohrs_core::tf!("Não foi possível salvar: {error}", error = error),
+                    ),
+                }
+                cx.notify();
+            })
+            .log_err();
+        })
+        .detach();
     }
 
     pub(crate) fn update_editor_search(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -607,11 +763,11 @@ mod tests {
     }
 
     #[test]
-    fn binary_image_excludes_svg() {
+    fn svg_previews_as_a_picture() {
         assert!(is_binary_image_path("a.png"));
         assert!(is_binary_image_path("a.gif"));
-        // SVG is text, so it is not treated as a binary image.
-        assert!(!is_binary_image_path("a.svg"));
+        // Drawn, not shown as its XML (decided 05/11/2026).
+        assert!(is_binary_image_path("a.svg"));
         assert!(!is_binary_image_path("a.txt"));
     }
 
@@ -641,7 +797,7 @@ mod tests {
 
         let text_path = dir.path().join("note.txt");
         std::fs::write(&text_path, "hello\nworld").unwrap();
-        match read_preview(&text_path.to_string_lossy(), false) {
+        match read_preview(&text_path.to_string_lossy(), false, 512) {
             PreviewOutcome::Text(body) => assert_eq!(body, "hello\nworld"),
             _ => panic!("expected Text"),
         }
@@ -650,7 +806,7 @@ mod tests {
         let png_path = dir.path().join("pic.png");
         std::fs::write(&png_path, [0u8, 1, 2, 3]).unwrap();
         assert!(matches!(
-            read_preview(&png_path.to_string_lossy(), false),
+            read_preview(&png_path.to_string_lossy(), false, 512),
             PreviewOutcome::Image
         ));
 
@@ -658,17 +814,17 @@ mod tests {
         let bin_path = dir.path().join("blob.bin");
         std::fs::write(&bin_path, [0xff, 0xfe, 0xfd]).unwrap();
         assert!(matches!(
-            read_preview(&bin_path.to_string_lossy(), false),
+            read_preview(&bin_path.to_string_lossy(), false, 512),
             PreviewOutcome::Unsupported
         ));
 
         // A directory lists its contents; a missing path is Unsupported.
         assert!(matches!(
-            read_preview(&dir.path().to_string_lossy(), false),
+            read_preview(&dir.path().to_string_lossy(), false, 512),
             PreviewOutcome::Listing(_)
         ));
         assert!(matches!(
-            read_preview("/nonexistent/path/here", false),
+            read_preview("/nonexistent/path/here", false, 512),
             PreviewOutcome::Unsupported
         ));
     }

@@ -196,6 +196,9 @@ pub fn render(
         render_pdf(page)
     } else if let Some(listing) = page.preview_listing.clone() {
         render_listing(page, listing, window, cx)
+    } else if let Some(picture) = page.preview_picture.clone() {
+        let picture = img(ImageSource::Render(picture)).size_full().object_fit(gpui::ObjectFit::Contain);
+        zoom_frame(page, "preview-picture-frame", picture.into_any_element(), true, cx)
     } else if let Some(image_path) = page.preview_image_path.clone()
         && let Some(fitted) = fitted_picture(page, &image_path, window, cx)
     {
@@ -312,6 +315,37 @@ pub fn render(
                         .whitespace_nowrap()
                         .child(title),
                 )
+                .when_some(page.preview_caption.clone(), |header, caption| {
+                    header.child(
+                        div()
+                            .flex_shrink_0()
+                            .text_xs()
+                            .text_color(rgb(theme::muted()))
+                            .whitespace_nowrap()
+                            .child(caption),
+                    )
+                })
+                // A Markdown file: its source to edit, and back to the view.
+                .when(page.preview_saveable && (page.preview_markdown.is_some() || page.preview_editing), |header| {
+                    let (glyph, tip) = if page.preview_editing {
+                        ("\u{e890}", t!("Ver formatado"))
+                    } else {
+                        ("\u{e70f}", t!("Editar"))
+                    };
+                    header.child(
+                        header_button("preview-edit", glyph)
+                            .tooltip(move |window, cx| gpui_component::tooltip::Tooltip::new(tip).build(window, cx))
+                            .on_click(cx.listener(|this, _, window, cx| this.toggle_preview_editing(window, cx))),
+                    )
+                })
+                .when(page.preview_dirty, |header| {
+                    header.child(
+                        header_button("preview-save", "\u{e74e}")
+                            .text_color(rgb(theme::accent()))
+                            .tooltip(|window, cx| gpui_component::tooltip::Tooltip::new(t!("Salvar (Ctrl+S)")).build(window, cx))
+                            .on_click(cx.listener(|this, _, _window, cx| this.save_preview(cx))),
+                    )
+                })
                 .when(zoomable(page), |header| header.child(render_zoom_controls(page, cx))),
         )
         .child(with_preview_wheel(content, cx))
@@ -320,6 +354,7 @@ pub fn render(
 /// Whether what the preview shows can be magnified.
 fn zoomable(page: &ExplorerPane) -> bool {
     page.preview_image_path.is_some()
+        || page.preview_picture.is_some()
         || page.preview_pdf.is_some()
         || page.preview_model.is_some()
         || page.preview_listing.is_some()

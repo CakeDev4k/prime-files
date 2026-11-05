@@ -1,5 +1,7 @@
 pub(crate) mod commands;
 pub(crate) mod context_menu;
+mod creative;
+mod documents;
 mod drag;
 pub(crate) mod drives;
 mod entries;
@@ -13,6 +15,7 @@ pub(crate) mod hover_audio;
 mod list_setup;
 mod marquee;
 mod navigation;
+pub(crate) mod network;
 /// The split-view container that owns one or more panes (`docs/explorer-essentials.md` §3).
 mod media;
 mod model3d;
@@ -28,6 +31,7 @@ mod search;
 mod state;
 pub(crate) mod thumbnails;
 pub(crate) mod waveforms;
+pub(crate) mod tags;
 mod tree;
 mod types;
 /// Rendering of a single explorer pane: header, sidebar, listing, and preview.

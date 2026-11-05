@@ -43,6 +43,21 @@ impl PreviewEditor {
         Self { editor_state }
     }
 
+    /// The text in the editor now.
+    pub fn text(&self, cx: &App) -> String {
+        self.editor_state.read(cx).value().to_string()
+    }
+
+    /// The editor's input, for watching its changes.
+    pub fn state(&self) -> &Entity<InputState> {
+        &self.editor_state
+    }
+
+    /// Puts the keyboard in the editor.
+    pub fn focus(&self, window: &mut Window, cx: &mut App) {
+        self.editor_state.update(cx, |state, cx| state.focus(window, cx));
+    }
+
     /// Replaces the editor's contents with `text`.
     pub fn set_text(&mut self, text: String, window: &mut Window, cx: &mut Context<Self>) {
         self.editor_state.update(cx, |state, cx| {

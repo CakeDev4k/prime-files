@@ -82,6 +82,12 @@ pub fn render(
                 cx.stop_propagation();
                 return;
             }
+            // Ctrl+S saves what was typed in the preview's editor.
+            if with_modifier && key_lc == "s" && this.preview_dirty {
+                this.save_preview(cx);
+                cx.stop_propagation();
+                return;
+            }
             if key_lc == "escape" && this.quick_look {
                 this.close_quick_look(cx);
                 cx.stop_propagation();
@@ -269,8 +275,15 @@ pub fn render(
         }))
         .on_mouse_move(
             cx.listener(|this, event: &gpui::MouseMoveEvent, _window, cx| {
+                // The button came up outside the pane: the drag ends there.
+                if this.dock_drag.is_some() && event.pressed_button != Some(gpui::MouseButton::Left) {
+                    if this.finish_dock_drag(cx) {
+                        cx.notify();
+                    }
+                    return;
+                }
                 if event.pressed_button == Some(gpui::MouseButton::Left)
-                    && this.update_divider_drag(event.position.x)
+                    && this.update_dock_drag(event.position)
                 {
                     cx.notify();
                     return;
@@ -281,10 +294,20 @@ pub fn render(
                 }
             }),
         )
+        // Let go outside the pane (over the other pane, the title bar): the
+        // drag ends there too.
+        .on_mouse_up_out(
+            gpui::MouseButton::Left,
+            cx.listener(|this, _event, _window, cx| {
+                if this.finish_dock_drag(cx) {
+                    cx.notify();
+                }
+            }),
+        )
         .on_mouse_up(
             gpui::MouseButton::Left,
             cx.listener(|this, _event, _window, cx| {
-                if this.divider_drag.take().is_some() {
+                if this.finish_dock_drag(cx) {
                     cx.notify();
                 }
                 if this.resizing_column.is_some() {
@@ -332,7 +355,7 @@ fn render_body(
     let chrome = compact_chrome(page, window, cx);
     let view = cx.entity_id();
     let overlay = page.compact.overlay;
-    let edge = page.compact.edge_px as f32;
+    let edge_depth = page.compact.edge_px as f32;
     // Zen's frame: the pane's content in a card with rounded corners, set in
     // from the window by this much. The strips stay on the outside and reach
     // across the frame, so the window's edge still calls the bars.
@@ -376,7 +399,7 @@ fn render_body(
                 compact::edge_strip(
                     "compact-header-edge",
                     Edge::Top,
-                    frame + edge.max(height * amount),
+                    frame + edge_depth.max(height * amount),
                     top,
                     compact::SOURCE_HEADER,
                     view,
@@ -444,107 +467,83 @@ fn render_body(
     };
     // Floating, the sides lie over the listing. Pushing, they take their
     // room from it: in the frame beside the card, or, with no frame, as the
-    // listing's own columns, which narrow with the slide.
+    // listing's own columns, which narrow with the slide. Compact mode slides
+    // a panel docked to the left or the right out of that edge; one docked
+    // above or below the listing stays put (`compact_chrome`).
     let mut sides: Vec<AnyElement> = Vec::new();
-    let mut left_of_card: Option<AnyElement> = None;
-    let mut right_of_card: Option<AnyElement> = None;
-    let mut side_amounts = (1.0, 1.0);
-    let sidebar = match sidebar {
-        Some(element) if chrome.sidebar => {
-            let amount = page.left_reveal.amount();
-            let width = panels::sidebar_width();
-            let pushed = if !overlay && framed {
-                // The frame's width again between the bar and the card, as
-                // on the window's side of it.
-                let padded = div().size_full().flex().flex_col().pr(px(frame)).child(element);
-                left_of_card = Some(compact::slider(Edge::Left, 0.0, width + frame, amount, None, padded).into_any_element());
-                None
-            } else if !overlay {
-                side_amounts.0 = amount;
-                Some(compact::slider(Edge::Left, 0.0, width, amount, None, element).into_any_element())
-            } else if framed {
-                out_of_frame.push(
-                    frame_bar(compact::slider(Edge::Left, frame, width, amount, None, element), Edge::Left, amount)
-                        .left_0()
-                        .top(px(frame))
-                        .bottom(px(frame))
-                        .into_any_element(),
-                );
-                None
-            } else {
-                sides.push(
-                    side_panel(compact::slider(Edge::Left, 0.0, width, amount, None, element), amount)
-                        .left_0()
-                        .when(amount > 0.0, |this| this.border_r_1())
-                        .into_any_element(),
-                );
-                None
-            };
-            strips.push(
-                compact::edge_strip(
-                    "compact-sidebar-edge",
-                    Edge::Left,
-                    frame + edge.max(width * amount),
-                    page.left_reveal.clone(),
-                    compact::SOURCE_EDGE,
-                    view,
-                )
-                .into_any_element(),
-            );
-            pushed
+    let mut left_of_card: Vec<AnyElement> = Vec::new();
+    let mut right_of_card: Vec<AnyElement> = Vec::new();
+    let mut docked: Vec<panels::Docked> = Vec::new();
+    for (panel, element, sliding) in [
+        (panels::Panel::Sidebar, sidebar, chrome.sidebar),
+        (panels::Panel::Preview, preview, chrome.preview),
+    ] {
+        let Some(element) = element else {
+            continue;
+        };
+        if !sliding {
+            docked.push(panels::Docked { panel, element, amount: 1.0 });
+            continue;
         }
-        other => other,
-    };
-    let preview = match preview {
-        Some(element) if chrome.preview => {
-            let amount = page.right_reveal.amount();
-            let width = panels::preview_width().max(240.0);
-            // Floating, kept inside the listing it covers. Not when pushing:
-            // the listing narrows as the preview widens, and capping by it
-            // would chase its own tail.
-            let room = page.columns_width.get();
-            let width = if overlay && room > 0.0 { width.min(room * 0.9) } else { width };
-            let pushed = if !overlay && framed {
-                let padded = div().size_full().flex().flex_col().pl(px(frame)).child(element);
-                right_of_card = Some(compact::slider(Edge::Right, 0.0, width + frame, amount, None, padded).into_any_element());
-                None
-            } else if !overlay {
-                side_amounts.1 = amount;
-                Some(compact::slider(Edge::Right, 0.0, width, amount, None, element).into_any_element())
-            } else if framed {
-                out_of_frame.push(
-                    frame_bar(compact::slider(Edge::Right, frame, width, amount, None, element), Edge::Right, amount)
-                        .right_0()
-                        .top(px(frame))
-                        .bottom(px(frame))
-                        .into_any_element(),
-                );
-                None
+        let on_right = panels::side(panel) == nohrs_core::config::DockSide::Right;
+        let edge = if on_right { Edge::Right } else { Edge::Left };
+        let reveal = match panel {
+            panels::Panel::Sidebar => page.left_reveal.clone(),
+            panels::Panel::Preview => page.right_reveal.clone(),
+        };
+        let amount = reveal.amount();
+        let width = match panel {
+            panels::Panel::Sidebar => panels::sidebar_width(),
+            panels::Panel::Preview => {
+                let width = panels::preview_width().max(240.0);
+                // Floating, kept inside the listing it covers. Not when
+                // pushing: the listing narrows as the preview widens, and
+                // capping by it would chase its own tail.
+                let room = f32::from(page.columns_bounds.get().size.width);
+                if overlay && room > 0.0 { width.min(room * 0.9) } else { width }
+            }
+        };
+        if !overlay && framed {
+            // The frame's width again between the bar and the card, as on
+            // the window's side of it.
+            let padded = div().size_full().flex().flex_col();
+            let padded = if on_right { padded.pl(px(frame)) } else { padded.pr(px(frame)) }.child(element);
+            let slid = compact::slider(edge, 0.0, width + frame, amount, None, padded).into_any_element();
+            if on_right { right_of_card.push(slid) } else { left_of_card.push(slid) }
+        } else if !overlay {
+            docked.push(panels::Docked {
+                panel,
+                element: compact::slider(edge, 0.0, width, amount, None, element).into_any_element(),
+                amount,
+            });
+        } else if framed {
+            let bar = frame_bar(compact::slider(edge, frame, width, amount, None, element), edge, amount)
+                .top(px(frame))
+                .bottom(px(frame));
+            let bar = if on_right { bar.right_0() } else { bar.left_0() };
+            out_of_frame.push(bar.into_any_element());
+        } else {
+            let floating_side = side_panel(compact::slider(edge, 0.0, width, amount, None, element), amount);
+            let floating_side = if on_right {
+                floating_side.right_0().when(amount > 0.0, |this| this.border_l_1())
             } else {
-                sides.push(
-                    side_panel(compact::slider(Edge::Right, 0.0, width, amount, None, element), amount)
-                        .right_0()
-                        .when(amount > 0.0, |this| this.border_l_1())
-                        .into_any_element(),
-                );
-                None
+                floating_side.left_0().when(amount > 0.0, |this| this.border_r_1())
             };
-            strips.push(
-                compact::edge_strip(
-                    "compact-preview-edge",
-                    Edge::Right,
-                    frame + edge.max(width * amount),
-                    page.right_reveal.clone(),
-                    compact::SOURCE_EDGE,
-                    view,
-                )
-                .into_any_element(),
-            );
-            pushed
+            sides.push(floating_side.into_any_element());
         }
-        other => other,
-    };
-    let columns = panels::render(page, sidebar, listing, preview, side_amounts, cx);
+        strips.push(
+            compact::edge_strip(
+                SharedString::from(format!("compact-{}-edge", panel.config_key())),
+                edge,
+                frame + edge_depth.max(width * amount),
+                reveal,
+                compact::SOURCE_EDGE,
+                view,
+            )
+            .into_any_element(),
+        );
+    }
+    let columns = panels::render(page, docked, listing, cx);
     let body = body.child(
         div()
             .relative()
@@ -563,7 +562,7 @@ fn render_body(
             compact::edge_strip(
                 "compact-bottom-edge",
                 Edge::Bottom,
-                frame + edge.max(QUICK_BAR_HEIGHT * amount),
+                frame + edge_depth.max(QUICK_BAR_HEIGHT * amount),
                 page.bottom_reveal.clone(),
                 compact::SOURCE_EDGE,
                 view,
@@ -632,7 +631,7 @@ fn render_body(
         .min_h(px(0.0))
         .children(left_of_card)
         .child(card)
-        .children(right_of_card);
+        .children(right_of_card.into_iter().rev());
     root.p(px(frame))
         .bg(rgb(theme::toolbar_bg()))
         .children(above_card)
@@ -739,8 +738,10 @@ fn compact_chrome(
     }
     let chrome = CompactChrome {
         header: settings.hide_header && page.top_reveal.is_some(),
-        sidebar: settings.hide_sidebar && page.sidebar_visible,
-        preview: settings.hide_preview && page.preview_visible,
+        // Only a panel docked to the left or the right slides: the top and
+        // the bottom edges already call the address bar and the bottom bar.
+        sidebar: settings.hide_sidebar && page.sidebar_visible && panels::side(panels::Panel::Sidebar).is_column(),
+        preview: settings.hide_preview && page.preview_visible && panels::side(panels::Panel::Preview).is_column(),
         bottom: settings.hide_bottom_bar,
     };
     // An open menu freezes every bar: the pointer going into the menu must

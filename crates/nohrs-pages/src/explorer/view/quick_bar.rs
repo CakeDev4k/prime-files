@@ -63,7 +63,13 @@ pub fn render(
         (None, Some(search)) if search.running => {
             (tf!("Buscando… {n}", n = search.found), theme::fg_secondary())
         }
-        (None, Some(search)) => (tf!("{n} encontrados", n = search.found), theme::fg_secondary()),
+        (None, Some(search)) if search.detail.is_empty() => {
+            (tf!("{n} encontrados", n = search.found), theme::fg_secondary())
+        }
+        (None, Some(search)) => (
+            format!("{} · {}", tf!("{n} encontrados", n = search.found), search.detail),
+            theme::fg_secondary(),
+        ),
         (None, None) => (String::new(), theme::fg_secondary()),
     };
 

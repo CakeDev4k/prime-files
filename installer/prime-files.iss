@@ -1,7 +1,7 @@
 ; Prime Files installer (Inno Setup 6).
 ;
 ; Built by .github/workflows/release.yml:
-;   ISCC /DAppVersion=0.1.0 /DExeSource=..\target\dist\nohrs.exe installer\prime-files.iss
+;   ISCC /DAppVersion=0.1.0 /DExeSource=..\target\dist\nohrs.exe /DIndexerSource=..\target\dist\prime-files-indexer.exe installer\prime-files.iss
 ;
 ; Installs for the current user only (no administrator to install), the way
 ; per-user app installers do; only the dependencies that need it ask for
@@ -21,6 +21,9 @@
 #endif
 #ifndef ExeSource
   #define ExeSource "..\target\dist\nohrs.exe"
+#endif
+#ifndef IndexerSource
+  #define IndexerSource "..\target\dist\prime-files-indexer.exe"
 #endif
 
 #define AppName "Prime Files"
@@ -86,6 +89,9 @@ Name: "sevenzip"; Description: "{cm:SevenZipTask}"; GroupDescription: "{cm:Extra
 [Files]
 Source: "{#ExeSource}"; DestDir: "{app}"; DestName: "{#AppExe}"; Flags: ignoreversion
 Source: "..\LICENSE"; DestDir: "{app}"; DestName: "LICENSE.txt"; Flags: ignoreversion
+; Instant indexing's service. Shipped here, installed only when the person
+; turns it on in Settings (it copies itself to Program Files then).
+Source: "{#IndexerSource}"; DestDir: "{app}"; Flags: ignoreversion
 
 [Icons]
 Name: "{autoprograms}\{#AppName}"; Filename: "{app}\{#AppExe}"
@@ -100,6 +106,11 @@ Filename: "{app}\{#AppExe}"; Description: "{cm:LaunchProgram,{#AppName}}"; Flags
 ; An update started from the app's "Atualizar agora" runs silently with
 ; /RELAUNCH=1: the app closed itself for it, so it is opened again.
 Filename: "{app}\{#AppExe}"; Flags: nowait; Check: Relaunch
+
+[UninstallRun]
+; The service is machine-wide: removing it asks for elevation, and only when
+; it was installed.
+Filename: "{app}\prime-files-indexer.exe"; Parameters: "--uninstall"; Verb: "runas"; Flags: shellexec waituntilterminated runhidden; Check: IndexerInstalled; RunOnceId: "RemoveIndexer"
 
 [Code]
 var
@@ -124,6 +135,12 @@ end;
 function MediaFoundationMissing: Boolean;
 begin
   Result := not FileExists(ExpandConstant('{sys}\mfplat.dll'));
+end;
+
+// Any user may read whether a service exists.
+function IndexerInstalled: Boolean;
+begin
+  Result := RegKeyExists(HKLM, 'SYSTEM\CurrentControlSet\Services\PrimeFilesIndexer');
 end;
 
 function Relaunch: Boolean;
@@ -214,6 +231,7 @@ begin
     Log('Could not run forget-listary.')
   else if ResultCode <> 0 then
     Log(Format('forget-listary ended with %d.', [ResultCode]));
+  RegDeleteValue(HKCU, 'Software\Microsoft\Windows\CurrentVersion\Run', 'Prime Files');
   RegDeleteKeyIncludingSubkeys(HKCU, 'Software\Classes\Directory\shell\nohrs');
   RegDeleteKeyIncludingSubkeys(HKCU, 'Software\Classes\Drive\shell\nohrs');
   if RegQueryStringValue(HKCU, 'Software\Classes\Directory\shell', '', Value) and (Value = 'nohrs') then

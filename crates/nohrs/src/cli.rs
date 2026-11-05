@@ -25,6 +25,11 @@ pub struct Cli {
     #[arg(long, global = true, value_name = "COLOR")]
     pub accent: Option<String>,
 
+    /// Start minimized, as at sign-in (Settings › Windows integration › Start
+    /// with Windows). A running instance is left as it is.
+    #[arg(long)]
+    pub background: bool,
+
     /// A folder to open, or a file to open its folder with it selected. When
     /// Nohrs is already running it opens there, in a new tab.
     #[arg(value_name = "PATH", value_parser = parse_path)]

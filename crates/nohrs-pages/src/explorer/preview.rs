@@ -237,12 +237,42 @@ impl ExplorerPane {
         self.follow_active_in_preview(window, cx);
     }
 
+    /// Space: opens the quick look on the active entry, or closes it.
+    pub(crate) fn toggle_quick_look(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.quick_look {
+            self.close_quick_look(cx);
+            return;
+        }
+        let Some(path) = self
+            .active_row()
+            .and_then(|row| self.filtered_entries.get(row))
+            .filter(|entry| entry.kind == "file" || entry.kind == "dir")
+            .map(|entry| entry.path.clone())
+        else {
+            return;
+        };
+        self.quick_look = true;
+        self.preview_follow = None;
+        // A hidden side panel has not been reading the rows it passed.
+        if self.preview_path.as_deref() != Some(path.as_str()) {
+            self.open_preview(path, window, cx);
+        }
+        cx.notify();
+    }
+
+    pub(crate) fn close_quick_look(&mut self, cx: &mut Context<Self>) {
+        if self.quick_look {
+            self.quick_look = false;
+            cx.notify();
+        }
+    }
+
     /// Previews the active row once it has stayed put for
     /// [`PREVIEW_FOLLOW_DELAY`]. Each call replaces the wait before it, so a
     /// run of key presses reads one file, the last.
     pub(crate) fn follow_active_in_preview(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         // A hidden preview reads nothing; the next click shows the row then.
-        if !self.preview_visible {
+        if !self.preview_visible && !self.quick_look {
             self.preview_follow = None;
             return;
         }
@@ -442,10 +472,12 @@ impl ExplorerPane {
                 // A file opened from a content-search hit is shown exactly as
                 // written: the hit is a line number in the file on disk, and
                 // re-indenting or rendering it would move that line.
-                let from_search = self
-                    .search_results
-                    .as_ref()
-                    .is_some_and(|results| results.iter().any(|result| result.path == path));
+                // A hit of a name search (Ctrl+F, the whole computer) has no
+                // line to keep: it is rendered like any file. Until 05/11/2026
+                // every hit counted, and a .md found that way showed raw.
+                let from_search = self.search_results.as_ref().is_some_and(|results| {
+                    results.iter().any(|result| result.path == path && !result.matches.is_empty())
+                });
                 if !from_search && language == "markdown" {
                     self.preview_text = Some(text.clone());
                     self.preview_markdown = Some(text.into());

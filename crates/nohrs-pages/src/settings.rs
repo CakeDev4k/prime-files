@@ -108,7 +108,7 @@ impl SettingsSection {
 }
 
 // Portuguese names for the accents `theme::NAMED_ACCENTS` knows, same order.
-const ACCENT_LABELS: &[&str] = &[k!("Laranja"), k!("Azul"), k!("Verde-água"), k!("Verde"), k!("Roxo"), k!("Rosa"), k!("Vermelho")];
+pub(crate) const ACCENT_LABELS: &[&str] = &[k!("Laranja"), k!("Azul"), k!("Verde-água"), k!("Verde"), k!("Roxo"), k!("Rosa"), k!("Vermelho")];
 
 // Keys that are not commands of the shortcut table: typing filters, Enter
 // opens, the wheel zooms. Listed beside the editable ones so the page still
@@ -119,6 +119,8 @@ const FIXED_KEYS: &[(&str, &str)] = &[
     ("Esc", k!("Limpar a seleção ou o filtro")),
     (k!("Ctrl+roda do mouse"), k!("Zoom contínuo")),
     ("Ctrl+K", k!("Abrir o lançador")),
+    (k!("Espaço"), k!("Visualização rápida")),
+    (k!("Botões laterais do mouse"), k!("Voltar e avançar")),
 ];
 
 // What picking an option of a control does.
@@ -138,6 +140,8 @@ enum Pick {
     ResetShortcut(Action),
     // Gives every command its built-in keys back.
     ResetAllShortcuts,
+    // Starts Prime Files minimized at sign-in, or stops it.
+    StartWithWindows(bool),
 }
 
 // One setting: its name, what it does, and the control that changes it.
@@ -203,6 +207,8 @@ pub struct SettingsPage {
     confirm_reset: bool,
     // Whether folders open in Nohrs; `None` until the registry has answered.
     default_explorer: Option<bool>,
+    // Whether Prime Files starts at sign-in; `None` until the registry answered.
+    starts_with_windows: Option<bool>,
     // What Listary opens folders with; `None` until its file has been read.
     listary: Option<crate::listary::State>,
     updater: Entity<crate::updater::Updater>,
@@ -227,6 +233,7 @@ impl SettingsPage {
             status: None,
             confirm_reset: false,
             default_explorer: None,
+            starts_with_windows: None,
             listary: None,
             updater,
             search: None,
@@ -240,11 +247,14 @@ impl SettingsPage {
 
     // Asks the registry, off the UI thread: each question is a `reg.exe` run.
     fn refresh_default_explorer(&mut self, cx: &mut Context<Self>) {
-        let query = cx.background_spawn(async { crate::default_explorer::is_default() });
+        let query = cx.background_spawn(async {
+            (crate::default_explorer::is_default(), crate::default_explorer::starts_with_windows())
+        });
         cx.spawn(async move |this: gpui::WeakEntity<Self>, cx| {
-            let is_default = query.await;
+            let (is_default, starts) = query.await;
             this.update(cx, |page, cx| {
                 page.default_explorer = Some(is_default);
+                page.starts_with_windows = Some(starts);
                 cx.notify();
             })
             .log_err();
@@ -277,6 +287,29 @@ impl SettingsPage {
                     Ok(()) => (t!("Pastas voltaram a abrir no Explorador do Windows.").to_string(), false),
                     Err(error) => (tf!("Não foi possível mudar o registro: {error}", error = error), true),
                 });
+                page.refresh_default_explorer(cx);
+            })
+            .log_err();
+        })
+        .detach();
+    }
+
+    fn set_start_with_windows(&mut self, enable: bool, cx: &mut Context<Self>) {
+        let exe = match std::env::current_exe() {
+            Ok(exe) => exe,
+            Err(error) => {
+                self.status = Some((tf!("Não foi possível achar o executável do Prime Files: {error}", error = error), true));
+                cx.notify();
+                return;
+            }
+        };
+        let change = cx.background_spawn(async move { crate::default_explorer::set_starts_with_windows(&exe, enable) });
+        cx.spawn(async move |this: gpui::WeakEntity<Self>, cx| {
+            let outcome = change.await;
+            this.update(cx, |page, cx| {
+                if let Err(error) = outcome {
+                    page.status = Some((tf!("Não foi possível mudar o registro: {error}", error = error), true));
+                }
                 page.refresh_default_explorer(cx);
             })
             .log_err();
@@ -348,6 +381,7 @@ impl SettingsPage {
                 self.recording = None;
                 self.edit_keybindings(vec![(shortcuts::info_of(action).id, None)], None, cx);
             }
+            Pick::StartWithWindows(enable) => self.set_start_with_windows(enable, cx),
             Pick::ResetAllShortcuts => {
                 self.recording = None;
                 let edits = shortcuts::ACTIONS.iter().map(|info| (info.id, None)).collect();
@@ -975,6 +1009,19 @@ impl SettingsPage {
             (None, None) => t!("O índice é criado na primeira busca.").to_string(),
         };
         let building = status.building.is_some();
+        use crate::explorer::everything::mft;
+        let mft_state = mft::state();
+        let (mft_busy, mft_error) = cx
+            .try_global::<crate::explorer::everything::Everything>()
+            .map_or((false, None), |state| (state.mft_busy, state.mft_error.clone()));
+        let mft_text = match (mft_busy, mft_error, mft_state) {
+            (true, _, _) => t!("Aguardando a permissão do Windows…").to_string(),
+            (false, Some(error), _) => tf!("Não deu certo: {error}", error = error),
+            (false, None, mft::State::On) => t!("Ligada").to_string(),
+            (false, None, mft::State::Stopped) => t!("O serviço está instalado mas parado.").to_string(),
+            (false, None, mft::State::Off) => t!("Desligada").to_string(),
+        };
+        let mft_on = mft_state == mft::State::On;
         vec![
             Group::new(vec![
                 Row::hint(
@@ -993,8 +1040,34 @@ impl SettingsPage {
                         }),
                 ),
                 Row::hint(
+                    t!("Indexação instantânea"),
+                    t!("Lê a tabela dos discos NTFS como o Everything: o índice do computador fica pronto em segundos, também depois de reiniciar. Instala um serviço do Windows, com permissão de administrador uma vez."),
+                    div()
+                        .flex()
+                        .flex_col()
+                        .items_end()
+                        .gap_2()
+                        // A failure's text can be a whole path: it wraps in a
+                        // narrow column instead of pushing the description
+                        // into one word a line.
+                        .child(
+                            div()
+                                .max_w(px(280.0))
+                                .text_xs()
+                                .text_right()
+                                .text_color(rgb(theme::fg_secondary()))
+                                .child(mft_text),
+                        )
+                        .when(!mft_busy, |this| {
+                            this.child(
+                                button("everything-mft", if mft_on { t!("Desativar") } else { t!("Ativar") }, false)
+                                    .on_click(cx.listener(move |_page, _event, _window, cx| mft::set(!mft_on, cx))),
+                            )
+                        }),
+                ),
+                Row::hint(
                     t!("Como o índice é feito"),
-                    t!("Os nomes de todas as unidades fixas ficam guardados neste computador e são relidos em segundo plano quando a busca abre e o índice tem mais de 10 minutos. Nada sai do computador."),
+                    t!("Os nomes de todas as unidades fixas ficam guardados neste computador. Com o programa aberto, o que é criado ou renomeado entra na hora; o índice é relido em segundo plano quando passa de 6 horas (30 minutos com a indexação instantânea). Nada sai do computador."),
                     div(),
                 ),
             ]),
@@ -1017,7 +1090,22 @@ impl SettingsPage {
     }
 
     fn integrations(&self, cx: &mut Context<Self>) -> Vec<Group> {
+        let reveal = self.config.explorer.reveal_from_other_apps;
         vec![Group::new(vec![
+            Row::hint(
+                t!("\"Mostrar na pasta\" abre aqui"),
+                t!("Premiere (Revelar no Explorador), Chrome, Edge e Firefox (Mostrar na pasta, depois de baixar) e o menu Iniciar (Abrir local do arquivo) abrem a pasta no Prime Files, com o arquivo selecionado e piscando em destaque."),
+                self.switch("reveal-from-other-apps", reveal, ("explorer", "reveal_from_other_apps"), cx),
+            )
+            .reset(("explorer", "reveal_from_other_apps"), reveal, "true"),
+            Row::hint(
+                t!("Iniciar com o Windows"),
+                t!("Abre minimizado quando você entra no Windows, para que \"Mostrar na pasta\" de qualquer programa caia aqui na hora."),
+                match self.starts_with_windows {
+                    Some(on) => self.switch_pick("start-with-windows", on, Pick::StartWithWindows(!on), cx).into_any_element(),
+                    None => checking().into_any_element(),
+                },
+            ),
             Row::hint(
                 t!("Explorador padrão do Windows"),
                 t!("Pastas, drives, Win+E e o ícone do Explorador na barra de tarefas abrem no Prime Files. Só neste usuário do Windows; desligar devolve tudo ao Explorador."),
@@ -1173,6 +1261,16 @@ impl SettingsPage {
                     )
                     .reset(("updates", "automatic"), self.config.updates.automatic, "true"),
                 ],
+            ),
+            Group::titled(
+                t!("Tela de boas-vindas"),
+                vec![Row::hint(
+                    t!("Configuração inicial"),
+                    t!("Os quatro passos do primeiro uso: idioma, tema, explorador padrão e integrações."),
+                    button("open-welcome", t!("Abrir de novo"), false).on_click(cx.listener(|page, _event, _window, cx| {
+                        page.write("ui", "welcome_done", "false".to_string(), cx);
+                    })),
+                )],
             ),
             Group::titled(
                 t!("Arquivo de configuração"),

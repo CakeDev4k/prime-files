@@ -36,6 +36,8 @@ pub mod settings;
 pub(crate) mod shell_menu;
 /// The terminal panel under the explorer, one shell per tab.
 pub mod terminal;
+/// The welcome screen of the first run.
+pub mod welcome;
 
 pub use root::RootView;
 

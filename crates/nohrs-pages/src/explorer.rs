@@ -4,6 +4,7 @@ mod drag;
 pub(crate) mod drives;
 mod entries;
 pub(crate) mod everything;
+pub(crate) mod folder_watch;
 pub(crate) mod file_ops;
 mod filter;
 mod folder_views;

@@ -200,6 +200,7 @@ impl ExplorerPane {
         if let Some(read) = pending.wait(self.listing_wait) {
             self.listing_pending = false;
             self.apply_listing(read, refresh, cx);
+            self.watch_listed_folders(cx);
             return;
         }
 
@@ -230,6 +231,7 @@ impl ExplorerPane {
                     pane.listing_pending = false;
                     pane.listing_tasks.clear();
                     pane.apply_listing(read, refresh, cx);
+                    pane.watch_listed_folders(cx);
                     cx.notify();
                 }
             })
@@ -293,6 +295,8 @@ impl ExplorerPane {
                     self.preview_image_path = None;
                     self.preview_markdown = None;
                     self.preview_message = None;
+                    // Its file belonged to the folder left behind.
+                    self.quick_look = false;
                 }
                 self.entries = entries;
                 self.apply_filter();

@@ -48,6 +48,8 @@ fn main() {
     if cli.command.is_none() {
         let handed_over = match &cli.path {
             Some(path) => nohrs_pages::ipc::request_open(path),
+            // Started at sign-in while one already runs: nothing to show.
+            None if cli.background => nohrs_pages::ipc::is_running(),
             None => nohrs_pages::ipc::request_show(),
         };
         if handed_over {

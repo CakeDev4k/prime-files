@@ -19,6 +19,7 @@ expression: parsed
             scroll_smoothness: 50,
             audio_waveforms: false,
             preview_autoplay: false,
+            welcome_done: false,
             hover_audio: true,
             hover_audio_delay_ms: 400,
         },
@@ -26,6 +27,7 @@ expression: parsed
             split_direction: Vertical,
             synced_panes: false,
             restore_tabs: true,
+            reveal_from_other_apps: true,
         },
         compact: Compact {
             enabled: false,

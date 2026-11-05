@@ -10,6 +10,7 @@ members = [
   "crates/nohrs-ui",
   "crates/nohrs-pages",
   "crates/nohrs-launcher",
+  "crates/nohrs-indexer",
 ]
 # P4 以降に追加:
 #   "crates/nohrs-plugin-host",
@@ -31,7 +32,7 @@ default-members = [
 ]
 
 [workspace.package]
-version      = "0.3.1"
+version      = "0.3.2"
 edition      = "2024"
 # Edition 2024 alone would allow 1.85, which is what this said while the real
 # floor climbed past it. 1.95 is the release that stabilized `cfg_select!`, used

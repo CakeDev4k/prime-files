@@ -139,6 +139,8 @@ pub struct Ui {
     pub audio_waveforms: bool,
     /// Whether a video or sound starts playing as soon as the preview opens it.
     pub preview_autoplay: bool,
+    /// Whether the welcome screen was gone through; false shows it on start.
+    pub welcome_done: bool,
     /// Whether resting the mouse on a sound file in the listing plays it.
     pub hover_audio: bool,
     /// How long the mouse rests on a sound file before it plays, in ms.
@@ -157,6 +159,7 @@ impl Default for Ui {
             scroll_smoothness: 50,
             audio_waveforms: false,
             preview_autoplay: false,
+            welcome_done: false,
             hover_audio: true,
             hover_audio_delay_ms: 400,
         }
@@ -173,6 +176,9 @@ pub struct Explorer {
     pub synced_panes: bool,
     /// When enabled, the previous session's tabs are restored on restart (§4).
     pub restore_tabs: bool,
+    /// Whether "show in folder" from other programs (Premiere's Reveal in
+    /// Explorer, a browser's Show in folder) opens here instead of Explorer.
+    pub reveal_from_other_apps: bool,
 }
 
 impl Default for Explorer {
@@ -181,6 +187,7 @@ impl Default for Explorer {
             split_direction: SplitDirection::Vertical,
             synced_panes: false,
             restore_tabs: true,
+            reveal_from_other_apps: true,
         }
     }
 }
@@ -920,6 +927,15 @@ fn read_ui(table: &toml::Table, ui: &mut Ui, diagnostics: &mut Vec<Diagnostic>) 
             ))),
         }
     }
+    if let Some(value) = table.get("welcome_done") {
+        match value.as_bool() {
+            Some(flag) => ui.welcome_done = flag,
+            None => diagnostics.push(Diagnostic::warn(format!(
+                "invalid ui.welcome_done {value}; using {}",
+                ui.welcome_done
+            ))),
+        }
+    }
     if let Some(value) = table.get("hover_audio") {
         match value.as_bool() {
             Some(flag) => ui.hover_audio = flag,
@@ -952,6 +968,7 @@ fn read_ui(table: &toml::Table, ui: &mut Ui, diagnostics: &mut Vec<Diagnostic>) 
             "preview_autoplay",
             "hover_audio",
             "hover_audio_delay_ms",
+            "welcome_done",
         ],
         "ui.",
         diagnostics,
@@ -986,9 +1003,18 @@ fn read_explorer(table: &toml::Table, explorer: &mut Explorer, diagnostics: &mut
             ))),
         }
     }
+    if let Some(value) = table.get("reveal_from_other_apps") {
+        match value.as_bool() {
+            Some(flag) => explorer.reveal_from_other_apps = flag,
+            None => diagnostics.push(Diagnostic::warn(format!(
+                "invalid explorer.reveal_from_other_apps {value}; using {}",
+                explorer.reveal_from_other_apps
+            ))),
+        }
+    }
     warn_unknown_keys(
         table,
-        &["split_direction", "synced_panes", "restore_tabs"],
+        &["split_direction", "synced_panes", "restore_tabs", "reveal_from_other_apps"],
         "explorer.",
         diagnostics,
     );

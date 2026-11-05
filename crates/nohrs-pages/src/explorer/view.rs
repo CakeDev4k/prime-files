@@ -43,6 +43,17 @@ pub fn render(
     if page.hover_audio.is_some() && super::hover_audio::playing() {
         window.request_animation_frame();
     }
+    // The grid aims its own reveal once it knows its columns
+    // (`grid::render`); the other views count rows, which need no measure.
+    if page.view_mode != super::types::ViewMode::Grid
+        && let Some((index, _)) = page.reveal_scroll.take()
+    {
+        page.scroll_entry_into_view(index);
+    }
+    // A file revealed from another program glows for a moment.
+    if page.tick_reveal_glow() {
+        window.request_animation_frame();
+    }
     if std::mem::take(&mut page.preview_selection_pending)
         && let Some(path) = page.active_path.clone()
     {
@@ -68,6 +79,11 @@ pub fn render(
             // Escape closes an open menu before anything else hears it.
             if key_lc == "escape" && this.context_menu.is_some() {
                 this.close_menu(cx);
+                cx.stop_propagation();
+                return;
+            }
+            if key_lc == "escape" && this.quick_look {
+                this.close_quick_look(cx);
                 cx.stop_propagation();
                 return;
             }
@@ -138,6 +154,19 @@ pub fn render(
             // event; anything unmatched falls through to the selection model below.
             let shift = modifiers.shift;
             match key_lc.as_str() {
+                // Space shows the active entry large over the listing and
+                // hides it again, as Quick Look does; the arrows move on
+                // under it. In the filter field a space is a space: the
+                // field has the focus then, not the listing.
+                "space"
+                    if !with_modifier
+                        && !modifiers.alt
+                        && (this.quick_look || this.focus_handle.is_focused(window)) =>
+                {
+                    this.toggle_quick_look(window, cx);
+                    cx.stop_propagation();
+                    return;
+                }
                 // macOS also trashes on Backspace (§6); on Linux only Delete does.
                 "backspace" if cfg!(target_os = "macos") && !shift => {
                     this.trash_selection(cx);
@@ -158,6 +187,7 @@ pub fn render(
                         .active_row()
                         .and_then(|index| this.filtered_entries.get(index).cloned())
                     {
+                        this.close_quick_look(cx);
                         this.activate_entry(item, window, cx);
                     }
                     cx.stop_propagation();
@@ -263,7 +293,27 @@ pub fn render(
                 }
             }),
         )
+        // The mouse's side buttons go back and forward, as in Explorer and
+        // every browser. gpui reports them as `Navigate`; nothing listened.
+        // Anywhere over the pane: each pane of a split has its own history.
+        .on_mouse_down(
+            gpui::MouseButton::Navigate(gpui::NavigationDirection::Back),
+            cx.listener(|this, _event, window, cx| {
+                this.close_quick_look(cx);
+                this.go_back(window, cx);
+                cx.stop_propagation();
+            }),
+        )
+        .on_mouse_down(
+            gpui::MouseButton::Navigate(gpui::NavigationDirection::Forward),
+            cx.listener(|this, _event, window, cx| {
+                this.close_quick_look(cx);
+                this.go_forward(window, cx);
+                cx.stop_propagation();
+            }),
+        )
         .map(|this| render_body(this, page, window, cx))
+        .children(preview::render_quick_look(page, window, cx))
         .children(menu::render(page, window, cx))
 }
 
@@ -381,7 +431,13 @@ fn render_body(
         None
     };
     let listing = listing::render(page, window, cx);
-    let preview = if page.preview_visible {
+    // While Space's quick look shows the preview over everything, the side
+    // panel keeps its room, empty, so the listing behind does not reflow
+    // twice; in compact mode it stays in its edge.
+    let preview = if page.quick_look {
+        (page.preview_visible && !chrome.preview)
+            .then(|| div().size_full().bg(rgb(theme::bg())).into_any_element())
+    } else if page.preview_visible {
         Some(preview::render(page, window, cx).into_any_element())
     } else {
         None

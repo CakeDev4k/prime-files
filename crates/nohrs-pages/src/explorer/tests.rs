@@ -143,6 +143,7 @@ async fn apply_config_ui_reflects_ui_section(cx: &mut TestAppContext) {
                 scroll_smoothness: 50,
                 audio_waveforms: false,
                 preview_autoplay: false,
+                welcome_done: false,
                 hover_audio: false,
                 hover_audio_delay_ms: 400,
             };
@@ -191,6 +192,7 @@ async fn config_reload_keeps_a_sort_chosen_in_the_session(cx: &mut TestAppContex
                 scroll_smoothness: 50,
                 audio_waveforms: false,
                 preview_autoplay: false,
+                welcome_done: false,
                 hover_audio: false,
                 hover_audio_delay_ms: 400,
             };
@@ -808,6 +810,7 @@ async fn synced_panes_mirror_navigation(cx: &mut TestAppContext) {
                 split_direction: SplitDirection::Vertical,
                 synced_panes: true,
                 restore_tabs: true,
+                reveal_from_other_apps: true,
             };
             page.apply_config_explorer(&synced, cx);
             assert!(page.is_synced());
@@ -845,6 +848,7 @@ async fn synced_navigation_clears_stale_search_state(cx: &mut TestAppContext) {
                 split_direction: SplitDirection::Vertical,
                 synced_panes: true,
                 restore_tabs: true,
+                reveal_from_other_apps: true,
             };
             page.apply_config_explorer(&synced, cx);
 
@@ -889,6 +893,7 @@ async fn split_pane_inherits_applied_ui_config(cx: &mut TestAppContext) {
                 scroll_smoothness: 50,
                 audio_waveforms: false,
                 preview_autoplay: false,
+                welcome_done: false,
                 hover_audio: false,
                 hover_audio_delay_ms: 400,
             };
@@ -980,6 +985,7 @@ async fn close_pane_keeps_subscriptions_aligned(cx: &mut TestAppContext) {
                 split_direction: SplitDirection::Vertical,
                 synced_panes: true,
                 restore_tabs: true,
+                reveal_from_other_apps: true,
             };
             page.apply_config_explorer(&synced, cx);
             page.pane(0)
@@ -2724,6 +2730,7 @@ async fn each_folder_opens_with_the_zoom_and_sort_it_was_left_with(cx: &mut Test
                 scroll_smoothness: 50,
                 audio_waveforms: false,
                 preview_autoplay: false,
+                welcome_done: false,
                 hover_audio: false,
                 hover_audio_delay_ms: 400,
             };
@@ -2752,4 +2759,38 @@ async fn each_folder_opens_with_the_zoom_and_sort_it_was_left_with(cx: &mut Test
             assert!(page.view_mode == ViewMode::List);
         })
         .unwrap();
+}
+
+// A file another program saves in the folder on screen shows up without F5,
+// and one it deletes goes (folder_watch.rs). Until 05/11/2026 neither did.
+#[gpui::test]
+async fn the_folder_on_screen_follows_what_other_programs_do(cx: &mut TestAppContext) {
+    // The notifications and the read come on real threads.
+    cx.executor().allow_parking();
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("a.txt"), "A").unwrap();
+    let window = open_pane_at(cx, dir.path());
+    let names = |cx: &mut TestAppContext| -> Vec<String> {
+        window
+            .read_with(cx, |pane, _cx| pane.filtered_entries.iter().map(|entry| entry.name.clone()).collect())
+            .unwrap()
+    };
+    let wait_for = |cx: &mut TestAppContext, wanted: &[&str]| {
+        for _ in 0..300 {
+            cx.executor().advance_clock(Duration::from_millis(100));
+            cx.run_until_parked();
+            if names(cx) == wanted {
+                return true;
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        false
+    };
+    assert!(wait_for(cx, &["a.txt"]), "the first listing: {:?}", names(cx));
+
+    std::fs::write(dir.path().join("b.txt"), "saved by someone else").unwrap();
+    assert!(wait_for(cx, &["a.txt", "b.txt"]), "after a save elsewhere: {:?}", names(cx));
+
+    std::fs::remove_file(dir.path().join("a.txt")).unwrap();
+    assert!(wait_for(cx, &["b.txt"]), "after a delete elsewhere: {:?}", names(cx));
 }

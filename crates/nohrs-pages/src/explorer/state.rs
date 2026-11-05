@@ -321,6 +321,9 @@ pub struct ExplorerPane {
     pub(crate) context_menu: Option<super::context_menu::OpenMenu>,
     /// Whether the preview pane is shown (the bottom bar's panel button).
     pub(crate) preview_visible: bool,
+    /// Space's quick look is open: the preview drawn large over the pane
+    /// (`view::preview::render_quick_look`), whatever the side panel shows.
+    pub(crate) quick_look: bool,
     /// The bottom bar's zoom menu is open.
     pub(crate) zoom_menu_open: bool,
     /// Closes the zoom menu shown by a wheel or key zoom (`flash_zoom_menu`);
@@ -330,6 +333,18 @@ pub struct ExplorerPane {
     pub(crate) zoom_menu_hovered: bool,
     /// The header's "open in another program" menu is open.
     pub(crate) open_in_menu: bool,
+    /// The file `reveal` brought forward and when: it glows for a moment so
+    /// the eye finds it among its neighbours (`reveal_glow`).
+    pub(crate) reveal_highlight: Option<(String, std::time::Instant)>,
+    /// The revealed entry still to be scrolled to, and the grid width the
+    /// last scroll aimed with (`None` before any). A tab opened for it has
+    /// not measured its grid yet: with no width there is one column, and the
+    /// row worked out from it is far past the file. The grid scrolls only
+    /// once it has a width, and again whenever the width changes, until a
+    /// frame finds the width it aimed with.
+    pub(crate) reveal_scroll: Option<(usize, Option<f32>)>,
+    /// What changes on disk refresh the listing (`folder_watch`).
+    pub(crate) folder_watch: Option<super::folder_watch::FolderWatch>,
     /// The zoom menu's slider knob is being dragged.
     pub(crate) zoom_dragging: bool,
     /// Whether the bar under the listing searches subfolders (Ctrl+F) rather
@@ -567,10 +582,14 @@ impl ExplorerPane {
             hover_audio_delay_ms: 400,
             context_menu: None,
             preview_visible: true,
+            quick_look: false,
             zoom_menu_open: false,
             zoom_menu_flash: None,
             zoom_menu_hovered: false,
             open_in_menu: false,
+            reveal_highlight: None,
+            reveal_scroll: None,
+            folder_watch: None,
             zoom_dragging: false,
             quick_recursive: false,
             deep_search: None,
@@ -734,10 +753,17 @@ impl ExplorerPane {
             return;
         };
         self.select_single(index);
+        self.reveal_highlight = Some((path.to_owned(), std::time::Instant::now()));
         // Previewed on the next frame, which has the window that opening a
         // preview needs: a file another program sent was selected with the
         // preview still on whatever it showed before.
         self.preview_selection_pending = true;
+        self.reveal_scroll = Some((index, None));
+        self.scroll_entry_into_view(index);
+    }
+
+    /// Scrolls entry `index` to the middle of the listing, in any view.
+    pub(crate) fn scroll_entry_into_view(&mut self, index: usize) {
         let (list_row, grid_row) = self.visual_rows_of(index);
         match self.view_mode {
             ViewMode::List | ViewMode::Tree => self

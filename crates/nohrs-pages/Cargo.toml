@@ -31,6 +31,7 @@ serde_json = { workspace = true, features = ["preserve_order"] }
 tracing.workspace    = true
 # `local-offset`: "Today" and "Yesterday" in Group by are local days.
 time = { workspace = true, features = ["local-offset"] }
+notify = "8"
 # Hands a finished thumbnail from a worker thread back to the pane's task.
 async-channel = "2"
 # Reads the Explorer window's HWND for the IPC endpoint; the version gpui uses.
@@ -45,6 +46,8 @@ sha2 = "0.10"
 # call and reads the system thumbnail cache. Pinned to the version gpui already
 # links so no second copy of the bindings enters the tree.
 [target.'cfg(windows)'.dependencies]
+# The indexer service's protocol and client (instant indexing).
+nohrs-indexer = { path = "../nohrs-indexer" }
 windows = { version = "0.61", features = [
   "Data_Pdf",
   "Foundation",

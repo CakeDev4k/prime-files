@@ -5,6 +5,204 @@
 
 pub(super) static EXTRA: &[(&str, [&str; 6])] = &[
     (
+        "Como você vê os arquivos",
+        [
+            "Comment vous voyez vos fichiers",
+            "Wie Sie Ihre Dateien sehen",
+            "Come vedi i file",
+            "Как вы видите файлы",
+            "ファイルの見え方",
+            "文件的显示方式",
+        ],
+    ),
+    (
+        "Ajustes do dia a dia. Tudo fica em Configurações para mudar depois.",
+        [
+            "Les réglages de tous les jours. Tout reste dans les Paramètres pour être changé plus tard.",
+            "Einstellungen für jeden Tag. Alles bleibt in den Einstellungen, um es später zu ändern.",
+            "Le impostazioni di tutti i giorni. Restano tutte nelle Impostazioni per cambiarle dopo.",
+            "Повседневные настройки. Все они остаются в Настройках, чтобы изменить их позже.",
+            "毎日使う設定です。すべてあとから設定で変更できます。",
+            "日常设置。之后都可以在设置中更改。",
+        ],
+    ),
+    (
+        "Dicas: Espaço mostra o arquivo grande, os botões laterais do mouse voltam e avançam, Ctrl+E busca no computador inteiro, e Configurações › Atalhos muda qualquer tecla.",
+        [
+            "Astuces : Espace affiche le fichier en grand, les boutons latéraux de la souris reculent et avancent, Ctrl+E cherche dans tout l'ordinateur, et Paramètres › Raccourcis change n'importe quelle touche.",
+            "Tipps: Leertaste zeigt die Datei groß, die Seitentasten der Maus gehen zurück und vor, Strg+E durchsucht den ganzen Computer, und Einstellungen › Tastenkürzel ändert jede Taste.",
+            "Suggerimenti: Spazio mostra il file in grande, i tasti laterali del mouse vanno avanti e indietro, Ctrl+E cerca in tutto il computer, e Impostazioni › Scorciatoie cambia qualsiasi tasto.",
+            "Подсказки: Пробел показывает файл крупно, боковые кнопки мыши переходят назад и вперёд, Ctrl+E ищет по всему компьютеру, а Настройки › Сочетания клавиш меняют любую клавишу.",
+            "ヒント: スペースでファイルを大きく表示、マウスのサイドボタンで戻る・進む、Ctrl+E でコンピューター全体を検索、設定 › ショートカットでどのキーも変更できます。",
+            "提示：空格键放大显示文件，鼠标侧键后退和前进，Ctrl+E 搜索整台电脑，设置 › 快捷键可更改任意按键。",
+        ],
+    ),
+    (
+        "Espaço",
+        [
+            "Espace",
+            "Leertaste",
+            "Spazio",
+            "Пробел",
+            "スペース",
+            "空格键",
+        ],
+    ),
+    (
+        "Visualização rápida",
+        [
+            "Aperçu rapide",
+            "Schnellansicht",
+            "Anteprima rapida",
+            "Быстрый просмотр",
+            "クイックルック",
+            "快速预览",
+        ],
+    ),
+    (
+        "Botões laterais do mouse",
+        [
+            "Boutons latéraux de la souris",
+            "Seitentasten der Maus",
+            "Tasti laterali del mouse",
+            "Боковые кнопки мыши",
+            "マウスのサイドボタン",
+            "鼠标侧键",
+        ],
+    ),
+    (
+        "Voltar e avançar",
+        [
+            "Reculer et avancer",
+            "Zurück und vor",
+            "Indietro e avanti",
+            "Назад и вперёд",
+            "戻る・進む",
+            "后退和前进",
+        ],
+    ),
+    (
+        "Indexação instantânea",
+        [
+            "Indexation instantanée",
+            "Sofortige Indexierung",
+            "Indicizzazione istantanea",
+            "Мгновенная индексация",
+            "インスタントインデックス",
+            "即时索引",
+        ],
+    ),
+    (
+        "Lê a tabela dos discos NTFS como o Everything: o índice do computador fica pronto em segundos, também depois de reiniciar. Instala um serviço do Windows, com permissão de administrador uma vez.",
+        [
+            "Lit la table des disques NTFS comme Everything : l'index de l'ordinateur est prêt en quelques secondes, même après un redémarrage. Installe un service Windows, avec l'autorisation d'administrateur une seule fois.",
+            "Liest die Dateitabelle der NTFS-Laufwerke wie Everything: Der Index des Computers ist in Sekunden fertig, auch nach einem Neustart. Installiert einen Windows-Dienst, einmalig mit Administratorrechten.",
+            "Legge la tabella dei dischi NTFS come Everything: l'indice del computer è pronto in pochi secondi, anche dopo un riavvio. Installa un servizio di Windows, con il permesso di amministratore una volta sola.",
+            "Читает таблицу файлов дисков NTFS, как Everything: индекс компьютера готов за секунды, в том числе после перезагрузки. Устанавливает службу Windows, один раз с правами администратора.",
+            "Everything と同じく NTFS ドライブのファイルテーブルを読み取ります。再起動後もコンピューターのインデックスが数秒で完成します。管理者の許可を一度だけ得て Windows サービスをインストールします。",
+            "像 Everything 一样读取 NTFS 磁盘的文件表：电脑的索引几秒内就绪，重启后也是如此。需要一次管理员权限来安装一个 Windows 服务。",
+        ],
+    ),
+    (
+        "Ativar",
+        [
+            "Activer",
+            "Aktivieren",
+            "Attiva",
+            "Включить",
+            "有効にする",
+            "启用",
+        ],
+    ),
+    (
+        "Desativar",
+        [
+            "Désactiver",
+            "Deaktivieren",
+            "Disattiva",
+            "Выключить",
+            "無効にする",
+            "停用",
+        ],
+    ),
+    (
+        "Ligada",
+        [
+            "Activée",
+            "Ein",
+            "Attivata",
+            "Включена",
+            "オン",
+            "开",
+        ],
+    ),
+    (
+        "Aguardando a permissão do Windows…",
+        [
+            "En attente de l'autorisation de Windows…",
+            "Warte auf die Erlaubnis von Windows…",
+            "In attesa del permesso di Windows…",
+            "Ожидание разрешения Windows…",
+            "Windows の許可を待っています…",
+            "正在等待 Windows 授权…",
+        ],
+    ),
+    (
+        "O serviço está instalado mas parado.",
+        [
+            "Le service est installé mais arrêté.",
+            "Der Dienst ist installiert, aber angehalten.",
+            "Il servizio è installato ma fermo.",
+            "Служба установлена, но остановлена.",
+            "サービスはインストールされていますが停止しています。",
+            "服务已安装但已停止。",
+        ],
+    ),
+    (
+        "Não deu certo: {error}",
+        [
+            "Ça n'a pas marché : {error}",
+            "Das hat nicht geklappt: {error}",
+            "Non ha funzionato: {error}",
+            "Не получилось: {error}",
+            "うまくいきませんでした: {error}",
+            "未成功：{error}",
+        ],
+    ),
+    (
+        "Os nomes de todas as unidades fixas ficam guardados neste computador. Com o programa aberto, o que é criado ou renomeado entra na hora; o índice é relido em segundo plano quando passa de 6 horas (30 minutos com a indexação instantânea). Nada sai do computador.",
+        [
+            "Les noms de tous les disques fixes sont gardés sur cet ordinateur. Programme ouvert, ce qui est créé ou renommé entre aussitôt ; l'index est relu en arrière-plan quand il a plus de 6 heures (30 minutes avec l'indexation instantanée). Rien ne quitte l'ordinateur.",
+            "Die Namen aller festen Laufwerke bleiben auf diesem Computer. Solange das Programm offen ist, kommt alles Neue oder Umbenannte sofort hinein; der Index wird im Hintergrund neu gelesen, wenn er älter als 6 Stunden ist (30 Minuten mit sofortiger Indexierung). Nichts verlässt den Computer.",
+            "I nomi di tutte le unità fisse restano su questo computer. A programma aperto, ciò che viene creato o rinominato entra subito; l'indice viene riletto in background quando supera le 6 ore (30 minuti con l'indicizzazione istantanea). Nulla lascia il computer.",
+            "Имена на всех несъёмных дисках хранятся на этом компьютере. Пока программа открыта, всё созданное или переименованное попадает в индекс сразу; индекс перечитывается в фоне, когда ему больше 6 часов (30 минут с мгновенной индексацией). Ничего не покидает компьютер.",
+            "すべての固定ドライブの名前はこのコンピューターに保存されます。プログラムを開いている間は、作成や名前変更がすぐに反映されます。インデックスは 6 時間（インスタントインデックスでは 30 分）を過ぎるとバックグラウンドで読み直されます。データがコンピューターの外に出ることはありません。",
+            "所有固定磁盘上的名称都保存在这台电脑上。程序打开时，新建或重命名的内容会立即加入；索引超过 6 小时（即时索引为 30 分钟）后会在后台重新读取。任何内容都不会离开电脑。",
+        ],
+    ),
+    (
+        "índice de {age} atrás",
+        [
+            "index d'il y a {age}",
+            "Index von vor {age}",
+            "indice di {age} fa",
+            "индекс {age} назад",
+            "{age}前のインデックス",
+            "{age}前的索引",
+        ],
+    ),
+    (
+        "\"Mostrar na pasta\" abre aqui",
+        [
+            "« Afficher dans le dossier » s'ouvre ici",
+            "„Im Ordner anzeigen“ öffnet sich hier",
+            "\"Mostra nella cartella\" si apre qui",
+            "«Показать в папке» открывается здесь",
+            "「フォルダーに表示」をここで開く",
+            "“在文件夹中显示”在此打开",
+        ],
+    ),
+    (
         "\"Settings\" do Listary não é um objeto",
         [
             "Les « Settings » de Listary ne sont pas un objet",
@@ -126,6 +324,17 @@ pub(super) static EXTRA: &[(&str, [&str; 6])] = &[
         ],
     ),
     (
+        "Abre minimizado quando você entra no Windows, para que \"Mostrar na pasta\" de qualquer programa caia aqui na hora.",
+        [
+            "S'ouvre réduit à l'ouverture de session Windows, pour que « Afficher dans le dossier » de n'importe quel programme arrive ici tout de suite.",
+            "Startet minimiert bei der Windows-Anmeldung, damit „Im Ordner anzeigen“ aus jedem Programm sofort hier landet.",
+            "Si apre ridotto a icona all'accesso a Windows, così \"Mostra nella cartella\" di qualsiasi programma arriva qui subito.",
+            "Открывается свёрнутым при входе в Windows, чтобы «Показать в папке» из любой программы сразу попадало сюда.",
+            "Windows へのサインイン時に最小化して起動し、どのアプリの「フォルダーに表示」もすぐここに届くようにします。",
+            "登录 Windows 时最小化启动，让任何程序的“在文件夹中显示”都立即在这里打开。",
+        ],
+    ),
+    (
         "Abrindo…",
         [
             "Ouverture…",
@@ -181,6 +390,17 @@ pub(super) static EXTRA: &[(&str, [&str; 6])] = &[
         ],
     ),
     (
+        "Abrir as pastas do Listary aqui",
+        [
+            "Ouvrir ici les dossiers de Listary",
+            "Listary-Ordner hier öffnen",
+            "Apri qui le cartelle di Listary",
+            "Открывать папки Listary здесь",
+            "Listary のフォルダーをここで開く",
+            "在此打开 Listary 的文件夹",
+        ],
+    ),
+    (
         "Abrir config.toml",
         [
             "Ouvrir config.toml",
@@ -189,6 +409,17 @@ pub(super) static EXTRA: &[(&str, [&str; 6])] = &[
             "Открыть config.toml",
             "config.toml を開く",
             "打开 config.toml",
+        ],
+    ),
+    (
+        "Abrir de novo",
+        [
+            "Rouvrir",
+            "Erneut öffnen",
+            "Apri di nuovo",
+            "Открыть снова",
+            "もう一度開く",
+            "再次打开",
         ],
     ),
     (
@@ -423,6 +654,17 @@ pub(super) static EXTRA: &[(&str, [&str; 6])] = &[
         ],
     ),
     (
+        "As pastas que você abre pelo Listary (Ctrl duas vezes) abrem no Prime Files. O Listary reinicia ao mudar.",
+        [
+            "Les dossiers ouverts depuis Listary (Ctrl deux fois) s'ouvrent dans Prime Files. Listary redémarre lors du changement.",
+            "Ordner, die Sie über Listary öffnen (zweimal Strg), öffnen sich in Prime Files. Listary startet beim Ändern neu.",
+            "Le cartelle aperte da Listary (Ctrl due volte) si aprono in Prime Files. Listary si riavvia quando cambi.",
+            "Папки, открытые через Listary (дважды Ctrl), открываются в Prime Files. При изменении Listary перезапускается.",
+            "Listary (Ctrl を 2 回) で開いたフォルダーを Prime Files で開きます。変更すると Listary が再起動します。",
+            "通过 Listary(按两次 Ctrl)打开的文件夹会在 Prime Files 中打开。更改时会重启 Listary。",
+        ],
+    ),
+    (
         "Atalho",
         [
             "Raccourci",
@@ -544,6 +786,17 @@ pub(super) static EXTRA: &[(&str, [&str; 6])] = &[
         ],
     ),
     (
+        "Automático segue o formato regional do Windows; neste computador, {language}.",
+        [
+            "Automatique suit le format régional de Windows ; sur cet ordinateur, {language}.",
+            "Automatisch folgt dem Regionalformat von Windows; auf diesem Computer {language}.",
+            "Automatico segue il formato regionale di Windows; su questo computer, {language}.",
+            "«Автоматически» следует региональному формату Windows; на этом компьютере — {language}.",
+            "「自動」は Windows の地域設定に従います。このコンピューターでは {language} です。",
+            "“自动”跟随 Windows 区域格式；在这台电脑上为 {language}。",
+        ],
+    ),
+    (
         "Azul",
         [
             "Bleu",
@@ -618,6 +871,17 @@ pub(super) static EXTRA: &[(&str, [&str; 6])] = &[
             "Панели",
             "バー",
             "栏",
+        ],
+    ),
+    (
+        "Bem-vindo ao Prime Files",
+        [
+            "Bienvenue dans Prime Files",
+            "Willkommen bei Prime Files",
+            "Benvenuto in Prime Files",
+            "Добро пожаловать в Prime Files",
+            "Prime Files へようこそ",
+            "欢迎使用 Prime Files",
         ],
     ),
     (
@@ -819,6 +1083,17 @@ pub(super) static EXTRA: &[(&str, [&str; 6])] = &[
         ],
     ),
     (
+        "Começar a usar",
+        [
+            "Commencer",
+            "Loslegen",
+            "Inizia a usarlo",
+            "Начать работу",
+            "使い始める",
+            "开始使用",
+        ],
+    ),
+    (
         "Como as barras aparecem",
         [
             "Comment les barres apparaissent",
@@ -871,6 +1146,17 @@ pub(super) static EXTRA: &[(&str, [&str; 6])] = &[
             "Архивы",
             "圧縮ファイル",
             "压缩文件",
+        ],
+    ),
+    (
+        "Configuração inicial",
+        [
+            "Configuration initiale",
+            "Ersteinrichtung",
+            "Configurazione iniziale",
+            "Начальная настройка",
+            "初期設定",
+            "初始设置",
         ],
     ),
     (
@@ -1072,6 +1358,17 @@ pub(super) static EXTRA: &[(&str, [&str; 6])] = &[
         ],
     ),
     (
+        "Dicas: Ctrl+E busca no computador inteiro, parar o mouse sobre um som toca ele, e Configurações › Atalhos muda qualquer tecla.",
+        [
+            "Astuces : Ctrl+E cherche dans tout l'ordinateur, laisser la souris sur un son le joue, et Paramètres › Raccourcis change n'importe quelle touche.",
+            "Tipps: Strg+E durchsucht den ganzen Computer, die Maus auf einem Ton ruhen lassen spielt ihn ab, und Einstellungen › Tastenkürzel ändert jede Taste.",
+            "Suggerimenti: Ctrl+E cerca in tutto il computer, tenere il mouse su un suono lo riproduce, e Impostazioni › Scorciatoie cambia qualsiasi tasto.",
+            "Советы: Ctrl+E ищет по всему компьютеру, задержка мыши на звуке включает его, а Настройки › Сочетания клавиш меняют любую клавишу.",
+            "ヒント: Ctrl+E でコンピューター全体を検索、サウンドにマウスを置くと再生、設定 › ショートカットキーで任意のキーを変更できます。",
+            "提示：Ctrl+E 搜索整台电脑，鼠标停在音频上即可播放，在 设置 › 快捷键 中可以更改任何按键。",
+        ],
+    ),
+    (
         "Diminuir o zoom",
         [
             "Zoom arrière",
@@ -1223,6 +1520,17 @@ pub(super) static EXTRA: &[(&str, [&str; 6])] = &[
             "Выберите, как решить конфликт имён.",
             "名前の競合の解決方法を選んでください。",
             "选择如何解决名称冲突。",
+        ],
+    ),
+    (
+        "Escolha se as pastas do Windows abrem aqui. Dá para desfazer a qualquer momento, e nada muda para os outros usuários do computador.",
+        [
+            "Choisissez si les dossiers de Windows s'ouvrent ici. Vous pouvez annuler à tout moment, et rien ne change pour les autres utilisateurs.",
+            "Wählen Sie, ob Windows-Ordner hier geöffnet werden. Sie können es jederzeit rückgängig machen, und für andere Benutzer ändert sich nichts.",
+            "Scegli se le cartelle di Windows si aprono qui. Puoi annullare in qualsiasi momento, e per gli altri utenti non cambia nulla.",
+            "Выберите, открываются ли папки Windows здесь. Это можно отменить в любой момент, и для других пользователей ничего не меняется.",
+            "Windows のフォルダーをここで開くかを選びます。いつでも元に戻せ、ほかのユーザーには影響しません。",
+            "选择 Windows 的文件夹是否在这里打开。随时可以撤消，电脑上的其他用户不受影响。",
         ],
     ),
     (
@@ -1644,6 +1952,17 @@ pub(super) static EXTRA: &[(&str, [&str; 6])] = &[
         ],
     ),
     (
+        "Iniciar com o Windows",
+        [
+            "Démarrer avec Windows",
+            "Mit Windows starten",
+            "Avvia con Windows",
+            "Запускать вместе с Windows",
+            "Windows と同時に起動",
+            "随 Windows 启动",
+        ],
+    ),
+    (
         "Integração com o Windows",
         [
             "Intégration à Windows",
@@ -1685,6 +2004,17 @@ pub(super) static EXTRA: &[(&str, [&str; 6])] = &[
             "Это действие нельзя отменить.",
             "この操作は元に戻せません。",
             "此操作无法撤消。",
+        ],
+    ),
+    (
+        "Isso vale enquanto o Prime Files está aberto. Para valer sempre, ligue \"Iniciar com o Windows\" no passo anterior.",
+        [
+            "Cela fonctionne tant que Prime Files est ouvert. Pour que ce soit toujours le cas, activez « Démarrer avec Windows » à l'étape précédente.",
+            "Das funktioniert, solange Prime Files geöffnet ist. Damit es immer gilt, schalten Sie im vorigen Schritt „Mit Windows starten“ ein.",
+            "Funziona finché Prime Files è aperto. Per averlo sempre, attiva \"Avvia con Windows\" nel passaggio precedente.",
+            "Это работает, пока Prime Files открыт. Чтобы работало всегда, включите «Запускать вместе с Windows» на предыдущем шаге.",
+            "Prime Files が開いている間だけ有効です。常に有効にするには、前の手順で「Windows と同時に起動」をオンにしてください。",
+            "仅在 Prime Files 打开时有效。若要始终有效，请在上一步开启“随 Windows 启动”。",
         ],
     ),
     (
@@ -2348,6 +2678,17 @@ pub(super) static EXTRA: &[(&str, [&str; 6])] = &[
         ],
     ),
     (
+        "O Listary não está instalado. Se você instalar depois, ligue em Configurações › Integração com o Windows.",
+        [
+            "Listary n'est pas installé. Si vous l'installez plus tard, activez-le dans Paramètres › Intégration à Windows.",
+            "Listary ist nicht installiert. Wenn Sie es später installieren, schalten Sie es unter Einstellungen › Windows-Integration ein.",
+            "Listary non è installato. Se lo installi più tardi, attivalo in Impostazioni › Integrazione con Windows.",
+            "Listary не установлен. Если установите его позже, включите это в Настройки › Интеграция с Windows.",
+            "Listary はインストールされていません。後でインストールしたら、設定 › Windows との連携 でオンにしてください。",
+            "未安装 Listary。以后安装的话，请在 设置 › Windows 集成 中开启。",
+        ],
+    ),
+    (
         "O Listary voltou a abrir pastas no Explorador.",
         [
             "Listary ouvre de nouveau les dossiers dans l'Explorateur.",
@@ -2356,6 +2697,17 @@ pub(super) static EXTRA: &[(&str, [&str; 6])] = &[
             "Listary снова открывает папки в Проводнике.",
             "Listary はフォルダーを再びエクスプローラーで開きます。",
             "Listary 重新在资源管理器中打开文件夹。",
+        ],
+    ),
+    (
+        "O Prime Files atende os programas que pedem para mostrar um arquivo, e destaca o arquivo quando ele chega.",
+        [
+            "Prime Files répond aux programmes qui demandent d'afficher un fichier, et met le fichier en évidence quand il arrive.",
+            "Prime Files antwortet Programmen, die eine Datei anzeigen wollen, und hebt die Datei hervor, wenn sie ankommt.",
+            "Prime Files risponde ai programmi che chiedono di mostrare un file e lo evidenzia quando arriva.",
+            "Prime Files отвечает программам, которые просят показать файл, и подсвечивает файл, когда он появляется.",
+            "Prime Files はファイルの表示を求めるアプリに応え、届いたファイルを強調表示します。",
+            "Prime Files 会响应请求显示文件的程序，并在文件到来时将其突出显示。",
         ],
     ),
     (
@@ -2400,6 +2752,17 @@ pub(super) static EXTRA: &[(&str, [&str; 6])] = &[
             "Что скрывать",
             "隠すもの",
             "要隐藏的内容",
+        ],
+    ),
+    (
+        "O seu explorador padrão",
+        [
+            "Votre explorateur par défaut",
+            "Ihr Standard-Dateimanager",
+            "Il tuo esploratore predefinito",
+            "Ваш проводник по умолчанию",
+            "既定のエクスプローラー",
+            "默认文件管理器",
         ],
     ),
     (
@@ -2455,6 +2818,28 @@ pub(super) static EXTRA: &[(&str, [&str; 6])] = &[
             "Имена со всех встроенных дисков хранятся на этом компьютере и перечитываются в фоне, когда открывается поиск, а индексу больше 10 минут. Ничего не покидает компьютер.",
             "すべての固定ドライブの名前をこのコンピューターに保存し、検索を開いたときにインデックスが 10 分より古ければバックグラウンドで読み直します。外部には何も送りません。",
             "所有固定磁盘的名称保存在这台电脑上，打开搜索且索引超过 10 分钟时会在后台重新读取。任何数据都不会离开电脑。",
+        ],
+    ),
+    (
+        "Os quatro passos do primeiro uso: idioma, tema, explorador padrão e integrações.",
+        [
+            "Les quatre étapes du premier lancement : langue, thème, explorateur par défaut et intégrations.",
+            "Die vier Schritte beim ersten Start: Sprache, Design, Standard-Dateimanager und Integrationen.",
+            "I quattro passaggi del primo avvio: lingua, tema, esploratore predefinito e integrazioni.",
+            "Четыре шага первого запуска: язык, тема, проводник по умолчанию и интеграции.",
+            "初回起動の 4 つの手順: 言語、テーマ、既定のエクスプローラー、連携。",
+            "首次使用的四个步骤：语言、主题、默认文件管理器和集成。",
+        ],
+    ),
+    (
+        "Os seus outros programas",
+        [
+            "Vos autres programmes",
+            "Ihre anderen Programme",
+            "I tuoi altri programmi",
+            "Ваши другие программы",
+            "ほかのアプリ",
+            "你的其他程序",
         ],
     ),
     (
@@ -2645,6 +3030,17 @@ pub(super) static EXTRA: &[(&str, [&str; 6])] = &[
         ],
     ),
     (
+        "Pastas, unidades, Win+E e o ícone do Explorador na barra de tarefas passam a abrir aqui.",
+        [
+            "Les dossiers, disques, Win+E et l'icône de l'Explorateur dans la barre des tâches s'ouvrent ici.",
+            "Ordner, Laufwerke, Win+E und das Explorer-Symbol in der Taskleiste öffnen sich hier.",
+            "Cartelle, unità, Win+E e l'icona di Esplora file sulla barra delle applicazioni si aprono qui.",
+            "Папки, диски, Win+E и значок Проводника на панели задач открываются здесь.",
+            "フォルダー、ドライブ、Win+E、タスクバーのエクスプローラーアイコンがここで開きます。",
+            "文件夹、驱动器、Win+E 和任务栏上的资源管理器图标都会在这里打开。",
+        ],
+    ),
+    (
         "Pequenos (16 KB a 1 MB)",
         [
             "Petits (16 Ko à 1 Mo)",
@@ -2686,6 +3082,17 @@ pub(super) static EXTRA: &[(&str, [&str; 6])] = &[
             "Preferences.json в Listary — не объект",
             "Listary の Preferences.json がオブジェクトではありません",
             "Listary 的 Preferences.json 不是对象",
+        ],
+    ),
+    (
+        "Premiere (Revelar no Explorador), Chrome, Edge e Firefox (Mostrar na pasta, depois de baixar) e o menu Iniciar (Abrir local do arquivo) abrem a pasta no Prime Files, com o arquivo selecionado e piscando em destaque.",
+        [
+            "Premiere (Afficher dans l'Explorateur), Chrome, Edge et Firefox (Afficher dans le dossier, après un téléchargement) et le menu Démarrer (Ouvrir l'emplacement du fichier) ouvrent le dossier dans Prime Files, avec le fichier sélectionné et clignotant en surbrillance.",
+            "Premiere (Im Explorer anzeigen), Chrome, Edge und Firefox (Im Ordner anzeigen, nach einem Download) und das Startmenü (Dateispeicherort öffnen) öffnen den Ordner in Prime Files, mit der Datei ausgewählt und hervorgehoben blinkend.",
+            "Premiere (Mostra in Esplora risorse), Chrome, Edge e Firefox (Mostra nella cartella, dopo un download) e il menu Start (Apri percorso file) aprono la cartella in Prime Files, con il file selezionato e lampeggiante in evidenza.",
+            "Premiere («Показать в Проводнике»), Chrome, Edge и Firefox («Показать в папке» после загрузки) и меню «Пуск» («Расположение файла») открывают папку в Prime Files, с выделенным и мигающим файлом.",
+            "Premiere (エクスプローラーで表示)、Chrome・Edge・Firefox (ダウンロード後の「フォルダーに表示」)、スタートメニュー (ファイルの場所を開く) が Prime Files でフォルダーを開き、ファイルを選択して点滅で強調表示します。",
+            "Premiere(在资源管理器中显示)、Chrome、Edge 和 Firefox(下载后的“在文件夹中显示”)以及开始菜单(打开文件所在的位置)会在 Prime Files 中打开文件夹，并选中该文件、闪烁突出显示。",
         ],
     ),
     (
@@ -2774,6 +3181,17 @@ pub(super) static EXTRA: &[(&str, [&str; 6])] = &[
             "Командная строка",
             "コマンド プロンプト",
             "命令提示符",
+        ],
+    ),
+    (
+        "Próximo",
+        [
+            "Suivant",
+            "Weiter",
+            "Avanti",
+            "Далее",
+            "次へ",
+            "下一步",
         ],
     ),
     (
@@ -3129,6 +3547,17 @@ pub(super) static EXTRA: &[(&str, [&str; 6])] = &[
         ],
     ),
     (
+        "Tela de boas-vindas",
+        [
+            "Écran d'accueil",
+            "Willkommensbildschirm",
+            "Schermata di benvenuto",
+            "Экран приветствия",
+            "ようこそ画面",
+            "欢迎界面",
+        ],
+    ),
+    (
         "Tema",
         [
             "Thème",
@@ -3294,6 +3723,28 @@ pub(super) static EXTRA: &[(&str, [&str; 6])] = &[
         ],
     ),
     (
+        "Tudo pronto",
+        [
+            "Tout est prêt",
+            "Alles bereit",
+            "Tutto pronto",
+            "Всё готово",
+            "準備完了",
+            "一切就绪",
+        ],
+    ),
+    (
+        "Um explorador de arquivos rápido para o Windows. Vamos deixá-lo do seu jeito em menos de um minuto.",
+        [
+            "Un explorateur de fichiers rapide pour Windows. Personnalisons-le en moins d'une minute.",
+            "Ein schneller Dateimanager für Windows. Richten wir ihn in weniger als einer Minute nach Ihrem Geschmack ein.",
+            "Un esploratore di file veloce per Windows. Rendiamolo tuo in meno di un minuto.",
+            "Быстрый проводник для Windows. Настроим его под вас меньше чем за минуту.",
+            "Windows 向けの高速なファイルエクスプローラー。1 分もかからずに自分好みにしましょう。",
+            "一款适用于 Windows 的快速文件管理器。一分钟内按你的习惯设置好。",
+        ],
+    ),
+    (
         "Uma pasta não pode ir para dentro dela mesma.",
         [
             "Un dossier ne peut pas aller dans lui-même.",
@@ -3313,6 +3764,17 @@ pub(super) static EXTRA: &[(&str, [&str; 6])] = &[
             "Диски и хранилище",
             "ドライブとストレージ",
             "驱动器和存储",
+        ],
+    ),
+    (
+        "Usar o Prime Files como explorador padrão",
+        [
+            "Utiliser Prime Files comme explorateur par défaut",
+            "Prime Files als Standard-Dateimanager verwenden",
+            "Usa Prime Files come esploratore predefinito",
+            "Использовать Prime Files как проводник по умолчанию",
+            "Prime Files を既定のエクスプローラーにする",
+            "将 Prime Files 设为默认文件管理器",
         ],
     ),
     (
@@ -3437,6 +3899,17 @@ pub(super) static EXTRA: &[(&str, [&str; 6])] = &[
         ],
     ),
     (
+        "Você pode mudar qualquer uma destas escolhas depois, em Configurações.",
+        [
+            "Vous pourrez modifier ces choix plus tard, dans Paramètres.",
+            "Sie können jede dieser Entscheidungen später in den Einstellungen ändern.",
+            "Puoi cambiare queste scelte più tardi, in Impostazioni.",
+            "Любой из этих вариантов можно изменить позже в Настройках.",
+            "これらの選択は後で設定からいつでも変更できます。",
+            "这些选择以后都可以在设置中更改。",
+        ],
+    ),
+    (
         "Volta com as abas da última vez. Vale na próxima vez que o Prime Files abrir.",
         [
             "Rouvre les onglets de la dernière fois. S'applique au prochain lancement de Prime Files.",
@@ -3445,6 +3918,17 @@ pub(super) static EXTRA: &[(&str, [&str; 6])] = &[
             "Возвращает вкладки с прошлого раза. Сработает при следующем запуске Prime Files.",
             "前回のタブを復元します。次に Prime Files を開いたときに反映されます。",
             "恢复上次的标签页。下次打开 Prime Files 时生效。",
+        ],
+    ),
+    (
+        "Voltar",
+        [
+            "Retour",
+            "Zurück",
+            "Indietro",
+            "Назад",
+            "戻る",
+            "返回",
         ],
     ),
     (

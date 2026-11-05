@@ -16,6 +16,18 @@ use gpui::{AsyncWindowContext, Context, WeakEntity, Window};
 
 use crate::root::RootView;
 
+static ENABLED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(true);
+
+/// Turns the takeover on or off (`explorer.reveal_from_other_apps`). Off,
+/// the hook keeps running but leaves every Explorer window alone.
+pub fn set_enabled(enabled: bool) {
+    ENABLED.store(enabled, std::sync::atomic::Ordering::Relaxed);
+}
+
+fn enabled() -> bool {
+    ENABLED.load(std::sync::atomic::Ordering::Relaxed)
+}
+
 /// Starts watching for Explorer windows opened to reveal a file.
 pub fn watch(window: &mut Window, cx: &mut Context<RootView>) {
     let (sender, receiver) = async_channel::unbounded::<String>();
@@ -127,7 +139,7 @@ mod platform {
     ) {
         // Every caret and menu fires this; only whole windows of Explorer's
         // folder class matter.
-        if object != OBJID_WINDOW.0 || child != 0 || !is_folder_window(hwnd) {
+        if object != OBJID_WINDOW.0 || child != 0 || !super::enabled() || !is_folder_window(hwnd) {
             return;
         }
         let hwnd = hwnd.0 as isize;

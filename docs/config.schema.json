@@ -116,6 +116,11 @@
           "description": "When enabled, the previous session's tabs are restored on restart (§4).",
           "type": "boolean"
         },
+        "reveal_from_other_apps": {
+          "default": true,
+          "description": "Whether \"show in folder\" from other programs (Premiere's Reveal in\nExplorer, a browser's Show in folder) opens here instead of Explorer.",
+          "type": "boolean"
+        },
         "split_direction": {
           "$ref": "#/$defs/SplitDirection",
           "default": "vertical",
@@ -402,6 +407,11 @@
           "default": false,
           "description": "Whether dotfiles are shown in listings.",
           "type": "boolean"
+        },
+        "welcome_done": {
+          "default": false,
+          "description": "Whether the welcome screen was gone through; false shows it on start.",
+          "type": "boolean"
         }
       },
       "type": "object"
@@ -454,6 +464,7 @@
       "$ref": "#/$defs/Explorer",
       "default": {
         "restore_tabs": true,
+        "reveal_from_other_apps": true,
         "split_direction": "vertical",
         "synced_panes": false
       },
@@ -525,7 +536,8 @@
         "name_lines": 0,
         "preview_autoplay": false,
         "scroll_smoothness": 50,
-        "show_hidden": false
+        "show_hidden": false,
+        "welcome_done": false
       },
       "description": "Explorer / view settings."
     },

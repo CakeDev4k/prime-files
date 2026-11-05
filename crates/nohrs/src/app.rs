@@ -59,6 +59,7 @@ impl NohrsApp {
         // runtime needs to be entered here.
         let launcher_only = matches!(cli.command, Some(Command::Launcher));
         let initial_path = cli.path.clone();
+        let background = cli.background;
 
         Application::new().with_assets(Assets).run(move |app: &mut App| {
             gpui_component::init(app);
@@ -154,6 +155,11 @@ impl NohrsApp {
                     });
                     if let Some(path) = &initial_path {
                         view.update(cx, |root, cx| root.open_initial_path(path, window, cx));
+                    }
+                    // At sign-in: on the taskbar, out of the way, ready for the
+                    // first folder another program asks for.
+                    if background {
+                        window.minimize_window();
                     }
                     cx.new(|cx| Root::new(view, window, cx))
                 }

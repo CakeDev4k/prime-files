@@ -48,11 +48,14 @@ impl ExplorerPane {
     /// time on a background thread.
     pub(crate) fn toggle_tree_folder(&mut self, path: String, cx: &mut Context<Self>) {
         if self.tree.expanded.remove(&path) {
+            self.watch_listed_folders(cx);
             self.apply_filter();
             cx.notify();
             return;
         }
         self.tree.expanded.insert(path.clone());
+        // An open folder shows its files, so it follows the disk too.
+        self.watch_listed_folders(cx);
         if self.tree.children.contains_key(&path) {
             self.apply_filter();
             cx.notify();

@@ -110,3 +110,26 @@ fn is_ours(key: &str) -> bool {
         })
         .unwrap_or(false)
 }
+
+// Where Windows starts programs at sign-in for this user, and the value name.
+const RUN_KEY: &str = r"HKCU\Software\Microsoft\Windows\CurrentVersion\Run";
+const RUN_VALUE: &str = "Prime Files";
+
+/// Whether Prime Files starts, minimized, when this user signs in.
+pub fn starts_with_windows() -> bool {
+    reg(&["query", RUN_KEY, "/v", RUN_VALUE]).is_ok_and(|output| output.status.success())
+}
+
+/// Makes `exe` start minimized at sign-in, or stops it. Started that way it
+/// is already running when Premiere or a browser asks for a folder, so the
+/// file opens here at once instead of in Explorer.
+pub fn set_starts_with_windows(exe: &Path, enable: bool) -> io::Result<()> {
+    if enable {
+        let command = format!("\"{}\" --background", exe.display());
+        reg_ok(&["add", RUN_KEY, "/v", RUN_VALUE, "/t", "REG_SZ", "/d", &command, "/f"])
+    } else if starts_with_windows() {
+        reg_ok(&["delete", RUN_KEY, "/v", RUN_VALUE, "/f"])
+    } else {
+        Ok(())
+    }
+}

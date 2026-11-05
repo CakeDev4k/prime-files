@@ -72,6 +72,7 @@ pub fn render(
     } = layout;
     let entity = cx.entity();
     page.listing_extent = super::extent(&row_sizes, false);
+    aim_reveal(page, window);
 
     div()
         .id("grid-area")
@@ -149,6 +150,27 @@ pub fn render(
             .size_full(),
         )
         .into_any_element()
+}
+
+/// Scrolls to the entry `reveal` asked for, now that `grid_columns` is
+/// this frame's. Before the canvas below has measured the grid, there is no
+/// width to count columns from, so it waits; once the width it aimed with
+/// holds for a frame, the reveal is done.
+fn aim_reveal(page: &mut ExplorerPane, window: &mut Window) {
+    let Some((index, aimed)) = page.reveal_scroll else {
+        return;
+    };
+    if page.grid_width <= 0.0 {
+        window.request_animation_frame();
+        return;
+    }
+    if aimed == Some(page.grid_width) {
+        page.reveal_scroll = None;
+        return;
+    }
+    page.scroll_entry_into_view(index);
+    page.reveal_scroll = Some((index, Some(page.grid_width)));
+    window.request_animation_frame();
 }
 
 /// What the grid's row layout was built for; any change rebuilds it.
@@ -412,6 +434,7 @@ fn render_grid_item(
         // Without a waveform to colour, a line along the tile's foot follows
         // the sound playing under the mouse.
         .when(!waveform_shown, |this| this.children(crate::explorer::hover_audio::progress_strip(&item.path)))
+        .children(page.reveal_glow(&item.path))
         .map(|this| page.track_hit(this, ix))
         .when(is_dir, |this| crate::explorer::drag::drop_into(this, &item.path, cx))
         .into_any_element()

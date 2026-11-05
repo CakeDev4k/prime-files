@@ -57,6 +57,9 @@ pub struct RootView {
     git: Entity<GitPage>,
     s3: Entity<S3Page>,
     settings: Entity<SettingsPage>,
+    // The welcome screen, while `ui.welcome_done` is false: it covers the
+    // pages until it is finished or skipped.
+    welcome: Option<Entity<crate::welcome::WelcomePage>>,
     search_service: Option<Arc<SearchService>>,
     indexing_progress: Option<f32>,
     // Currently-applied configuration and the inputs needed to recompute it on
@@ -116,6 +119,7 @@ impl RootView {
             git,
             s3,
             settings,
+            welcome: None,
             search_service,
             indexing_progress: Some(1.0), // Start as hidden/done
             // Start from defaults so the initial `apply_config` below treats the
@@ -220,6 +224,7 @@ impl RootView {
             format!("config: {summary} ({})", self.config_path.display())
         });
 
+        crate::reveal::set_enabled(config.explorer.reveal_from_other_apps);
         let ui = config.ui.clone();
         let explorer_cfg = config.explorer.clone();
         let compact = config.compact.clone();
@@ -230,6 +235,20 @@ impl RootView {
         });
         let shown = config.clone();
         self.settings.update(cx, |page, cx| page.set_config(shown, cx));
+        if config.ui.welcome_done {
+            self.welcome = None;
+        } else {
+            match &self.welcome {
+                Some(welcome) => {
+                    let shown = config.clone();
+                    welcome.update(cx, |page, cx| page.set_config(shown, cx));
+                }
+                None => {
+                    let shown = config.clone();
+                    self.welcome = Some(cx.new(|cx| crate::welcome::WelcomePage::new(shown, cx)));
+                }
+            }
+        }
         let automatic = config.updates.automatic;
         crate::updater::updater(cx).update(cx, |updater, cx| updater.set_automatic(automatic, cx));
 
@@ -452,8 +471,9 @@ impl Render for RootView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         // On the explorer with one pane the tab row is the title bar, as in
         // the Explorer of Windows 11; elsewhere the toolbar holds the buttons.
-        let own_title_bar =
-            self.current_page != PageKind::Explorer || !self.explorer.read(cx).tabs_in_title_bar();
+        let own_title_bar = self.welcome.is_some()
+            || self.current_page != PageKind::Explorer
+            || !self.explorer.read(cx).tabs_in_title_bar();
         let toolbar = own_title_bar.then(|| unified_toolbar(window, cx));
 
         div()
@@ -482,7 +502,10 @@ impl Render for RootView {
                             .flex()
                             .flex_col()
                             .min_w(px(0.0))
-                            .child(self.render_active_page(window, cx)),
+                            .child(match &self.welcome {
+                                Some(welcome) => welcome.clone().into_any_element(),
+                                None => self.render_active_page(window, cx),
+                            }),
                     ),
             )
             .children(
@@ -511,7 +534,8 @@ impl Render for RootView {
                     // The explorer has its own bar (filter, counts, zoom), as
                     // File Pilot does; the footer stays for the other pages
                     // and for a config file that failed to load.
-                    let shown = self.current_page != PageKind::Explorer || self.config_status.is_some();
+                    let shown = self.welcome.is_none()
+                        && (self.current_page != PageKind::Explorer || self.config_status.is_some());
                     shown.then(|| footer(props, None, cx))
                 },
             )

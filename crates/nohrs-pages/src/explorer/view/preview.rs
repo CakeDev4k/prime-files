@@ -71,6 +71,59 @@ pub(crate) fn fitted_picture(
     })
 }
 
+/// Space's quick look: the preview panel, large, over the whole pane. A
+/// click on the dimmed edge closes it; Space and Esc close it from the
+/// keyboard (`view.rs`). It is the same panel the side shows, so every kind
+/// of file the side previews, it previews, with the same zoom.
+pub fn render_quick_look(
+    page: &mut ExplorerPane,
+    window: &mut Window,
+    cx: &mut Context<ExplorerPane>,
+) -> Option<AnyElement> {
+    if !page.quick_look {
+        return None;
+    }
+    let content = render(page, window, cx);
+    // Inset rather than a percentage: a percentage size under a centring
+    // parent comes out 0 in this layout engine.
+    let bounds = window.viewport_size();
+    let inset_x = (f32::from(bounds.width) * 0.07).clamp(16.0, 120.0);
+    let inset_y = (f32::from(bounds.height) * 0.06).clamp(16.0, 80.0);
+    Some(
+        div()
+            .id("quick-look")
+            .absolute()
+            .inset_0()
+            .bg(hsla(0.0, 0.0, 0.0, 0.5))
+            .occlude()
+            .on_mouse_down(
+                MouseButton::Left,
+                cx.listener(|this, _event, _window, cx| this.close_quick_look(cx)),
+            )
+            .child(
+                div()
+                    .id("quick-look-card")
+                    .absolute()
+                    .top(px(inset_y))
+                    .bottom(px(inset_y))
+                    .left(px(inset_x))
+                    .right(px(inset_x))
+                    .flex()
+                    .flex_col()
+                    .overflow_hidden()
+                    .rounded(px(10.0))
+                    .border_1()
+                    .border_color(rgb(theme::border()))
+                    .bg(rgb(theme::bg()))
+                    .shadow_lg()
+                    // Clicks inside are the preview's, not the backdrop's.
+                    .on_mouse_down(MouseButton::Left, |_event, _window, cx| cx.stop_propagation())
+                    .child(content),
+            )
+            .into_any_element(),
+    )
+}
+
 // Calculate the maximum line width in characters for horizontal scroll sizing
 /// Renders the preview pane for the selected file, showing a text editor,
 /// image, status message, or an empty placeholder.
@@ -86,7 +139,25 @@ pub fn render(
         .unwrap_or_else(|| t!("Visualizador").to_string());
 
     let content = if let Some(editor) = &page.preview_editor {
-        div().flex_1().child(editor.clone()).into_any_element()
+        // Held the same way as the Markdown below: under the wheel's flex
+        // column the editor's full height came out as none, and text files
+        // previewed blank in the side panel (the quick look's card, sized
+        // by its insets, showed them).
+        div()
+            .relative()
+            .flex_1()
+            .min_h(px(0.0))
+            .child(
+                div()
+                    .absolute()
+                    .top_0()
+                    .left_0()
+                    .size_full()
+                    .flex()
+                    .flex_col()
+                    .child(editor.clone()),
+            )
+            .into_any_element()
     } else if let Some(markdown) = page.preview_markdown.clone() {
         // Keyed by path so the view's scroll and parse state belong to one
         // file and do not carry over to the next one opened.
@@ -94,19 +165,27 @@ pub fn render(
             "preview-markdown:{}",
             page.preview_path.as_deref().unwrap_or_default()
         ));
+        // The view scrolls with a gpui `list`, which draws nothing without a
+        // definite height, and its `size_full` under this flex column came
+        // out as no height at all: the preview of every .md was blank. Laid
+        // absolutely over a holder, its 100% is the holder's size.
         div()
+            .relative()
             .flex_1()
             .min_h(px(0.0))
             .overflow_hidden()
-            .px(px(16.0))
-            .py(px(12.0))
-            .text_sm()
-            .text_color(rgb(theme::fg()))
             .child(
                 TextView::markdown(id, markdown, window, cx)
                     .selectable(true)
                     .scrollable(true)
-                    .size_full(),
+                    .absolute()
+                    .top_0()
+                    .left_0()
+                    .size_full()
+                    .px(px(16.0))
+                    .py(px(12.0))
+                    .text_sm()
+                    .text_color(rgb(theme::fg())),
             )
             .into_any_element()
     } else if page.preview_model.is_some() {

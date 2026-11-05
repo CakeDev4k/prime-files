@@ -1,8 +1,30 @@
-## Prime Files 0.3.1
+## Prime Files 0.3.2
 
 Explorador de arquivos para Windows, rápido, escrito em Rust.
 
 ### Novidades
+
+- **Tela de boas-vindas**: no primeiro uso (e quando você quiser, em Configurações › Sobre), quatro passos para escolher idioma e tema, deixar o Prime Files como explorador padrão, iniciar com o Windows e ligar as integrações.
+- **Arquivo em destaque**: quando outro programa pede para mostrar um arquivo (Premiere em "Revelar no Explorador", o navegador em "Mostrar na pasta" depois de baixar, o menu Iniciar em "Abrir local do arquivo"), a pasta abre no Prime Files com o arquivo selecionado e piscando na cor de destaque.
+- **Iniciar com o Windows**: abre minimizado ao entrar no Windows, para que esses pedidos caiam no Prime Files mesmo antes de você abri-lo.
+- **"Mostrar na pasta" pode ser desligado** em Configurações › Integração com o Windows, se você preferir que esses programas abram o Explorador.
+- **Espaço abre a visualização rápida**: com um arquivo ou pasta selecionado, aperte Espaço para vê-lo grande por cima da janela, no modo normal e no compacto. As setas passam para o próximo, Enter abre, e Espaço, Esc ou um clique fora fecham.
+- **Botões laterais do mouse** voltam e avançam de pasta, como no Explorador e no navegador.
+- **Busca em todo o computador com filtros**: `ext:wav`, `tipo:som` (também imagem, vídeo, documento, compactado, código, programa, projeto, pasta), `tamanho:>10mb` (ou `<1gb`, `10mb..1gb`, `vazio`, `grande`), `data:hoje` (ou `ontem`, `semana`, `<7d`, `>2a`, `2026-10`, `05/11/2026`), `em:.` (a pasta aberta), `em:C:\Projetos` ou `em:sfx`, e `pasta:` / `arquivo:`. Um `-` na frente exclui (`-ext:tmp`, `-backup`) e aspas buscam a frase inteira. A barra mostra o que foi entendido, quanto a busca levou e a idade do índice.
+- **Resultados melhores**: nome igual e começo de nome primeiro, depois palavra dentro do nome; entre os iguais, os modificados há pouco sobem e as pastas do sistema (Windows, Arquivos de Programas, AppData) descem. Se quase nada bate, aparecem até 50 nomes parecidos, com as letras na ordem.
+- **Arquivos novos aparecem na busca na hora**: o Prime Files acompanha o que é criado ou renomeado nos discos enquanto está aberto, então a busca no computador acha um arquivo salvo um segundo antes. A varredura completa passou a rodar no máximo a cada 6 horas.
+- A busca ficou mais rápida (cerca de duas vezes numa tabela de 2 milhões de nomes), e a lista não pisca mais em branco enquanto você digita.
+- **Indexação instantânea (opcional)**: em Configurações › Busca › Indexação instantânea › Ativar, o Prime Files instala um pequeno serviço do Windows (pede permissão de administrador uma vez) que lê a tabela dos discos NTFS como o Everything faz. O índice do computador fica pronto em segundos em vez de minutos, também depois de reiniciar, e é relido a cada 30 minutos. O serviço só lê, só responde ao seu usuário e mostra as pastas de outros usuários do PC apenas pelo nome. Desativar remove o serviço, e desinstalar o Prime Files também.
+- **A primeira indexação não recomeça do zero**: ela é salva a cada 30 segundos e a cada disco terminado. Se o Prime Files fechar no meio (uma atualização, um reinício), na próxima abertura a busca já responde com o que foi indexado e a indexação continua por trás. A leitura das pastas também ficou mais rápida, com mais pastas lidas ao mesmo tempo.
+
+- **Tela de boas-vindas mais completa**: agora em cinco passos, com a cor de destaque, um passo novo para como você vê os arquivos (itens ocultos, modo compacto, sons ao passar o mouse, forma de onda nos ícones), atualizações automáticas, indexação instantânea e um resumo de todas as escolhas.
+
+### Correções da 0.3.2
+
+- **A pasta aberta agora acompanha o disco**: um arquivo salvo, baixado, apagado ou renomeado por outro programa aparece (ou some) na hora, sem precisar apertar F5; tamanho e data de arquivos alterados também se atualizam. Vale também para as pastas abertas na vista Árvore.
+- Arquivos de texto e Markdown (`.md`) apareciam em branco no visualizador lateral. Agora aparecem, com o Markdown formatado também quando vem de uma busca.
+
+### Novidades da 0.3.1
 
 - **Atalhos configuráveis**: em Configurações › Atalhos, clique na tecla de qualquer comando e aperte a combinação nova (Esc desiste). Dá para remover um atalho, voltar um ou todos ao padrão, e um atalho que já era de outro comando sai dele com aviso. Vale na hora, e os menus mostram as teclas novas.
 - **Abrir a pasta em outro programa**: botão na barra de cima (e no menu do botão direito) para abrir a pasta no Prompt de Comando, no PowerShell, no Windows Terminal (se instalado) ou no Explorador do Windows. Cada um pode ganhar um atalho.
@@ -40,7 +62,7 @@ Quem tem a 0.2.0 ou mais nova recebe esta sozinho. Quem tem a 0.1.0 precisa inst
 
 ### Instalar
 
-Baixe **PrimeFiles-Setup-0.3.1.exe** abaixo e execute. A instalação é só para o seu usuário e não pede administrador. O instalador baixa o que faltar:
+Baixe **PrimeFiles-Setup-0.3.2.exe** abaixo e execute. A instalação é só para o seu usuário e não pede administrador. O instalador baixa o que faltar:
 
 - o **Visual C++ Runtime** da Microsoft, se o computador não tiver;
 - o **7-Zip**, se você marcar a opção (para ver .rar, .7z e .iso no visualizador);

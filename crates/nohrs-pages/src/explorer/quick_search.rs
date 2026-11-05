@@ -26,6 +26,9 @@ pub struct DeepSearch {
     pub query: String,
     pub found: usize,
     pub running: bool,
+    /// After the count: what the whole-computer search understood and how
+    /// old its index is. Empty for other searches.
+    pub detail: String,
     // Dropping it drops the receiver, which stops the walk at its next send.
     _task: Task<()>,
 }
@@ -33,7 +36,7 @@ pub struct DeepSearch {
 impl DeepSearch {
     /// A search for `query` whose hits `task` is delivering.
     pub(crate) fn new(query: String, task: Task<()>) -> Self {
-        Self { query, found: 0, running: true, _task: task }
+        Self { query, found: 0, running: true, detail: String::new(), _task: task }
     }
 }
 
@@ -43,6 +46,7 @@ impl ExplorerPane {
     /// highlights `.png`). Empty when nothing is being looked for.
     pub(crate) fn highlight_query(&self) -> String {
         let query = match &self.deep_search {
+            Some(search) if self.everything_on() => return super::everything::highlight_term(&search.query),
             Some(search) => search.query.as_str(),
             None if !self.name_filter.trim().is_empty() => self.name_filter.as_str(),
             None => self.search_query.as_str(),
@@ -108,9 +112,22 @@ impl ExplorerPane {
             query,
             found: 0,
             running: true,
+            detail: String::new(),
             _task: task,
         });
         cx.notify();
+    }
+
+    /// Empties the hits for a search whose first ones are arriving.
+    pub(crate) fn begin_search_hits(&mut self) {
+        self.clear_selection();
+        self.hit_folders.clear();
+        self.filtered_entries.clear();
+        self.search_results = Some(Vec::new());
+        if let Some(search) = self.deep_search.as_mut() {
+            search.found = 0;
+        }
+        self.update_item_sizes();
     }
 
     pub(crate) fn add_search_hits(&mut self, batch: Vec<FileEntryDto>) {

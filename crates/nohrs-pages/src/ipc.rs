@@ -120,6 +120,12 @@ pub fn request_show() -> bool {
     send(json!({ "cmd": "show" })).is_some_and(|reply| reply["ok"] == true)
 }
 
+/// Whether a Prime Files window answers on the channel, whatever it says
+/// to a command it does not know: it is there, and nothing is asked of it.
+pub fn is_running() -> bool {
+    send(json!({ "cmd": "ping" })).is_some()
+}
+
 /// Splits a path into the folder to show and the entry to select in it.
 pub fn folder_and_selection(path: &Path) -> Option<(String, Option<String>)> {
     let path = std::fs::canonicalize(path).ok()?;

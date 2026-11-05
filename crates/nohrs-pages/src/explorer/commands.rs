@@ -203,3 +203,57 @@ pub(crate) fn has_windows_terminal() -> bool {
             .is_some_and(|path| path.exists())
     })
 }
+
+/// How long a revealed file glows.
+const GLOW: std::time::Duration = std::time::Duration::from_millis(3000);
+
+impl ExplorerPane {
+    /// Whether a revealed file is still glowing, so the listing keeps drawing
+    /// frames; forgets it once the glow is over.
+    pub(crate) fn tick_reveal_glow(&mut self) -> bool {
+        match &self.reveal_highlight {
+            Some((_, since)) if since.elapsed() < GLOW => true,
+            Some(_) => {
+                self.reveal_highlight = None;
+                false
+            }
+            None => false,
+        }
+    }
+
+    /// A glow over the entry for `path` when it is the file just revealed:
+    /// an outline and a wash in the accent colour that pulse twice and fade.
+    /// Drawn over the entry without taking its clicks.
+    pub(crate) fn reveal_glow(&self, path: &str) -> Option<gpui::AnyElement> {
+        use gpui::{Hsla, IntoElement as _, Styled as _, div, px, rgb};
+        let (revealed, since) = self.reveal_highlight.as_ref()?;
+        if !super::same_path(revealed, path) {
+            return None;
+        }
+        let t = since.elapsed().as_secs_f32() / GLOW.as_secs_f32();
+        if t >= 1.0 {
+            return None;
+        }
+        // Three pulses on a fade: bright at once, gone by the end. Strong
+        // enough to read over the selection, which is the accent already.
+        let pulse = 0.5 + 0.5 * (t * std::f32::consts::TAU * 3.0).cos();
+        let strength = (1.0 - t).powf(1.2) * pulse;
+        let mut wash: Hsla = rgb(nohrs_ui::theme::theme::accent()).into();
+        let mut outline: Hsla = rgb(nohrs_ui::theme::theme::accent_hover()).into();
+        wash.a = 0.5 * strength;
+        outline.a = strength.min(1.0);
+        Some(
+            div()
+                .absolute()
+                .top_0()
+                .left_0()
+                .right_0()
+                .bottom_0()
+                .rounded(px(6.0))
+                .bg(wash)
+                .border_3()
+                .border_color(outline)
+                .into_any_element(),
+        )
+    }
+}

@@ -35,7 +35,9 @@ static OWNER: AtomicIsize = AtomicIsize::new(0);
 /// The places added by hand, for the listing thread.
 static ADDED: Mutex<Vec<String>> = Mutex::new(Vec::new());
 
-/// Notes the main window, which owns the credential prompt.
+/// Notes the main window, which owns the credential prompt. Not called in
+/// tests, whose windows have no platform handle.
+#[cfg_attr(test, allow(dead_code))]
 pub(crate) fn set_owner(hwnd: i64) {
     OWNER.store(hwnd as isize, Ordering::Relaxed);
 }

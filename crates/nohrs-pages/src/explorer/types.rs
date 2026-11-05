@@ -101,4 +101,10 @@ pub enum PaneEvent {
         side: nohrs_core::config::DockSide,
         fraction: f32,
     },
+    /// The terminal's bubble was chosen on the `side` edge: open it there,
+    /// `size` deep.
+    TerminalRequested {
+        side: nohrs_core::config::DockSide,
+        size: f32,
+    },
 }

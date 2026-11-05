@@ -803,15 +803,30 @@ fn render_pdf(page: &ExplorerPane) -> AnyElement {
                     // At the preview's zoom: wider than the view past 1, which
                     // then scrolls sideways too; centred below it.
                     div()
+                        .relative()
                         .w(relative(page.preview_zoom))
                         .mx_auto()
                         .flex()
                         .flex_col()
                         .gap_3()
                         .children(pdf.pages.iter().map(|image| {
-                            // `img` takes the page's own proportions; only its width is set.
-                            img(ImageSource::Render(image.clone())).w_full().flex_shrink_0()
-                        })),
+                            // Each page as wide as the column and as tall as
+                            // its own proportions make it. With only a
+                            // relative width, gpui gave the image the height
+                            // it was rendered at (1100 px wide), and every
+                            // page left that much empty below it in a narrow
+                            // panel (seen 05/11/2026).
+                            let rendered = image.size(0);
+                            let page_width = f32::from(page.preview_pdf_bounds.get().size.width);
+                            let picture = img(ImageSource::Render(image.clone())).flex_shrink_0();
+                            if page_width > 0.0 && rendered.width.0 > 0 {
+                                let ratio = rendered.height.0 as f32 / rendered.width.0 as f32;
+                                picture.w(px(page_width)).h(px(page_width * ratio))
+                            } else {
+                                picture.w_full()
+                            }
+                        }))
+                        .child(crate::dock::measure(page.preview_pdf_bounds.clone())),
                 ),
         )
         .into_any_element()

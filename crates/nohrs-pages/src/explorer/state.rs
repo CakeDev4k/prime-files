@@ -225,6 +225,11 @@ pub struct ExplorerPane {
     /// Whether the window has room for another pane, so a free edge of the
     /// listing drags one out. Set by the pane group on every render.
     pub(crate) split_available: bool,
+    /// Whether the page's terminal is open; while it is not, an edge of the
+    /// listing offers it. Set by the page on every render.
+    pub(crate) terminal_shown: bool,
+    /// The column the PDF preview's pages fill, measured at paint.
+    pub(crate) preview_pdf_bounds: std::rc::Rc<std::cell::Cell<gpui::Bounds<gpui::Pixels>>>,
     /// The 3D model in the preview, turned by dragging.
     pub(crate) preview_model: Option<super::model3d::ModelPreview>,
     /// What the preview showed before an item of a folder listing was
@@ -567,6 +572,8 @@ impl ExplorerPane {
             dock_drag: None,
             columns_bounds: Default::default(),
             split_available: false,
+            terminal_shown: false,
+            preview_pdf_bounds: Default::default(),
             preview_model: None,
             preview_back: Vec::new(),
             preview_zoom: 1.0,

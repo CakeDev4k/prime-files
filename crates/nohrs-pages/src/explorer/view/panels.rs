@@ -17,9 +17,13 @@
 
 use std::cell::Cell;
 
+use std::time::Duration;
+
 use gpui::prelude::FluentBuilder;
 use gpui::*;
+use gpui_component::Icon;
 use nohrs_core::config::DockSide;
+use nohrs_ui::theme::theme;
 
 use crate::dock::{self, Gesture, Resized};
 use crate::explorer::ExplorerPane;
@@ -147,16 +151,125 @@ pub(crate) fn sidebar_width() -> f32 {
     ARRANGEMENT.get().sizes[Panel::Sidebar.index()][0].clamp(min, max)
 }
 
-/// A drag of a panel's edge or grip, or of an edge that splits the listing
-/// (`panel` is `None` then).
+/// What a drag out of an edge can open there, each offered as a bubble.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Opening {
+    /// A second pane, on the same folder.
+    Split,
+    /// A hidden sidebar or preview, docked to that side.
+    Panel(Panel),
+    /// The terminal, while it is closed, docked to that side.
+    Terminal,
+}
+
+impl Opening {
+    fn icon(self) -> &'static str {
+        match self {
+            Opening::Split => "icons/columns.svg",
+            Opening::Panel(Panel::Sidebar) => "icons/list-tree.svg",
+            Opening::Panel(Panel::Preview) => "icons/eye.svg",
+            Opening::Terminal => "icons/square-terminal.svg",
+        }
+    }
+
+    fn label(self) -> &'static str {
+        match self {
+            Opening::Split => nohrs_core::t!("Nova divisão"),
+            Opening::Panel(Panel::Sidebar) => nohrs_core::t!("Barra lateral"),
+            Opening::Panel(Panel::Preview) => nohrs_core::t!("Visualizador"),
+            Opening::Terminal => nohrs_core::t!("Terminal"),
+        }
+    }
+
+    /// The smallest size it opens at, as a column (`true`) or a band.
+    fn min(self, column: bool) -> f32 {
+        match self {
+            Opening::Split => 160.0,
+            Opening::Panel(panel) => panel.range(column).0,
+            Opening::Terminal => {
+                if column {
+                    TERMINAL_MIN_WIDTH
+                } else {
+                    TERMINAL_MIN_HEIGHT
+                }
+            }
+        }
+    }
+}
+
+/// The terminal's smallest width and height, which the page keeps too.
+pub(crate) const TERMINAL_MIN_WIDTH: f32 = 240.0;
+pub(crate) const TERMINAL_MIN_HEIGHT: f32 = 80.0;
+
+/// A drag of a panel's edge or grip, or of an edge of the listing that opens
+/// something there (`Gesture::Open`, `panel` is `None` then).
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct DockDrag {
     pub panel: Option<Panel>,
     pub side: DockSide,
     pub gesture: Gesture,
     pub pointer: Point<Pixels>,
+    /// Where the press was.
+    pub origin: Point<Pixels>,
     /// Pulled under half its smallest size: hidden when the button comes up.
     pub collapsing: bool,
+    /// An edge pulled past [`dock::OPEN_PULL`]: the bubbles are out.
+    pub committed: bool,
+    /// The bubble chosen, by its place in [`openings`].
+    pub choice: usize,
+}
+
+impl DockDrag {
+    fn new(panel: Option<Panel>, side: DockSide, gesture: Gesture, pointer: Point<Pixels>) -> Self {
+        Self {
+            panel,
+            side,
+            gesture,
+            pointer,
+            origin: pointer,
+            collapsing: false,
+            committed: false,
+            choice: 0,
+        }
+    }
+}
+
+/// What an edge of this pane's listing can open, in the order the bubbles
+/// show: a second pane, the hidden panels, the closed terminal.
+pub(crate) fn openings(page: &ExplorerPane) -> Vec<Opening> {
+    let mut options = Vec::with_capacity(4);
+    if page.split_available {
+        options.push(Opening::Split);
+    }
+    for panel in Panel::ALL {
+        if !page.panel_visible(panel) {
+            options.push(Opening::Panel(panel));
+        }
+    }
+    if !page.terminal_shown {
+        options.push(Opening::Terminal);
+    }
+    options
+}
+
+/// Which of `count` bubbles the pointer chooses: each owns a band across the
+/// edge, as in PrimeSFX, so sliding along the edge goes from one to the next.
+fn band(side: DockSide, bounds: Bounds<Pixels>, pointer: Point<Pixels>, count: usize) -> usize {
+    if count == 0 {
+        return 0;
+    }
+    let fraction = if side.is_column() {
+        f32::from(pointer.y - bounds.top()) / f32::from(bounds.size.height).max(1.0)
+    } else {
+        f32::from(pointer.x - bounds.left()) / f32::from(bounds.size.width).max(1.0)
+    };
+    ((fraction * count as f32).floor().max(0.0) as usize).min(count - 1)
+}
+
+/// How deep an edge drag reaches into the area, leaving the listing a strip.
+fn pull_depth(side: DockSide, bounds: Bounds<Pixels>, pointer: Point<Pixels>) -> f32 {
+    let span = f32::from(if side.is_column() { bounds.size.width } else { bounds.size.height });
+    dock::depth(side, bounds, pointer).clamp(0.0, (span - 60.0).max(0.0))
 }
 
 impl ExplorerPane {
@@ -177,39 +290,26 @@ impl ExplorerPane {
     /// Starts a drag of `panel`'s inner edge from `pointer`.
     pub(crate) fn start_panel_resize(&mut self, panel: Panel, pointer: Point<Pixels>) {
         let side = side(panel);
-        self.dock_drag = Some(DockDrag {
-            panel: Some(panel),
-            side,
-            gesture: Gesture::Resize {
-                start: dock::along(side, pointer),
-                start_size: size(panel),
-            },
-            pointer,
-            collapsing: false,
-        });
+        let gesture = Gesture::Resize {
+            start: dock::along(side, pointer),
+            start_size: size(panel),
+        };
+        self.dock_drag = Some(DockDrag::new(Some(panel), side, gesture, pointer));
     }
 
-    /// Starts pulling the `side` edge: a hidden `panel` out of it, or a
-    /// second pane when `panel` is `None`.
-    pub(crate) fn start_edge_pull(&mut self, panel: Option<Panel>, side: DockSide, pointer: Point<Pixels>) {
-        self.dock_drag = Some(DockDrag {
-            panel,
-            side,
-            gesture: Gesture::Open,
-            pointer,
-            collapsing: false,
-        });
+    /// Starts pulling the listing's `side` edge, to open something there.
+    pub(crate) fn start_edge_pull(&mut self, side: DockSide, pointer: Point<Pixels>) {
+        self.dock_drag = Some(DockDrag::new(None, side, Gesture::Open, pointer));
     }
 
     /// Starts carrying `panel` by its grip.
     pub(crate) fn start_panel_move(&mut self, panel: Panel, pointer: Point<Pixels>) {
-        self.dock_drag = Some(DockDrag {
-            panel: Some(panel),
-            side: side(panel),
-            gesture: Gesture::Move,
-            pointer,
-            collapsing: false,
-        });
+        self.dock_drag = Some(DockDrag::new(Some(panel), side(panel), Gesture::Move, pointer));
+    }
+
+    /// Esc during a drag: nothing happens.
+    pub(crate) fn cancel_dock_drag(&mut self) -> bool {
+        self.dock_drag.take().is_some()
     }
 
     /// Follows a dock drag to `pointer`. Returns whether one is under way.
@@ -230,20 +330,11 @@ impl ExplorerPane {
                     Resized::Collapse => drag.collapsing = true,
                 }
             }
-            (Gesture::Open, Some(panel)) => {
-                let pulled = dock::depth(drag.side, self.columns_bounds.get(), pointer);
-                if pulled >= dock::OPEN_PULL {
-                    let (min, max) = range(panel);
-                    set_size(panel, pulled.clamp(min, max));
-                    self.set_panel_visible(panel, true);
-                    // From here on it is an ordinary resize of the open panel,
-                    // its edge under the pointer: from the depth pulled, not
-                    // from the smallest size it was clamped to, which put the
-                    // edge that far past the pointer.
-                    drag.gesture = Gesture::Resize {
-                        start: dock::along(drag.side, pointer),
-                        start_size: pulled,
-                    };
+            (Gesture::Open, _) => {
+                let moved = (dock::along(drag.side, pointer) - dock::along(drag.side, drag.origin)).abs();
+                drag.committed |= moved >= dock::OPEN_PULL;
+                if drag.committed {
+                    drag.choice = band(drag.side, self.columns_bounds.get(), pointer, openings(self).len());
                 }
             }
             _ => {}
@@ -253,7 +344,8 @@ impl ExplorerPane {
     }
 
     /// Ends a dock drag: hides a panel pulled shut, docks a carried one where
-    /// it was let go, or asks for a second pane. Returns whether one ended.
+    /// it was let go, or opens what the chosen bubble offers. Returns whether
+    /// one ended.
     pub(crate) fn finish_dock_drag(&mut self, cx: &mut Context<Self>) -> bool {
         let Some(drag) = self.dock_drag.take() else {
             return false;
@@ -272,15 +364,40 @@ impl ExplorerPane {
                     cx.refresh_windows();
                 }
             }
-            (Gesture::Open, None) => {
-                let depth = dock::depth(drag.side, bounds, drag.pointer);
-                let across = if drag.side.is_column() { bounds.size.width } else { bounds.size.height };
-                let across = f32::from(across);
-                if depth >= LISTING_MIN.min(across / 3.0) && across > 0.0 {
-                    cx.emit(PaneEvent::SplitRequested {
+            (Gesture::Open, _) if drag.committed => {
+                let Some(&opening) = openings(self).get(drag.choice) else {
+                    return true;
+                };
+                let column = drag.side.is_column();
+                let depth = pull_depth(drag.side, bounds, drag.pointer);
+                // Let go too near the edge, nothing opens: the zone and its
+                // line turned amber to say so.
+                if depth < opening.min(column) * dock::COLLAPSE_FRACTION {
+                    return true;
+                }
+                match opening {
+                    Opening::Split => {
+                        let across = f32::from(if column { bounds.size.width } else { bounds.size.height });
+                        if across > 0.0 {
+                            cx.emit(PaneEvent::SplitRequested {
+                                side: drag.side,
+                                fraction: (depth / across).clamp(0.15, 0.85),
+                            });
+                        }
+                    }
+                    Opening::Panel(panel) => {
+                        if side(panel) != drag.side {
+                            dock_panel(panel, drag.side, cx);
+                        }
+                        let (min, max) = range(panel);
+                        set_size(panel, depth.clamp(min, max));
+                        self.set_panel_visible(panel, true);
+                        cx.refresh_windows();
+                    }
+                    Opening::Terminal => cx.emit(PaneEvent::TerminalRequested {
                         side: drag.side,
-                        fraction: (depth / across).clamp(0.15, 0.85),
-                    });
+                        size: depth.max(opening.min(column)),
+                    }),
                 }
             }
             _ => {}
@@ -422,14 +539,17 @@ pub(crate) fn render(
         .children(bottom.into_iter().rev());
 
     let mut edges: Vec<AnyElement> = Vec::new();
+    // Every edge of the listing opens whatever is closed (a second pane, the
+    // hidden panels, the terminal), chosen from bubbles as it is pulled.
+    let offered = !openings(page).is_empty();
     for edge in [DockSide::Left, DockSide::Right, DockSide::Top, DockSide::Bottom] {
-        // A hidden panel claims its side's edge; with none, the edge splits.
+        if !offered {
+            break;
+        }
+        // A hidden panel docked here opens on a double click, at its size.
         let claimant = Panel::ALL
             .into_iter()
             .find(|&panel| side(panel) == edge && !page.panel_visible(panel) && collapsing != Some(panel));
-        if claimant.is_none() && !page.split_available {
-            continue;
-        }
         let id = SharedString::from(format!("dock-edge-{}", edge.as_str()));
         let pulling = dragging.is_some_and(|drag| drag.side == edge && drag.gesture == Gesture::Open);
         let strip = dock::place_on_edge(dock::strip(id, edge, pulling), edge, dock::EDGE).on_mouse_down(
@@ -437,12 +557,11 @@ pub(crate) fn render(
             cx.listener(move |this, event: &MouseDownEvent, _window, cx| {
                 cx.stop_propagation();
                 match claimant {
-                    // A double click opens it at the size it had.
                     Some(panel) if event.click_count >= 2 => {
                         this.set_panel_visible(panel, true);
                         this.dock_drag = None;
                     }
-                    _ => this.start_edge_pull(claimant, edge, event.position),
+                    _ => this.start_edge_pull(edge, event.position),
                 }
                 cx.notify();
             }),
@@ -461,10 +580,7 @@ pub(crate) fn render(
             let landing = if target.is_column() { landing } else { landing.left(px(left_room)).right(px(right_room)) };
             Some(landing.into_any_element())
         }
-        (Gesture::Open, None) => {
-            let depth = dock::depth(drag.side, bounds, drag.pointer).max(0.0);
-            Some(dock::split_guide(drag.side, depth).into_any_element())
-        }
+        (Gesture::Open, _) if drag.committed => Some(chooser(page, &drag, bounds)),
         _ => None,
     });
 
@@ -482,6 +598,237 @@ pub(crate) fn render(
         .children(edges)
         .children(guide)
         .into_any_element()
+}
+
+/// Amber, for a pull that would open nothing yet.
+const TOO_NEAR: u32 = 0xF59E0B;
+/// Half a chosen bubble's size: its place is its centre.
+const GROWN_HALF: f32 = 29.0;
+
+/// The bubbles of an edge pulled out, after PrimeSFX's: the room the new
+/// thing would take, tinted, with a glowing line under the pointer, and in the
+/// middle of that room one bubble per thing that can open there, each owning
+/// a band across the edge, so sliding along it picks. The chosen one swells
+/// into the accent with a halo and its name; the size it would open at rides
+/// on the line. Let go too near the edge and it all turns amber: nothing
+/// opens.
+fn chooser(page: &ExplorerPane, drag: &DockDrag, bounds: Bounds<Pixels>) -> AnyElement {
+    let options = openings(page);
+    let side = drag.side;
+    let column = side.is_column();
+    let width = f32::from(bounds.size.width);
+    let height = f32::from(bounds.size.height);
+    let depth = pull_depth(side, bounds, drag.pointer);
+    let chosen = options.get(drag.choice).copied();
+    let too_near = chosen.is_none_or(|opening| depth < opening.min(column) * dock::COLLAPSE_FRACTION);
+    let tone = if too_near { TOO_NEAR } else { theme::accent() };
+    let glow = |alpha: f32| -> Hsla {
+        let mut color: Hsla = rgb(tone).into();
+        color.a = alpha;
+        color
+    };
+
+    let zone = div()
+        .absolute()
+        .bg(rgba((tone << 8) | 0x1A))
+        .border_1()
+        .border_dashed()
+        .border_color(rgba((tone << 8) | 0xA0))
+        .rounded(px(10.0))
+        .shadow(vec![BoxShadow {
+            color: glow(0.10),
+            offset: point(px(0.0), px(0.0)),
+            blur_radius: px(32.0),
+            spread_radius: px(0.0),
+        }]);
+    let zone = match side {
+        DockSide::Left => zone.top_0().bottom_0().left_0().w(px(depth)),
+        DockSide::Right => zone.top_0().bottom_0().right_0().w(px(depth)),
+        DockSide::Top => zone.left_0().right_0().top_0().h(px(depth)),
+        DockSide::Bottom => zone.left_0().right_0().bottom_0().h(px(depth)),
+    };
+    let line = div()
+        .absolute()
+        .bg(rgb(tone))
+        .rounded(px(2.0))
+        .shadow(vec![BoxShadow {
+            color: glow(0.65),
+            offset: point(px(0.0), px(0.0)),
+            blur_radius: px(12.0),
+            spread_radius: px(0.0),
+        }]);
+    let line = match side {
+        DockSide::Left => line.top_0().bottom_0().left(px(depth - 1.5)).w(px(3.0)),
+        DockSide::Right => line.top_0().bottom_0().right(px(depth - 1.5)).w(px(3.0)),
+        DockSide::Top => line.left_0().right_0().top(px(depth - 1.5)).h(px(3.0)),
+        DockSide::Bottom => line.left_0().right_0().bottom(px(depth - 1.5)).h(px(3.0)),
+    };
+
+    // A point `inward` from the edge and `across` along it, in the area.
+    let at = |inward: f32, across: f32| -> (f32, f32) {
+        match side {
+            DockSide::Left => (inward, across),
+            DockSide::Right => (width - inward, across),
+            DockSide::Top => (across, inward),
+            DockSide::Bottom => (across, height - inward),
+        }
+    };
+    let length = if column { height } else { width };
+    // In the middle of the room, or against the line while the room is
+    // still too narrow to hold a bubble.
+    let inward = (depth / 2.0).min(depth - 40.0).max(40.0);
+    let count = options.len().max(1);
+    let mut layers: Vec<AnyElement> = vec![zone.into_any_element(), line.into_any_element()];
+    for (index, opening) in options.iter().enumerate() {
+        let picked = Some(*opening) == chosen && !too_near;
+        let (x, y) = at(inward, (index as f32 + 0.5) / count as f32 * length);
+        layers.push(bubble(*opening, picked, index, drag.choice, too_near).left(px(x - 60.0)).top(px(y - GROWN_HALF)).into_any_element());
+    }
+
+    // The size it would open at, on the line, facing the room; never closer
+    // to the edge than its own half width, where the window would cut it.
+    let (x, y) = at((depth + 18.0).max(if column { 78.0 } else { 18.0 }), length / 2.0);
+    let readout = if too_near {
+        nohrs_core::t!("Solte mais para dentro").to_string()
+    } else {
+        format!("{} px", depth.round() as i32)
+    };
+    layers.push(
+        div()
+            .absolute()
+            .left(px(x - 70.0))
+            .top(px(y - 11.0))
+            .w(px(140.0))
+            .flex()
+            .justify_center()
+            .child(
+                div()
+                    .px(px(8.0))
+                    .py(px(2.0))
+                    .rounded_full()
+                    .bg(rgb(tone))
+                    .text_xs()
+                    .font_weight(FontWeight::SEMIBOLD)
+                    .text_color(rgb(0xFFFFFF))
+                    .whitespace_nowrap()
+                    .child(readout),
+            )
+            .into_any_element(),
+    );
+    // How to pick, once there is more than one bubble and room to say it.
+    if options.len() > 1 && depth >= 150.0 && !too_near {
+        let hint = if column {
+            nohrs_core::t!("Suba ou desça para escolher")
+        } else {
+            nohrs_core::t!("Vá para os lados para escolher")
+        };
+        let hint = div()
+            .absolute()
+            .flex()
+            .justify_center()
+            .child(
+                div()
+                    .px(px(10.0))
+                    .py(px(3.0))
+                    .rounded_full()
+                    .bg(rgba((theme::bg() << 8) | 0xD0))
+                    .border_1()
+                    .border_color(rgb(theme::border()))
+                    .text_xs()
+                    .text_color(rgb(theme::muted()))
+                    .whitespace_nowrap()
+                    .child(hint),
+            );
+        let hint = match side {
+            DockSide::Left => hint.left_0().w(px(depth)).bottom(px(12.0)),
+            DockSide::Right => hint.right_0().w(px(depth)).bottom(px(12.0)),
+            DockSide::Top => hint.left_0().right_0().top(px(depth - 34.0)),
+            DockSide::Bottom => hint.left_0().right_0().bottom(px(depth - 34.0)),
+        };
+        layers.push(hint.into_any_element());
+    }
+    div().absolute().inset_0().children(layers).into_any_element()
+}
+
+// One bubble: a disc with the thing's icon and its name under it. The chosen
+// one pops (a short ease-out swell, started again whenever the choice moves)
+// into the accent, with a halo; the others sit back, muted.
+fn bubble(opening: Opening, picked: bool, index: usize, choice: usize, too_near: bool) -> Div {
+    const REST: f32 = 46.0;
+    const GROWN: f32 = 58.0;
+    let icon = Icon::new(Icon::empty())
+        .path(opening.icon())
+        .size(px(if picked { 24.0 } else { 20.0 }))
+        .text_color(rgb(if picked { 0xFFFFFF } else { theme::fg_secondary() }));
+    let disc = div()
+        .flex()
+        .items_center()
+        .justify_center()
+        .rounded_full()
+        .child(icon);
+    let disc: AnyElement = if picked {
+        disc.bg(rgb(theme::accent()))
+            .border_2()
+            .border_color(rgb(theme::accent_hover()))
+            .shadow(vec![
+                BoxShadow {
+                    color: {
+                        let mut halo: Hsla = rgb(theme::accent()).into();
+                        halo.a = 0.28;
+                        halo
+                    },
+                    offset: point(px(0.0), px(0.0)),
+                    blur_radius: px(0.0),
+                    spread_radius: px(6.0),
+                },
+                BoxShadow {
+                    color: hsla(0.0, 0.0, 0.0, 0.45),
+                    offset: point(px(0.0), px(6.0)),
+                    blur_radius: px(18.0),
+                    spread_radius: px(0.0),
+                },
+            ])
+            .with_animation(
+                ("bubble-pop", index * 16 + choice),
+                Animation::new(Duration::from_millis(170)).with_easing(ease_out_quint()),
+                |disc, delta| disc.size(px(REST + (GROWN - REST) * delta)),
+            )
+            .into_any_element()
+    } else {
+        disc.size(px(REST))
+            .bg(rgb(theme::toolbar_bg()))
+            .border_1()
+            .border_color(rgb(theme::border()))
+            .shadow(vec![BoxShadow {
+                color: hsla(0.0, 0.0, 0.0, 0.40),
+                offset: point(px(0.0), px(4.0)),
+                blur_radius: px(14.0),
+                spread_radius: px(0.0),
+            }])
+            .into_any_element()
+    };
+    let label = div()
+        .px(px(9.0))
+        .py(px(2.0))
+        .rounded_full()
+        .text_xs()
+        .font_weight(FontWeight::SEMIBOLD)
+        .whitespace_nowrap()
+        .when(picked, |label| label.bg(rgba((theme::accent() << 8) | 0xE0)).text_color(rgb(0xFFFFFF)))
+        .when(!picked, |label| label.bg(rgba((theme::bg() << 8) | 0xC8)).text_color(rgb(theme::muted())))
+        .child(opening.label());
+    // A fixed box centred on the bubble's place, so the swell grows about
+    // its centre and the name keeps its line.
+    div()
+        .absolute()
+        .w(px(120.0))
+        .flex()
+        .flex_col()
+        .items_center()
+        .gap(px(6.0))
+        .when(too_near, |this| this.opacity(0.45))
+        .child(div().size(px(GROWN)).flex().items_center().justify_center().child(disc))
+        .child(label)
 }
 
 /// The size `panel` would have docked on `side`.

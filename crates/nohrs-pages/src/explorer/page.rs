@@ -43,10 +43,10 @@ const SESSION_KEY: KvKey = kv_key!("session.explorer_tabs");
 const SAVE_DEBOUNCE: Duration = Duration::from_millis(500);
 
 const TERMINAL_DEFAULT_HEIGHT: f32 = 260.0;
-const TERMINAL_MIN_HEIGHT: f32 = 80.0;
+const TERMINAL_MIN_HEIGHT: f32 = super::view::panels::TERMINAL_MIN_HEIGHT;
 /// As a column beside the panes.
 const TERMINAL_DEFAULT_WIDTH: f32 = 460.0;
-const TERMINAL_MIN_WIDTH: f32 = 240.0;
+const TERMINAL_MIN_WIDTH: f32 = super::view::panels::TERMINAL_MIN_WIDTH;
 const TERMINAL_HEADER_HEIGHT: f32 = 28.0;
 /// Room the panes always keep beside or above the terminal.
 const PANES_MIN: f32 = 240.0;
@@ -479,6 +479,10 @@ impl ExplorerPage {
                 self.split_from_edge(*side, *fraction, cx);
                 return;
             }
+            PaneEvent::TerminalRequested { side, size } => {
+                self.open_terminal_at(*side, *size, cx);
+                return;
+            }
         };
         // A tab changed directory: persist the new session (a tab's cwd is part
         // of the snapshot), regardless of whether syncing is on.
@@ -555,6 +559,39 @@ impl ExplorerPage {
                         page.group.set_active(index, window, cx);
                         page.schedule_save(cx);
                         cx.notify();
+                    })
+                    .log_err();
+                })
+                .log_err();
+        })
+        .detach();
+    }
+
+    /// Opens the terminal on `side`, `size` deep, from its bubble on an edge
+    /// of the listing; docking it there is remembered in the config.
+    fn open_terminal_at(&mut self, side: DockSide, size: f32, cx: &mut Context<Self>) {
+        if self.terminal_side != side {
+            self.terminal_side = side;
+            super::view::panels::save_layout("terminal", format!("\"{}\"", side.as_str()), cx);
+        }
+        self.set_terminal_size(size);
+        if self.terminal_open {
+            cx.notify();
+            return;
+        }
+        let Some(window) = cx.windows().into_iter().next() else {
+            return;
+        };
+        let this = cx.entity().downgrade();
+        // As for a split: the event arrives inside the pane's update, and
+        // opening focuses the shell, which needs the window.
+        cx.spawn(async move |_, cx| {
+            window
+                .update(cx, |_, window, cx| {
+                    this.update(cx, |page, cx| {
+                        if !page.terminal_open {
+                            page.toggle_terminal(window, cx);
+                        }
                     })
                     .log_err();
                 })
@@ -1272,7 +1309,7 @@ impl ExplorerPage {
     }
 
     // Follows a terminal drag. Returns whether one is under way.
-    fn update_terminal_drag(&mut self, pointer: Point<Pixels>, window: &mut Window, cx: &mut Context<Self>) -> bool {
+    fn update_terminal_drag(&mut self, pointer: Point<Pixels>) -> bool {
         let Some(mut drag) = self.terminal_drag else {
             return false;
         };
@@ -1290,21 +1327,9 @@ impl ExplorerPage {
                     Resized::Collapse => drag.collapsing = true,
                 }
             }
-            Gesture::Open => {
-                let pulled = dock::depth(side, self.page_bounds.get(), pointer);
-                if pulled >= dock::OPEN_PULL {
-                    let (min, max) = self.terminal_range();
-                    self.set_terminal_size(pulled.clamp(min, max.max(min)));
-                    if !self.terminal_open {
-                        self.toggle_terminal(window, cx);
-                    }
-                    drag.gesture = Gesture::Resize {
-                        start: dock::along(side, pointer),
-                        start_size: pulled,
-                    };
-                }
-            }
-            Gesture::Move => {}
+            // The terminal is opened from the listing's edges (their bubbles),
+            // never pulled out of an edge of its own.
+            Gesture::Open | Gesture::Move => {}
         }
         self.terminal_drag = Some(drag);
         true
@@ -1338,40 +1363,6 @@ impl ExplorerPage {
         cx.notify();
     }
 
-    // While the terminal is closed, the edge of its side drags it open; a
-    // double click opens it at the size it had.
-    fn render_terminal_edge(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
-        let collapsing = self.terminal_drag.is_some_and(|drag| drag.collapsing);
-        if self.terminal_open && !collapsing {
-            return None;
-        }
-        let side = self.terminal_side;
-        let pulling = self.terminal_drag.is_some_and(|drag| drag.gesture == Gesture::Open);
-        Some(
-            dock::place_on_edge(dock::strip("terminal-edge", side, pulling), side, dock::EDGE)
-                .on_mouse_down(
-                    MouseButton::Left,
-                    cx.listener(|page, event: &MouseDownEvent, window, cx| {
-                        cx.stop_propagation();
-                        if event.click_count >= 2 {
-                            page.terminal_drag = None;
-                            if !page.terminal_open {
-                                page.toggle_terminal(window, cx);
-                            }
-                        } else {
-                            page.terminal_drag = Some(TerminalDrag {
-                                gesture: Gesture::Open,
-                                pointer: event.position,
-                                collapsing: false,
-                            });
-                        }
-                        cx.notify();
-                    }),
-                )
-                .into_any_element(),
-        )
-    }
-
     // While the terminal is carried, where it would land.
     fn render_terminal_landing(&self) -> Option<AnyElement> {
         let drag = self.terminal_drag.filter(|drag| drag.gesture == Gesture::Move)?;
@@ -1397,6 +1388,11 @@ impl Render for ExplorerPage {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let callbacks = Self::pane_callbacks();
         self.group.set_title_bar_allowed(!self.terminal_beside());
+        // The listing's edges offer the terminal while it is closed.
+        let terminal_open = self.terminal_open;
+        for tab in self.group.active_tabs() {
+            tab.update(cx, |pane, _| pane.terminal_shown = terminal_open);
+        }
         let body = self.group.render(window, cx, &callbacks);
         let collapsing = self.terminal_drag.is_some_and(|drag| drag.collapsing);
         let terminal_panel = (self.terminal_open && !collapsing).then(|| self.render_terminal_panel(window, cx));
@@ -1421,7 +1417,6 @@ impl Render for ExplorerPage {
             .child(panes)
             .children(after)
             .child(dock::measure(self.page_bounds.clone()))
-            .children(self.render_terminal_edge(cx))
             .children(self.render_terminal_landing());
 
         div()
@@ -1471,7 +1466,7 @@ impl Render for ExplorerPage {
                     if page.group.drag_to(event.position) {
                         cx.notify();
                     }
-                    if page.update_terminal_drag(event.position, window, cx) {
+                    if page.update_terminal_drag(event.position) {
                         cx.notify();
                     }
                 }))

@@ -5174,4 +5174,48 @@ pub(super) static EXTRA: &[(&str, [&str; 6])] = &[
             "磁盘上找不到 {n} 个文件",
         ],
     ),
+    (
+        "Nova divisão",
+        [
+            "Nouvelle division",
+            "Neue Teilung",
+            "Nuova divisione",
+            "Новое разделение",
+            "新しい分割",
+            "新拆分",
+        ],
+    ),
+    (
+        "Solte mais para dentro",
+        [
+            "Relâchez plus à l'intérieur",
+            "Weiter innen loslassen",
+            "Rilascia più all'interno",
+            "Отпустите дальше от края",
+            "もっと内側で離してください",
+            "再往里一点松开",
+        ],
+    ),
+    (
+        "Suba ou desça para escolher",
+        [
+            "Montez ou descendez pour choisir",
+            "Nach oben oder unten bewegen zum Auswählen",
+            "Sali o scendi per scegliere",
+            "Двигайте вверх или вниз, чтобы выбрать",
+            "上下に動かして選択",
+            "上下移动以选择",
+        ],
+    ),
+    (
+        "Vá para os lados para escolher",
+        [
+            "Allez sur les côtés pour choisir",
+            "Seitwärts bewegen zum Auswählen",
+            "Spostati ai lati per scegliere",
+            "Двигайте в стороны, чтобы выбрать",
+            "左右に動かして選択",
+            "左右移动以选择",
+        ],
+    ),
 ];

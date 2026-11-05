@@ -29,6 +29,12 @@ both, so minimize, maximize and close did nothing whenever the root under them
 saw the press (seen 04/11/2026; it only worked where an element that occludes
 hid the root from the pointer).
 
+The third, in `src/taffy.rs`, `to_grid_repeat`: the literals in
+`minmax(length(0.0), fr(1.0))` are written `0.0_f32` and `1.0_f32`. Without
+the suffix rustc 1.9x warns that the float falls back to `f32` through a
+trait bound it does not satisfy, a fallback it is phasing out and will make
+an error (rust-lang/rust#154024). Upstream may already have fixed it.
+
 When gpui is upgraded: check whether a caption or caption-button press, or a
 caption-button release, still returns `Some(0)` when the dispatch was
 "handled" (the lines are marked `NOHRS`).

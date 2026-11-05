@@ -76,6 +76,12 @@ pub fn render(
             let key_lc = event.keystroke.key.to_lowercase();
             let modifiers = event.keystroke.modifiers;
             let with_modifier = modifiers.platform || modifiers.control;
+            // Escape lets go of a drag of a panel or an edge: nothing opens.
+            if key_lc == "escape" && this.cancel_dock_drag() {
+                cx.notify();
+                cx.stop_propagation();
+                return;
+            }
             // Escape closes an open menu before anything else hears it.
             if key_lc == "escape" && this.context_menu.is_some() {
                 this.close_menu(cx);

@@ -914,4 +914,8 @@ pub(super) static STRINGS: &[(&str, &str, &str)] = &[
     ("{share} em {server}", "{share} on {server}", "{share} en {server}"),
     ("… e mais {n}", "… and {n} more", "… y {n} más"),
     ("{n} arquivo não encontrado no disco", "{n} file not found on disk", "{n} archivo no encontrado en el disco"),
+    ("Nova divisão", "New split", "Nueva división"),
+    ("Solte mais para dentro", "Let go further in", "Suelta más adentro"),
+    ("Suba ou desça para escolher", "Move up or down to choose", "Sube o baja para elegir"),
+    ("Vá para os lados para escolher", "Move sideways to choose", "Muévete a los lados para elegir"),
 ];

@@ -1183,9 +1183,11 @@ impl ExplorerPane {
 // a test binary to keep responsive.
 #[allow(clippy::unwrap_used, clippy::disallowed_methods)]
 mod overwrite_recovery_tests {
-    use super::{
-        ClipMode, apply_to_free_name, drop_claimed, drop_staged, overwrite_apply, restore_staged,
-    };
+    use super::{drop_staged, restore_staged};
+    // Only the Unix tests can stage an unreadable tree.
+    #[cfg(unix)]
+    use super::{ClipMode, apply_to_free_name, drop_claimed, overwrite_apply};
+    #[cfg(unix)]
     use nohrs_services::fs::ops;
 
     // A directory holding something a copy cannot read, so a no-replace copy of

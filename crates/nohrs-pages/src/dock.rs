@@ -225,18 +225,6 @@ pub(crate) fn landing(side: DockSide, depth: f32) -> Div {
     }
 }
 
-/// A line across the area at `depth` from its `side` edge, where a drag
-/// that splits the listing would put the new divider.
-pub(crate) fn split_guide(side: DockSide, depth: f32) -> Div {
-    let line = div().absolute().bg(rgb(theme::accent()));
-    match side {
-        DockSide::Left => line.top_0().bottom_0().left(px(depth)).w(px(2.0)),
-        DockSide::Right => line.top_0().bottom_0().right(px(depth)).w(px(2.0)),
-        DockSide::Top => line.left_0().right_0().top(px(depth)).h(px(2.0)),
-        DockSide::Bottom => line.left_0().right_0().bottom(px(depth)).h(px(2.0)),
-    }
-}
-
 /// Measures the area it is put in, absolutely over it, into `bounds`, and
 /// asks for another frame when the size changed so the panels refit.
 pub(crate) fn measure(bounds: std::rc::Rc<std::cell::Cell<Bounds<Pixels>>>) -> impl IntoElement {

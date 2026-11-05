@@ -71,13 +71,21 @@ thread_local! {
 /// divider between the panes, or the edge of the column of vertical tabs.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum GroupDrag {
-    /// The divider; `collapsing` names the pane squeezed past
-    /// [`PANE_COLLAPSE`], which closes when the button comes up.
-    Divider { collapsing: Option<usize> },
+    /// The divider.
+    Divider {
+        /// The pane squeezed past [`PANE_COLLAPSE`], which closes when the
+        /// button comes up.
+        collapsing: Option<usize>,
+    },
     /// A double click on the divider: the panes share the room evenly.
     EvenOut,
-    /// The tab column's edge: where the pointer started and the width then.
-    TabColumn { start_x: f32, start_width: f32 },
+    /// The tab column's edge.
+    TabColumn {
+        /// Where the pointer was when the drag started.
+        start_x: f32,
+        /// The column's width then.
+        start_width: f32,
+    },
 }
 
 /// Builds a fresh tab entity. Separate from [`PaneItem`] because construction

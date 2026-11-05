@@ -1,3 +1,5 @@
+// Only the real opening reports a failure; tests record the request instead.
+#[cfg(not(test))]
 use nohrs_core::tf;
 use nohrs_core::config;
 use nohrs_services::fs::listing::{FileEntryDto, ListParams, list_dir_sync};

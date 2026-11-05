@@ -632,13 +632,19 @@ impl SettingsPage {
                         self.switch("vertical-tabs", layout.vertical_tabs, ("layout", "vertical_tabs"), cx),
                     )
                     .reset(("layout", "vertical_tabs"), !layout.vertical_tabs, "false"),
+                    Row::hint(
+                        t!("Alça para mover painéis"),
+                        t!("Uma alça no meio da borda de cada painel, para arrastá-lo até outro lado."),
+                        self.switch("move-grips", layout.move_grips, ("layout", "move_grips"), cx),
+                    )
+                    .reset(("layout", "move_grips"), !layout.move_grips, "false"),
                 ],
             ),
         ]
     }
 
-    // Which side of the window a panel docks to. The same choice the grip in
-    // the middle of its edge makes by dragging.
+    // Which side of the window a panel docks to. The same choice a bubble of
+    // the listing's edges makes, and the grip when it is shown.
     fn dock_row(
         &self,
         key: &'static str,
@@ -674,7 +680,7 @@ impl SettingsPage {
         };
         Row::hint(
             label,
-            t!("Também dá para arrastar pela alça no meio da borda do painel até outro lado."),
+            t!("Também dá para puxar uma borda da lista e soltar na bolha do painel."),
             self.config_choice(id, &options, ("layout", key), cx),
         )
         .reset(("layout", key), side == default, default_value)

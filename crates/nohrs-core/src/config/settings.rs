@@ -265,6 +265,10 @@ pub struct Layout {
     /// Tabs in a column down the left of the window, as in Zen Browser,
     /// instead of a row along the top.
     pub vertical_tabs: bool,
+    /// A grip in the middle of each panel's edge that carries the panel to
+    /// another side. Off by default: dragging it was not obvious, and the
+    /// sides are also chosen here and from the bubbles of the listing's edges.
+    pub move_grips: bool,
 }
 
 impl Default for Layout {
@@ -274,6 +278,7 @@ impl Default for Layout {
             preview: DockSide::Right,
             terminal: DockSide::Bottom,
             vertical_tabs: false,
+            move_grips: false,
         }
     }
 }
@@ -1184,16 +1189,20 @@ fn read_layout(table: &toml::Table, layout: &mut Layout, diagnostics: &mut Vec<D
             }
         }
     }
-    if let Some(value) = table.get("vertical_tabs") {
-        match value.as_bool() {
-            Some(flag) => layout.vertical_tabs = flag,
-            None => diagnostics.push(Diagnostic::warn(format!(
-                "invalid layout.vertical_tabs {value}; using {}",
-                layout.vertical_tabs
-            ))),
+    for (key, slot) in [("vertical_tabs", &mut layout.vertical_tabs), ("move_grips", &mut layout.move_grips)] {
+        if let Some(value) = table.get(key) {
+            match value.as_bool() {
+                Some(flag) => *slot = flag,
+                None => diagnostics.push(Diagnostic::warn(format!("invalid layout.{key} {value}; using {slot}"))),
+            }
         }
     }
-    warn_unknown_keys(table, &["sidebar", "preview", "terminal", "vertical_tabs"], "layout.", diagnostics);
+    warn_unknown_keys(
+        table,
+        &["sidebar", "preview", "terminal", "vertical_tabs", "move_grips"],
+        "layout.",
+        diagnostics,
+    );
 }
 
 fn read_keybindings(

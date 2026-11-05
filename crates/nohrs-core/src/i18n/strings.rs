@@ -903,7 +903,6 @@ pub(super) static STRINGS: &[(&str, &str, &str)] = &[
     ("Salvo: {name}", "Saved: {name}", "Guardado: {name}"),
     ("Sequências", "Sequences", "Secuencias"),
     ("Tags", "Tags", "Etiquetas"),
-    ("Também dá para arrastar pela alça no meio da borda do painel até outro lado.", "You can also drag the handle in the middle of the panel's edge to another side.", "También puedes arrastrar el asa del centro del borde del panel a otro lado."),
     ("Terminal", "Terminal", "Terminal"),
     ("Trabalho", "Work", "Trabajo"),
     ("Turquesa", "Teal", "Turquesa"),
@@ -918,4 +917,7 @@ pub(super) static STRINGS: &[(&str, &str, &str)] = &[
     ("Solte mais para dentro", "Let go further in", "Suelta más adentro"),
     ("Suba ou desça para escolher", "Move up or down to choose", "Sube o baja para elegir"),
     ("Vá para os lados para escolher", "Move sideways to choose", "Muévete a los lados para elegir"),
+    ("Alça para mover painéis", "Grip to move panels", "Asa para mover paneles"),
+    ("Uma alça no meio da borda de cada painel, para arrastá-lo até outro lado.", "A grip in the middle of each panel's edge, to drag it to another side.", "Un asa en el centro del borde de cada panel, para arrastrarlo a otro lado."),
+    ("Também dá para puxar uma borda da lista e soltar na bolha do painel.", "You can also pull an edge of the listing and drop on the panel's bubble.", "También puedes tirar de un borde de la lista y soltar en la burbuja del panel."),
 ];

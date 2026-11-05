@@ -926,6 +926,11 @@ async fn root_pane_shows_sidebar_but_split_pane_hides_it(cx: &mut TestAppContext
                 "a pane opened by a split starts with the sidebar collapsed"
             );
             assert!(
+                !page.pane(1).read(cx).preview_visible,
+                "and with its preview closed"
+            );
+            assert!(page.pane(0).read(cx).preview_visible, "the original pane keeps its preview");
+            assert!(
                 page.pane(0).read(cx).sidebar_visible,
                 "splitting does not disturb the original pane's sidebar"
             );

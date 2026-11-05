@@ -5054,17 +5054,6 @@ pub(super) static EXTRA: &[(&str, [&str; 6])] = &[
         ],
     ),
     (
-        "Também dá para arrastar pela alça no meio da borda do painel até outro lado.",
-        [
-            "Vous pouvez aussi faire glisser la poignée au milieu du bord du panneau vers un autre côté.",
-            "Sie können auch den Griff in der Mitte des Panelrands auf eine andere Seite ziehen.",
-            "Puoi anche trascinare la maniglia al centro del bordo del pannello su un altro lato.",
-            "Можно также перетащить ручку посередине края панели на другую сторону.",
-            "パネルの端の中央にあるハンドルを別の側へドラッグすることもできます。",
-            "也可以将面板边缘中间的手柄拖到另一侧。",
-        ],
-    ),
-    (
         "Terminal",
         [
             "Terminal",
@@ -5216,6 +5205,39 @@ pub(super) static EXTRA: &[(&str, [&str; 6])] = &[
             "Двигайте в стороны, чтобы выбрать",
             "左右に動かして選択",
             "左右移动以选择",
+        ],
+    ),
+    (
+        "Alça para mover painéis",
+        [
+            "Poignée pour déplacer les panneaux",
+            "Griff zum Verschieben von Panels",
+            "Maniglia per spostare i pannelli",
+            "Ручка для перемещения панелей",
+            "パネルを移動するハンドル",
+            "移动面板的手柄",
+        ],
+    ),
+    (
+        "Uma alça no meio da borda de cada painel, para arrastá-lo até outro lado.",
+        [
+            "Une poignée au milieu du bord de chaque panneau, pour le faire glisser vers un autre côté.",
+            "Ein Griff in der Mitte des Rands jedes Panels, um es auf eine andere Seite zu ziehen.",
+            "Una maniglia al centro del bordo di ogni pannello, per trascinarlo su un altro lato.",
+            "Ручка посередине края каждой панели, чтобы перетащить её на другую сторону.",
+            "各パネルの端の中央にあるハンドルで、別の側へドラッグできます。",
+            "每个面板边缘中间的手柄，可将其拖到另一侧。",
+        ],
+    ),
+    (
+        "Também dá para puxar uma borda da lista e soltar na bolha do painel.",
+        [
+            "Vous pouvez aussi tirer un bord de la liste et relâcher sur la bulle du panneau.",
+            "Sie können auch einen Rand der Liste ziehen und auf der Blase des Panels loslassen.",
+            "Puoi anche tirare un bordo dell'elenco e rilasciare sulla bolla del pannello.",
+            "Можно также потянуть край списка и отпустить на пузыре панели.",
+            "一覧の端を引っ張り、パネルのバブルで離すこともできます。",
+            "也可以拉动列表的边缘，在面板的气泡上松开。",
         ],
     ),
 ];

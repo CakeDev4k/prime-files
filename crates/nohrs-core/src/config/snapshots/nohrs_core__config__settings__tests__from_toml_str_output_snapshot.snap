@@ -48,6 +48,7 @@ expression: parsed
             preview: Right,
             terminal: Bottom,
             vertical_tabs: false,
+            move_grips: false,
         },
         updates: Updates {
             automatic: true,

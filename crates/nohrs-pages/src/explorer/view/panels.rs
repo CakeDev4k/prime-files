@@ -89,6 +89,16 @@ struct Arrangement {
 }
 
 thread_local! {
+    // `layout.move_grips`: whether the panels' edges carry the grip.
+    static MOVE_GRIPS: Cell<bool> = const { Cell::new(false) };
+}
+
+/// Shows or hides the grip that carries a panel to another side.
+pub(crate) fn set_move_grips(shown: bool) {
+    MOVE_GRIPS.set(shown);
+}
+
+thread_local! {
     // Shared by every tab, as the panes of Explorer's windows are: a new tab
     // opens with the sides and sizes the last drag left.
     static ARRANGEMENT: Cell<Arrangement> = const {
@@ -883,7 +893,7 @@ fn edge_strip(
                 cx.notify();
             }),
         )
-        .child(grip)
+        .when(MOVE_GRIPS.get(), |strip| strip.child(grip))
 }
 
 #[cfg(test)]

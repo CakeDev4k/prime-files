@@ -246,6 +246,11 @@
     "Layout": {
       "description": "Where the window's panels sit and how the tabs are laid out. Each panel\ndocks to one side of what it accompanies: the sidebar and the preview to a\nside of the listing, the terminal to a side of the panes.",
       "properties": {
+        "move_grips": {
+          "default": false,
+          "description": "A grip in the middle of each panel's edge that carries the panel to\nanother side. Off by default: dragging it was not obvious, and the\nsides are also chosen here and from the bubbles of the listing's edges.",
+          "type": "boolean"
+        },
         "preview": {
           "$ref": "#/$defs/DockSide",
           "default": "right",
@@ -548,6 +553,7 @@
     "layout": {
       "$ref": "#/$defs/Layout",
       "default": {
+        "move_grips": false,
         "preview": "right",
         "sidebar": "left",
         "terminal": "bottom",

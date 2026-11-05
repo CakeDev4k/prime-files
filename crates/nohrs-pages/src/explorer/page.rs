@@ -396,8 +396,11 @@ impl ExplorerPage {
     ) -> Option<usize> {
         let (index, tab) = self.group.add_pane(window, cx)?;
         self.subscribe_tab(&tab, cx);
-        // Split-created panes start with the sidebar collapsed (issue #164).
+        // Split-created panes start with the sidebar collapsed (issue #164),
+        // and the preview too: a second pane is for a second folder, and its
+        // own preview would halve what is left of it (decided 05/11/2026).
         self.configure_tab(&tab, cwd, false, cx);
+        tab.update(cx, |pane, _| pane.preview_visible = false);
         Some(index)
     }
 
@@ -555,6 +558,8 @@ impl ExplorerPage {
                         };
                         page.subscribe_tab(&tab, cx);
                         page.configure_tab(&tab, Some(cwd), false, cx);
+                        // Without its own preview, as `add_explorer_pane` opens one.
+                        tab.update(cx, |pane, _| pane.preview_visible = false);
                         page.group.set_ratio(if first { fraction } else { 1.0 - fraction });
                         page.group.set_active(index, window, cx);
                         page.schedule_save(cx);
@@ -677,6 +682,7 @@ impl ExplorerPage {
         super::view::panels::set_sides(layout.sidebar, layout.preview);
         self.terminal_side = layout.terminal;
         self.group.set_vertical_tabs(layout.vertical_tabs);
+        super::view::panels::set_move_grips(layout.move_grips);
         cx.notify();
     }
 

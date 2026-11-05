@@ -24,7 +24,10 @@ gpui-component = "0.5"
 image = { version = "0.25", default-features = false, features = ["png", "jpeg", "bmp"] }
 anyhow.workspace     = true
 serde.workspace      = true
-serde_json.workspace = true
+# The terminal panel: ConPTY plus the grid and escape-sequence parser.
+alacritty_terminal = "0.26"
+# preserve_order: Listary's Preferences.json is rewritten in its own key order.
+serde_json = { workspace = true, features = ["preserve_order"] }
 tracing.workspace    = true
 # `local-offset`: "Today" and "Yesterday" in Group by are local days.
 time = { workspace = true, features = ["local-offset"] }
@@ -54,6 +57,7 @@ windows = { version = "0.61", features = [
   "Win32_Media_MediaFoundation",
   "Win32_Storage_FileSystem",
   "Win32_System_Com",
+  "Win32_System_Diagnostics_ToolHelp",
   "Win32_System_LibraryLoader",
   "Win32_System_Ole",
   "Win32_System_Registry",

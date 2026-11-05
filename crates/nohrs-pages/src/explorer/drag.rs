@@ -7,6 +7,7 @@
 //! from Explorer: gpui's drop target, as `ExternalPaths`. The drop side then
 //! only has to handle that.
 
+use nohrs_core::{t, tf};
 use gpui::{Context, ExternalPaths, InteractiveElement, MouseMoveEvent, Pixels, Point, Styled, Window, rgb};
 use nohrs_ui::theme::theme;
 use std::path::{Path, PathBuf};
@@ -20,6 +21,13 @@ use super::types::StatusLevel;
 /// rounded up for high-DPI screens.
 const DRAG_THRESHOLD: f32 = 6.0;
 
+/// Where a drag out started, for what has to be read again once it ends.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum DragFrom {
+    Listing,
+    Preview,
+}
+
 /// A left press on an entry that may turn into a drag.
 pub(crate) struct DragCandidate {
     ix: usize,
@@ -30,10 +38,68 @@ pub(crate) struct DragCandidate {
     narrow_on_release: bool,
 }
 
+/// A left press on an item listed in the preview — a file inside the folder the
+/// preview shows — that may turn into a drag. Kept apart from
+/// [`DragCandidate`], which addresses the listing by row: the preview's items
+/// are not rows of the listing, and there is no selection to drag with them.
+pub(crate) struct PreviewDragCandidate {
+    path: PathBuf,
+    origin: Point<Pixels>,
+}
+
+impl PreviewDragCandidate {
+    /// What the drag would carry.
+    #[cfg(test)]
+    pub(crate) fn path(&self) -> &Path {
+        &self.path
+    }
+}
+
 impl ExplorerPane {
+    /// Records a left press on `path`, listed in the preview. A release
+    /// without moving stays the click it was: the item opens in the preview.
+    pub(crate) fn press_preview_item(&mut self, path: &str, position: Point<Pixels>) {
+        self.preview_drag = Some(PreviewDragCandidate {
+            path: PathBuf::from(path),
+            origin: position,
+        });
+    }
+
+    /// Ends a press on a preview item that did not become a drag.
+    pub(crate) fn release_preview_item(&mut self) {
+        self.preview_drag = None;
+    }
+
+    /// Starts dragging the pressed preview item out once the pointer has
+    /// moved far enough, the same Windows drag the listing starts: dropped on
+    /// Premiere it imports, on Explorer it copies or moves, on Nohrs it lands
+    /// like any drop.
+    pub(crate) fn preview_drag_moved(&mut self, event: &MouseMoveEvent, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(candidate) = self.preview_drag_ready(event) else {
+            return;
+        };
+        self.start_drag_out(vec![candidate.path], DragFrom::Preview, window, cx);
+    }
+
+    // The pressed preview item, once the press has moved past the threshold
+    // with the button held; a press whose button came up is forgotten.
+    pub(crate) fn preview_drag_ready(&mut self, event: &MouseMoveEvent) -> Option<PreviewDragCandidate> {
+        let candidate = self.preview_drag.as_ref()?;
+        if event.pressed_button != Some(gpui::MouseButton::Left) {
+            self.preview_drag = None;
+            return None;
+        }
+        let moved = event.position - candidate.origin;
+        if f32::from(moved.x).abs() < DRAG_THRESHOLD && f32::from(moved.y).abs() < DRAG_THRESHOLD {
+            return None;
+        }
+        self.preview_drag.take()
+    }
+
     /// Records a left press on row `ix`. Returns whether the selection should
     /// be left as it is for now (the entry is part of a multiple selection).
     pub(crate) fn press_entry(&mut self, ix: usize, position: Point<Pixels>, plain: bool) -> bool {
+        self.end_hover_audio();
         let narrow_on_release = plain && self.is_selected(ix) && self.selection.len() > 1;
         self.drag_candidate = Some(DragCandidate {
             ix,
@@ -81,10 +147,10 @@ impl ExplorerPane {
         } else {
             vec![PathBuf::from(&entry.path)]
         };
-        self.start_drag_out(paths, window, cx);
+        self.start_drag_out(paths, DragFrom::Listing, window, cx);
     }
 
-    fn start_drag_out(&mut self, paths: Vec<PathBuf>, window: &mut Window, cx: &mut Context<Self>) {
+    fn start_drag_out(&mut self, paths: Vec<PathBuf>, from: DragFrom, window: &mut Window, cx: &mut Context<Self>) {
         let Some(hwnd) = crate::ipc::window_hwnd(window) else {
             return;
         };
@@ -96,10 +162,14 @@ impl ExplorerPane {
             let outcome = platform::drag(hwnd, &paths);
             this.update(cx, |pane, cx| {
                 if let Err(error) = outcome {
-                    pane.set_status(StatusLevel::Error, format!("Could not drag: {error}"));
+                    pane.set_status(StatusLevel::Error, tf!("Não foi possível arrastar: {error}", error = error));
                 }
                 // A move to another program takes the files out of this folder.
                 pane.reload(cx);
+                if from == DragFrom::Preview {
+                    // And out of the folder the preview lists.
+                    pane.refresh_preview_listing(cx);
+                }
                 cx.notify();
             })
             .ok();
@@ -135,7 +205,7 @@ impl ExplorerPane {
             .cloned()
             .collect();
         if into_itself {
-            self.set_status(StatusLevel::Warning, "A folder cannot go inside itself.");
+            self.set_status(StatusLevel::Warning, t!("Uma pasta não pode ir para dentro dela mesma."));
             cx.notify();
         }
         if sources.is_empty() {

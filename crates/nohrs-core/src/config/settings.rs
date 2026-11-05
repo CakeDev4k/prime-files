@@ -116,6 +116,10 @@ impl Default for Theme {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(default)]
 pub struct Ui {
+    /// Interface language: `"auto"` follows the Windows regional format
+    /// (then the country), or one of `"pt-BR"`, `"en"`, `"es"`, `"fr"`, `"de"`,
+    /// `"it"`, `"ru"`, `"ja"`, `"zh-CN"`.
+    pub language: String,
     /// Column the listing is sorted by on load.
     pub default_sort: SortOrder,
     /// Whether that default runs from Z to A, largest or newest first.
@@ -130,17 +134,31 @@ pub struct Ui {
     /// How smoothly the mouse wheel scrolls the listing, 0..=100: 0 moves
     /// in steps, 100 glides for longest.
     pub scroll_smoothness: u32,
+    /// Whether sound files show their waveform instead of their icon in the
+    /// icons view.
+    pub audio_waveforms: bool,
+    /// Whether a video or sound starts playing as soon as the preview opens it.
+    pub preview_autoplay: bool,
+    /// Whether resting the mouse on a sound file in the listing plays it.
+    pub hover_audio: bool,
+    /// How long the mouse rests on a sound file before it plays, in ms.
+    pub hover_audio_delay_ms: u32,
 }
 
 impl Default for Ui {
     fn default() -> Self {
         Self {
+            language: "auto".to_string(),
             default_sort: SortOrder::Name,
             default_sort_descending: false,
             show_hidden: false,
             icon_pack: "default".to_string(),
             name_lines: 0,
             scroll_smoothness: 50,
+            audio_waveforms: false,
+            preview_autoplay: false,
+            hover_audio: true,
+            hover_audio_delay_ms: 400,
         }
     }
 }
@@ -732,7 +750,8 @@ impl Config {
              accent = \"orange\"   # \"orange\" | \"blue\" | \"teal\" | \"green\" | \"purple\" | \"pink\" | \"red\" | hex\n\
              \n\
              [ui]\n\
-             default_sort = \"name\"   # \"name\" | \"modified\" | \"size\" | \"kind\"\n\
+             language = \"auto\"   # \"auto\" (Windows region) | \"pt-BR\" | \"en\" | \"es\" | \"fr\" | \"de\" | \"it\" | \"ru\" | \"ja\" | \"zh-CN\"\n\
+             default_sort =\"name\"   # \"name\" | \"modified\" | \"size\" | \"kind\"\n\
              default_sort_descending = false  # true = Z to A, largest or newest first\n\
              show_hidden = false\n\
              icon_pack = \"default\"\n\
@@ -819,6 +838,16 @@ fn read_theme(table: &toml::Table, theme: &mut Theme, diagnostics: &mut Vec<Diag
 }
 
 fn read_ui(table: &toml::Table, ui: &mut Ui, diagnostics: &mut Vec<Diagnostic>) {
+    if let Some(value) = table.get("language") {
+        match value.as_str().map(str::trim) {
+            Some(language) if language.eq_ignore_ascii_case("auto") => ui.language = "auto".to_string(),
+            Some(language) if crate::i18n::Lang::parse(language).is_some() => ui.language = language.to_string(),
+            _ => diagnostics.push(Diagnostic::warn(format!(
+                "invalid ui.language {value}; using {:?}",
+                ui.language
+            ))),
+        }
+    }
     if let Some(value) = table.get("default_sort") {
         match value.as_str().and_then(SortOrder::parse) {
             Some(sort) => ui.default_sort = sort,
@@ -873,15 +902,56 @@ fn read_ui(table: &toml::Table, ui: &mut Ui, diagnostics: &mut Vec<Diagnostic>) 
             ))),
         }
     }
+    if let Some(value) = table.get("audio_waveforms") {
+        match value.as_bool() {
+            Some(flag) => ui.audio_waveforms = flag,
+            None => diagnostics.push(Diagnostic::warn(format!(
+                "invalid ui.audio_waveforms {value}; using {}",
+                ui.audio_waveforms
+            ))),
+        }
+    }
+    if let Some(value) = table.get("preview_autoplay") {
+        match value.as_bool() {
+            Some(flag) => ui.preview_autoplay = flag,
+            None => diagnostics.push(Diagnostic::warn(format!(
+                "invalid ui.preview_autoplay {value}; using {}",
+                ui.preview_autoplay
+            ))),
+        }
+    }
+    if let Some(value) = table.get("hover_audio") {
+        match value.as_bool() {
+            Some(flag) => ui.hover_audio = flag,
+            None => diagnostics.push(Diagnostic::warn(format!(
+                "invalid ui.hover_audio {value}; using {}",
+                ui.hover_audio
+            ))),
+        }
+    }
+    if let Some(value) = table.get("hover_audio_delay_ms") {
+        match value.as_integer().and_then(|delay| u32::try_from(delay).ok()).filter(|&delay| delay <= 10_000) {
+            Some(delay) => ui.hover_audio_delay_ms = delay,
+            None => diagnostics.push(Diagnostic::warn(format!(
+                "invalid ui.hover_audio_delay_ms {value}; using {}",
+                ui.hover_audio_delay_ms
+            ))),
+        }
+    }
     warn_unknown_keys(
         table,
         &[
+            "language",
             "default_sort",
             "default_sort_descending",
             "show_hidden",
             "icon_pack",
             "name_lines",
             "scroll_smoothness",
+            "audio_waveforms",
+            "preview_autoplay",
+            "hover_audio",
+            "hover_audio_delay_ms",
         ],
         "ui.",
         diagnostics,

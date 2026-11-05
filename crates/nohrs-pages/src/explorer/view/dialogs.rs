@@ -4,6 +4,7 @@
 //! window root) and are driven entirely by the operation state held on
 //! [`ExplorerPane`]; the filesystem logic lives in `super::super::file_ops`.
 
+use nohrs_core::{t, tf};
 use gpui::prelude::FluentBuilder as _;
 use gpui::*;
 use gpui_component::WindowExt as _;
@@ -29,9 +30,9 @@ impl ExplorerPane {
         let title = if count == 1 {
             let name =
                 file_name_of(std::path::Path::new(&paths[0])).unwrap_or_else(|| paths[0].clone());
-            format!("Permanently delete \u{201c}{name}\u{201d}?")
+            tf!("Excluir “{name}” para sempre?", name = name)
         } else {
-            format!("Permanently delete {count} items?")
+            tf!("Excluir {count} itens para sempre?", count = count)
         };
         let weak = cx.entity().downgrade();
         window.open_dialog(cx, move |dialog, _window, _cx| {
@@ -42,10 +43,10 @@ impl ExplorerPane {
                 .title(title.clone())
                 .button_props(
                     DialogButtonProps::default()
-                        .ok_text("Delete")
+                        .ok_text(t!("Excluir"))
                         .ok_variant(ButtonVariant::Danger),
                 )
-                .child("This can't be undone.")
+                .child(t!("Isso não pode ser desfeito."))
                 .on_ok(move |_, _window, cx| {
                     let paths = paths.clone();
                     weak.update(cx, |pane, cx| pane.delete_permanent_paths(paths, cx))
@@ -78,9 +79,7 @@ impl ExplorerPane {
             let checkbox_weak = weak.clone();
             let close_weak = weak.clone();
             dialog
-                .title(format!(
-                    "\u{201c}{name}\u{201d} already exists in \u{201c}{dest_name}\u{201d}"
-                ))
+                .title(tf!("“{name}” já existe em “{folder}”", name = name, folder = dest_name))
                 // Dismissing without choosing has to abandon the plan exactly as
                 // Cancel does, or the pending queue survives and the next paste
                 // resumes into this one.
@@ -102,12 +101,13 @@ impl ExplorerPane {
                         .flex()
                         .flex_col()
                         .gap_2()
-                        .child("Choose how to resolve the name conflict.")
+                        .child(t!("Escolha como resolver o conflito de nomes."))
                         .when(remaining > 0, |this| {
                             this.child(
                                 Checkbox::new("apply-to-all")
-                                    .label(format!(
-                                        "Apply to all remaining conflicts ({remaining} more)"
+                                    .label(tf!(
+                                        "Aplicar a todos os conflitos restantes (mais {remaining})",
+                                        remaining = remaining
                                     ))
                                     .checked(apply_to_all)
                                     .on_click(move |checked, _window, cx| {
@@ -129,8 +129,8 @@ impl ExplorerPane {
                     vec![
                         cancel_button(&weak),
                         overwrite_button(&weak),
-                        conflict_button(&weak, "skip", "Skip", ConflictResolution::Skip),
-                        conflict_button(&weak, "rename", "Rename", ConflictResolution::Rename),
+                        conflict_button(&weak, "skip", t!("Pular"), ConflictResolution::Skip),
+                        conflict_button(&weak, "rename", t!("Renomear"), ConflictResolution::Rename),
                     ]
                 })
         });
@@ -162,7 +162,7 @@ fn overwrite_button(weak: &WeakEntity<ExplorerPane>) -> Button {
     conflict_button(
         weak,
         "overwrite",
-        "Overwrite",
+        t!("Substituir"),
         ConflictResolution::Overwrite,
     )
     .danger()
@@ -171,7 +171,7 @@ fn overwrite_button(weak: &WeakEntity<ExplorerPane>) -> Button {
 fn cancel_button(weak: &WeakEntity<ExplorerPane>) -> Button {
     let weak = weak.clone();
     Button::new("cancel-paste")
-        .label("Cancel")
+        .label(t!("Cancelar"))
         .on_click(move |_, window, cx| {
             window.close_dialog(cx);
             weak.update(cx, |pane, cx| pane.cancel_paste(cx)).log_err();

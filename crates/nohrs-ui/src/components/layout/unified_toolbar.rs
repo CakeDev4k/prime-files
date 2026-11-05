@@ -1,3 +1,4 @@
+use nohrs_core::t;
 use crate::theme::theme;
 use gpui::{
     Action, Context, IntoElement, Pixels, Render, Window, WindowControlArea, div, prelude::*, px,
@@ -62,17 +63,17 @@ pub fn title_bar_controls(window: &Window) -> impl IntoElement + use<> {
         .dropdown_menu(move |menu, _window, _cx| {
             menu.min_w(px(200.0))
                 .menu_with_icon(
-                    "Configurações",
+                    t!("Configurações"),
                     Icon::new(IconName::Settings),
                     AccountMenuAction::boxed(AccountMenuCommand::Settings),
                 )
                 .menu_with_icon(
-                    "Atalhos",
+                    t!("Atalhos"),
                     Icon::new(IconName::CaseSensitive),
                     AccountMenuAction::boxed(AccountMenuCommand::Keymap),
                 )
                 .menu_with_icon(
-                    "Temas",
+                    t!("Temas"),
                     Icon::new(IconName::Palette),
                     AccountMenuAction::boxed(AccountMenuCommand::Themes),
                 )

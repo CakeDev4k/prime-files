@@ -80,8 +80,31 @@ pub fn open_in_explorer(parsing_name: &str) {
     }
 }
 
-/// The tree node that holds the drives.
+/// The tree node that holds the drives, and the address a pane shows it at.
 pub const THIS_PC: &str = "::{20D04FE0-3AEA-1069-A2D8-08002B30309D}";
+
+/// What This PC is called when the Shell's own name has not been read yet.
+pub const THIS_PC_NAME: &str = nohrs_core::k!("Este Computador");
+
+/// This PC's contents for the listing: the folders and drives it holds that
+/// are folders on disk, each a row that opens here. Portable devices and
+/// other virtual items have no folder and are left out. Slow like `load`
+/// (the Shell may touch network drives); called from the listing thread.
+pub fn this_pc_entries() -> Vec<nohrs_services::fs::listing::FileEntryDto> {
+    platform::this_pc()
+        .into_iter()
+        .filter_map(|place| {
+            let path = place.path?;
+            Some(nohrs_services::fs::listing::FileEntryDto {
+                name: place.name,
+                path,
+                kind: "dir".to_string(),
+                size: 0,
+                modified: 0,
+            })
+        })
+        .collect()
+}
 
 // How long a read of Quick access is shown before the next render reads it
 // again: pinning in Explorer, or a folder becoming frequent, shows up without
@@ -172,12 +195,26 @@ impl ExplorerPane {
         .detach();
     }
 
-    /// Goes to a place: its folder here, or Explorer for a virtual one.
+    /// Goes to a place: its folder here, This PC here as a list of its
+    /// drives and folders, or Explorer for another virtual one.
     pub(crate) fn open_place(&mut self, place: &Place, window: &mut Window, cx: &mut Context<Self>) {
         match &place.path {
             Some(path) => self.change_dir(path.clone(), window, cx),
+            None if place.parsing_name.eq_ignore_ascii_case(THIS_PC) => {
+                self.change_dir(THIS_PC.to_string(), window, cx)
+            }
             None => open_in_explorer(&place.parsing_name),
         }
+    }
+
+    /// The name of where the pane is, when the address is not a folder's
+    /// path: This PC's localized name.
+    pub(crate) fn location_name(&self) -> Option<String> {
+        if !self.cwd.eq_ignore_ascii_case(THIS_PC) {
+            return None;
+        }
+        let shell_name = self.sidebar.places.as_ref().and_then(|places| places.this_pc.as_ref()).map(|place| place.name.clone());
+        Some(shell_name.unwrap_or_else(|| nohrs_core::i18n::tr(THIS_PC_NAME).to_string()))
     }
 }
 
@@ -231,6 +268,13 @@ mod platform {
             drives,
             other,
         }
+    }
+
+    pub fn this_pc() -> Vec<Place> {
+        if let Err(error) = unsafe { CoInitializeEx(None, COINIT_APARTMENTTHREADED) }.ok() {
+            tracing::debug!("CoInitializeEx: {error}");
+        }
+        children(THIS_PC).into_iter().filter_map(|item| place(&item)).collect()
     }
 
     fn item(parsing_name: &str) -> Option<IShellItem> {
@@ -295,10 +339,14 @@ mod platform {
 
 #[cfg(not(windows))]
 mod platform {
-    use super::Places;
+    use super::{Place, Places};
 
     pub fn load() -> Places {
         Places::default()
+    }
+
+    pub fn this_pc() -> Vec<Place> {
+        Vec::new()
     }
 
     pub fn is_hidden(path: &std::path::Path) -> bool {

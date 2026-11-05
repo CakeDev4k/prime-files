@@ -80,7 +80,7 @@ pub fn render(
             // Measures the height columns are filled to. A change is only
             // known after layout, so it takes effect on the next frame.
             canvas(
-                move |bounds, _window, cx| {
+                move |bounds, window, cx| {
                     let height = f32::from(bounds.size.height);
                     entity.update(cx, |page, cx| {
                         if (page.compact_height - height).abs() > 0.5 {
@@ -88,8 +88,10 @@ pub fn render(
                             cx.notify();
                         }
                     });
+                    // As the listing's: no wheel through a bar over it.
+                    window.insert_hitbox(bounds, HitboxBehavior::Normal)
                 },
-                move |bounds, _, window, _| {
+                move |bounds, wheel_hitbox, window, _| {
                     let scroll = scroll.clone();
                     // The wheel scrolls the columns sideways, as in Explorer's
                     // List view: there is nothing below to scroll to.
@@ -97,6 +99,7 @@ pub fn render(
                         if phase != DispatchPhase::Capture
                             || event.modifiers.secondary()
                             || !bounds.contains(&event.position)
+                            || !wheel_hitbox.is_hovered(window)
                         {
                             return;
                         }
@@ -142,6 +145,7 @@ fn render_item(
 
     div()
         .id(("compact-item", ix))
+        .map(|this| page.hover_audio_target(this, &item, cx))
         .relative()
         .w(px(COLUMN_WIDTH - PADDING * 2.0))
         .h(px(ITEM_HEIGHT))

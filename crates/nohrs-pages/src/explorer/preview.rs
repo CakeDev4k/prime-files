@@ -1,3 +1,4 @@
+use nohrs_core::t;
 use nohrs_core::config;
 use nohrs_core::telemetry::LogErr as _;
 
@@ -275,6 +276,43 @@ impl ExplorerPane {
         }));
     }
 
+    /// Reads the folder the preview lists again, keeping where it was scrolled
+    /// and zoomed: an item dragged out of it to Explorer on the same drive was
+    /// moved, and must not stay listed. An archive's entries do not change by
+    /// dragging, so only a folder is read.
+    pub(crate) fn refresh_preview_listing(&mut self, cx: &mut Context<Self>) {
+        use nohrs_core::telemetry::LogErr as _;
+        let (Some(path), Some(_)) = (self.preview_path.clone(), self.preview_listing.as_ref()) else {
+            return;
+        };
+        let show_hidden = self.show_hidden;
+        let read = cx.background_spawn({
+            let path = path.clone();
+            async move {
+                let folder = std::path::Path::new(&path);
+                #[allow(clippy::disallowed_methods)]
+                let is_folder = std::fs::metadata(folder).is_ok_and(|metadata| metadata.is_dir());
+                is_folder
+                    .then(|| super::preview_listing::read_folder(folder, show_hidden).ok())
+                    .flatten()
+            }
+        });
+        cx.spawn(async move |this: gpui::WeakEntity<Self>, cx| {
+            let Some(listing) = read.await else {
+                return;
+            };
+            this.update(cx, |pane, cx| {
+                // Another file was previewed in the meantime.
+                if pane.preview_path.as_deref() == Some(path.as_str()) {
+                    pane.preview_listing = Some(std::rc::Rc::new(listing));
+                    cx.notify();
+                }
+            })
+            .log_err();
+        })
+        .detach();
+    }
+
     /// Previews `path`, picked in the listing: a new look, so the preview's
     /// own back history starts over.
     pub(crate) fn open_preview(
@@ -369,7 +407,7 @@ impl ExplorerPane {
         match outcome {
             PreviewOutcome::TooLarge => {
                 self.preview_path = Some(path);
-                self.preview_message = Some("(File too large to preview)".to_string());
+                self.preview_message = Some(t!("(Arquivo grande demais para visualizar)").to_string());
             }
             PreviewOutcome::Image => {
                 self.preview_path = Some(path.clone());
@@ -395,7 +433,7 @@ impl ExplorerPane {
             }
             PreviewOutcome::Unsupported => {
                 self.preview_path = Some(path);
-                self.preview_message = Some("(Preview not available for this file)".to_string());
+                self.preview_message = Some(t!("(Sem visualização para este arquivo)").to_string());
             }
             PreviewOutcome::Text(text) => {
                 self.preview_path = Some(path.clone());

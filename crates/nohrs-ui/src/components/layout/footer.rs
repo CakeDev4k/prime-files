@@ -1,3 +1,4 @@
+use nohrs_core::{k, tf};
 use crate::theme::theme;
 use gpui::{AnyElement, Context, IntoElement, div, prelude::*, px, rgb};
 use gpui_component::{Icon, IconName};
@@ -110,7 +111,7 @@ pub fn footer<V: gpui::Render>(
                         this.child(footer_item(
                             ("footer-indexing", 99_usize),
                             Some(Icon::new(IconName::Loader)),
-                            &format!("Indexing: {}%", percent),
+                            &tf!("Indexando: {percent}%", percent = percent),
                             cx,
                         ))
                     } else {
@@ -122,7 +123,7 @@ pub fn footer<V: gpui::Render>(
                     this.child(footer_item(
                         ("footer-selected", 1_usize),
                         Some(Icon::new(IconName::CircleCheck)),
-                        &format!("{} selected", props.selected_count),
+                        &tf!("{n} selecionados", n = props.selected_count),
                         cx,
                     ))
                 })
@@ -130,7 +131,7 @@ pub fn footer<V: gpui::Render>(
                 .child(footer_item(
                     ("footer-total", 2_usize),
                     Some(Icon::new(IconName::Folder)),
-                    &format!("{} items", props.total_count),
+                    &nohrs_core::i18n::plural(props.total_count, k!("{n} item"), k!("{n} itens")),
                     cx,
                 ))
                 // Total size, which no icon in the set describes; the label

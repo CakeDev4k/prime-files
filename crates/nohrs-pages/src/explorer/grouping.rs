@@ -6,6 +6,8 @@
 //! selection, keyboard movement, rename, activation — keeps working unchanged;
 //! only the views insert a header row before each run.
 
+use nohrs_core::{k, t};
+use nohrs_core::i18n;
 use nohrs_services::fs::listing::FileEntryDto;
 use time::{Date, Duration, OffsetDateTime, UtcOffset};
 
@@ -102,52 +104,52 @@ fn group_of(entry: &FileEntryDto, by: GroupBy, clock: &Clock) -> (u8, &'static s
         GroupBy::None => (0, ""),
         GroupBy::Kind => {
             const KINDS: [(KindFilter, &str); 7] = [
-                (KindFilter::Folders, "Pastas"),
-                (KindFilter::Images, "Imagens"),
-                (KindFilter::Videos, "Vídeos"),
-                (KindFilter::Audio, "Áudio"),
-                (KindFilter::Documents, "Documentos"),
-                (KindFilter::Archives, "Compactados"),
-                (KindFilter::Programs, "Programas"),
+                (KindFilter::Folders, k!("Pastas")),
+                (KindFilter::Images, k!("Imagens")),
+                (KindFilter::Videos, k!("Vídeos")),
+                (KindFilter::Audio, k!("Áudio")),
+                (KindFilter::Documents, k!("Documentos")),
+                (KindFilter::Archives, k!("Compactados")),
+                (KindFilter::Programs, k!("Programas")),
             ];
             KINDS
                 .iter()
                 .zip(0u8..)
                 .find(|((kind, _), _)| kind.matches(entry))
-                .map_or((KINDS.len() as u8, "Outros"), |((_, label), rank)| (rank, *label))
+                .map_or((KINDS.len() as u8, t!("Outros")), |((_, label), rank)| (rank, i18n::tr(label)))
         }
         GroupBy::Modified => {
             let Some(date) = clock.date_of(entry.modified) else {
-                return (7, "Sem data");
+                return (7, t!("Sem data"));
             };
             let today = clock.today;
             let week_start = today - Duration::days(i64::from(today.weekday().number_days_from_monday()));
             if date >= today {
-                (0, "Hoje")
+                (0, t!("Hoje"))
             } else if Some(date) == today.previous_day() {
-                (1, "Ontem")
+                (1, t!("Ontem"))
             } else if date >= week_start {
-                (2, "Esta semana")
+                (2, t!("Esta semana"))
             } else if date.year() == today.year() && date.month() == today.month() {
-                (3, "Este mês")
+                (3, t!("Este mês"))
             } else if date.year() == today.year() {
-                (4, "Este ano")
+                (4, t!("Este ano"))
             } else if date.year() == today.year() - 1 {
-                (5, "Ano passado")
+                (5, t!("Ano passado"))
             } else {
-                (6, "Mais antigos")
+                (6, t!("Mais antigos"))
             }
         }
         // Explorer's own size bands.
         GroupBy::Size => match entry.size {
-            _ if is_dir => (0, "Pastas"),
-            0 => (1, "Vazios"),
-            size if size < 16 * 1024 => (2, "Minúsculos (até 16 KB)"),
-            size if size < 1024 * 1024 => (3, "Pequenos (16 KB a 1 MB)"),
-            size if size < 128 * 1024 * 1024 => (4, "Médios (1 a 128 MB)"),
-            size if size < 1024 * 1024 * 1024 => (5, "Grandes (128 MB a 1 GB)"),
-            size if size < 4 * 1024 * 1024 * 1024 => (6, "Enormes (1 a 4 GB)"),
-            _ => (7, "Gigantes (mais de 4 GB)"),
+            _ if is_dir => (0, t!("Pastas")),
+            0 => (1, t!("Vazios")),
+            size if size < 16 * 1024 => (2, t!("Minúsculos (até 16 KB)")),
+            size if size < 1024 * 1024 => (3, t!("Pequenos (16 KB a 1 MB)")),
+            size if size < 128 * 1024 * 1024 => (4, t!("Médios (1 a 128 MB)")),
+            size if size < 1024 * 1024 * 1024 => (5, t!("Grandes (128 MB a 1 GB)")),
+            size if size < 4 * 1024 * 1024 * 1024 => (6, t!("Enormes (1 a 4 GB)")),
+            _ => (7, t!("Gigantes (mais de 4 GB)")),
         },
     }
 }

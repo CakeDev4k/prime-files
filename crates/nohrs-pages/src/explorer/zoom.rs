@@ -2,6 +2,7 @@
 //! through ever larger icon tiles, the way File Pilot and Explorer's
 //! Ctrl+wheel do, instead of two fixed modes.
 
+use nohrs_core::k;
 use super::types::ViewMode;
 
 /// Zoom at or below which the listing is the list table rather than tiles.
@@ -46,41 +47,41 @@ pub fn step(zoom: f32, delta: f32) -> f32 {
 /// The name the footer shows for a zoom value.
 pub fn label(zoom: f32) -> &'static str {
     match view_mode(zoom) {
-        ViewMode::List => return "Detalhes",
-        ViewMode::Tree => return "Árvore",
-        ViewMode::Compact => return "Lista",
+        ViewMode::List => return k!("Detalhes"),
+        ViewMode::Tree => return k!("Árvore"),
+        ViewMode::Compact => return k!("Lista"),
         ViewMode::Grid => {}
     }
     match icon_size(zoom) {
-        size if size < 80.0 => "Ícones P",
-        size if size < 136.0 => "Ícones M",
-        size if size < 200.0 => "Ícones G",
-        _ => "Ícones XL",
+        size if size < 80.0 => k!("Ícones P"),
+        size if size < 136.0 => k!("Ícones M"),
+        size if size < 200.0 => k!("Ícones G"),
+        _ => k!("Ícones XL"),
     }
 }
 
 /// The footer's zoom menu, largest first as File Pilot lists them: each
 /// view's name and the zoom it jumps to, inside the band `label` gives it.
 pub const PRESETS: [(&str, f32); 7] = [
-    ("Ícones XL", 0.85),
-    ("Ícones G", 0.6),
-    ("Ícones M", DEFAULT_GRID),
-    ("Ícones P", 0.15),
-    ("Lista", LIST_MAX),
-    ("Árvore", TREE),
-    ("Detalhes", 0.0),
+    (k!("Ícones XL"), 0.85),
+    (k!("Ícones G"), 0.6),
+    (k!("Ícones M"), DEFAULT_GRID),
+    (k!("Ícones P"), 0.15),
+    (k!("Lista"), LIST_MAX),
+    (k!("Árvore"), TREE),
+    (k!("Detalhes"), 0.0),
 ];
 
 /// The views the zoom menu lists, smallest zoom first: one evenly spaced row
 /// each, which is also where its slider puts them. Small icons are left out,
 /// as File Pilot leaves them out; the slider still passes through them.
 pub const MENU_STOPS: [(&str, f32); 6] = [
-    ("Detalhes", 0.0),
-    ("Árvore", TREE),
-    ("Lista", LIST_MAX),
-    ("Ícones M", DEFAULT_GRID),
-    ("Ícones G", 0.6),
-    ("Ícones XL", 0.85),
+    (k!("Detalhes"), 0.0),
+    (k!("Árvore"), TREE),
+    (k!("Lista"), LIST_MAX),
+    (k!("Ícones M"), DEFAULT_GRID),
+    (k!("Ícones G"), 0.6),
+    (k!("Ícones XL"), 0.85),
 ];
 
 /// The zoom menu's slider position (0..=100) for a zoom value. The menu's

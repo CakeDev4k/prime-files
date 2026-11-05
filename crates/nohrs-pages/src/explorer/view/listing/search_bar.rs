@@ -1,3 +1,4 @@
+use nohrs_core::{t, tf};
 use crate::explorer::ExplorerPane;
 use crate::explorer::types::SearchType;
 use gpui::prelude::*;
@@ -28,9 +29,9 @@ pub fn render(page: &mut ExplorerPane, cx: &mut Context<ExplorerPane>) -> impl I
     };
     let is_full_search = page.search_results.is_some();
     let status_text = if is_full_search {
-        format!("{} matches in content", match_count)
+        tf!("{n} resultados no conteúdo", n = match_count)
     } else if !is_empty {
-        format!("{} files filtered", match_count)
+        tf!("{n} arquivos filtrados", n = match_count)
     } else {
         String::new()
     };
@@ -80,24 +81,24 @@ pub fn render(page: &mut ExplorerPane, cx: &mut Context<ExplorerPane>) -> impl I
                         .flex()
                         .gap_2()
                         .items_center()
-                        .child("Scope:")
-                        .child(render_scope_button(page, SearchScope::Home, "Home", cx))
-                        .child(render_scope_button(page, SearchScope::Root, "Root", cx)),
+                        .child(t!("Onde:"))
+                        .child(render_scope_button(page, SearchScope::Home, t!("Pasta pessoal"), cx))
+                        .child(render_scope_button(page, SearchScope::Root, t!("Raiz"), cx)),
                 )
                 .child(
                     div()
                         .flex()
                         .gap_2()
                         .items_center()
-                        .child("Type:")
-                        .child(render_type_button(page, SearchType::All, "All", cx))
+                        .child(t!("Tipo:"))
+                        .child(render_type_button(page, SearchType::All, t!("Tudo"), cx))
                         .child(render_type_button(
                             page,
                             SearchType::Filename,
-                            "Filename",
+                            t!("Nome"),
                             cx,
                         ))
-                        .child(render_type_button(page, SearchType::Content, "Content", cx)),
+                        .child(render_type_button(page, SearchType::Content, t!("Conteúdo"), cx)),
                 ),
         )
         .child(
@@ -168,7 +169,7 @@ pub fn render(page: &mut ExplorerPane, cx: &mut Context<ExplorerPane>) -> impl I
                                         .rounded(px(6.0))
                                         .text_xs()
                                         .font_weight(gpui::FontWeight::SEMIBOLD)
-                                        .child("Search")
+                                        .child(t!("Buscar"))
                                         .hover(|this| this.bg(rgb(theme::accent_hover())))
                                         .on_mouse_down(
                                             gpui::MouseButton::Left,

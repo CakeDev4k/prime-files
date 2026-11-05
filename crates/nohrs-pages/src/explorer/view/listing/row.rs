@@ -127,6 +127,8 @@ pub fn render(
 
     let folder = (item.kind == "dir").then(|| item.path.clone());
     let row = div()
+        .id(("list-row", ix))
+        .map(|this| page.hover_audio_target(this, item, cx))
         .relative()
         .flex()
         .flex_col()

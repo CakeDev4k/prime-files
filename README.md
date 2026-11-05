@@ -28,9 +28,14 @@ Requer Windows 10 (1903) ou mais novo, 64 bits.
 - **Vistas** Detalhes, Lista, Árvore e Ícones, com zoom contínuo (Ctrl + roda) e a ordem e o zoom lembrados por pasta
 - **Visualizador** de imagens, GIF, vídeo e áudio (com forma de onda), PDF, modelos 3D (OBJ, STL, glTF, FBX), texto, Markdown, pastas e arquivos compactados
 - **Integração com o Windows**: menu do botão direito do Explorador, arrastar e soltar com outros programas, miniaturas do Shell, "mostrar na pasta" de outros programas abrindo aqui
-- **Busca** nas subpastas (Ctrl+F) e filtro rápido (é só digitar na lista)
+- **Busca em todo o computador** no estilo do Everything (lupa da barra de baixo ou Ctrl+E), nas subpastas (Ctrl+F) e filtro rápido (é só digitar na lista)
+- **Ouvir sons passando o mouse** sobre arquivos de áudio, com o tempo de espera ajustável
+- **Armazenamento** de cada unidade em Este Computador e na barra lateral
+- **Terminal** embutido com abas (Ctrl+')
+- **Nove idiomas**: português, inglês, espanhol, francês, alemão, italiano, russo, japonês e chinês simplificado
 - **Modo compacto** no estilo do Zen Browser: abas, barra de rota, barra lateral, visualizador e barra de baixo escondidos até o mouse encostar na borda, por cima da lista ou empurrando-a, numa moldura de cantos arredondados
-- **Explorador padrão** do Windows, opcional (Configurações › Explorador): pastas, drives e Win+E abrem no Prime Files
+- **Explorador padrão** do Windows, opcional (Configurações › Integração com o Windows): pastas, drives e Win+E abrem no Prime Files
+- **Listary**, opcional (Configurações › Integração com o Windows): pastas abertas pelo Listary abrem no Prime Files; o desinstalador devolve ao Explorador
 - **Atualização automática** pelas releases deste repositório
 
 ## Compilar

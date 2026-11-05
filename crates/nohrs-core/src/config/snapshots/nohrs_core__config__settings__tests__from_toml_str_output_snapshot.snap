@@ -10,12 +10,17 @@ expression: parsed
             accent: "teal",
         },
         ui: Ui {
+            language: "auto",
             default_sort: Name,
             default_sort_descending: false,
             show_hidden: true,
             icon_pack: "default",
             name_lines: 0,
             scroll_smoothness: 50,
+            audio_waveforms: false,
+            preview_autoplay: false,
+            hover_audio: true,
+            hover_audio_delay_ms: 400,
         },
         explorer: Explorer {
             split_direction: Vertical,

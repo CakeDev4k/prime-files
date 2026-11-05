@@ -204,9 +204,16 @@ procedure CurUninstallStepChanged(CurUninstallStep: TUninstallStep);
 var
   Value: String;
   NewWindow: String;
+  ResultCode: Integer;
 begin
   if CurUninstallStep <> usUninstall then
     Exit;
+  // Listary's choice lives in its own JSON, which the program edits (and
+  // restarts Listary for); the files are still here at this step.
+  if not Exec(ExpandConstant('{app}\{#AppExe}'), 'forget-listary', '', SW_HIDE, ewWaitUntilTerminated, ResultCode) then
+    Log('Could not run forget-listary.')
+  else if ResultCode <> 0 then
+    Log(Format('forget-listary ended with %d.', [ResultCode]));
   RegDeleteKeyIncludingSubkeys(HKCU, 'Software\Classes\Directory\shell\nohrs');
   RegDeleteKeyIncludingSubkeys(HKCU, 'Software\Classes\Drive\shell\nohrs');
   if RegQueryStringValue(HKCU, 'Software\Classes\Directory\shell', '', Value) and (Value = 'nohrs') then

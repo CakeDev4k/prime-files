@@ -1,6 +1,7 @@
 //! The listing's filter bar: narrowing the folder on screen by kind and by a
 //! name pattern, without touching the full-text search.
 
+use nohrs_core::t;
 use nohrs_services::fs::listing::FileEntryDto;
 
 /// What kind of entry the listing shows.
@@ -43,31 +44,21 @@ impl KindFilter {
 
     /// The chip's label.
     pub fn label(self) -> &'static str {
-        match self {
-            KindFilter::All => "All",
-            KindFilter::Folders => "Folders",
-            KindFilter::Files => "Files",
-            KindFilter::Images => "Images",
-            KindFilter::Videos => "Videos",
-            KindFilter::Audio => "Audio",
-            KindFilter::Documents => "Documents",
-            KindFilter::Archives => "Archives",
-            KindFilter::Programs => "Programs",
-        }
+        self.menu_label()
     }
 
     /// The name the filter menu shows.
     pub fn menu_label(self) -> &'static str {
         match self {
-            KindFilter::All => "Tudo",
-            KindFilter::Folders => "Pastas",
-            KindFilter::Files => "Arquivos",
-            KindFilter::Images => "Imagens",
-            KindFilter::Videos => "Vídeos",
-            KindFilter::Audio => "Áudio",
-            KindFilter::Documents => "Documentos",
-            KindFilter::Archives => "Compactados",
-            KindFilter::Programs => "Programas",
+            KindFilter::All => t!("Tudo"),
+            KindFilter::Folders => t!("Pastas"),
+            KindFilter::Files => t!("Arquivos"),
+            KindFilter::Images => t!("Imagens"),
+            KindFilter::Videos => t!("Vídeos"),
+            KindFilter::Audio => t!("Áudio"),
+            KindFilter::Documents => t!("Documentos"),
+            KindFilter::Archives => t!("Compactados"),
+            KindFilter::Programs => t!("Programas"),
         }
     }
 

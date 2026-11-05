@@ -2,6 +2,7 @@
 //! holding the folder's full path, already selected, as Explorer's address bar
 //! does — so Ctrl+C copies it, or a path typed over it is gone to on Enter.
 
+use nohrs_core::tf;
 use gpui::{AppContext, Context, Entity, EntityInputHandler, Subscription, Window};
 use gpui_component::input::{InputEvent, InputState};
 use std::path::Path;
@@ -72,7 +73,7 @@ impl ExplorerPane {
             None
         };
         let Some(target) = target else {
-            self.set_status(StatusLevel::Error, format!("Pasta não encontrada: {typed}"));
+            self.set_status(StatusLevel::Error, tf!("Pasta não encontrada: {path}", path = typed));
             cx.notify();
             return;
         };

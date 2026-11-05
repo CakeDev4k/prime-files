@@ -345,6 +345,11 @@
     "Ui": {
       "description": "Explorer / view settings.",
       "properties": {
+        "audio_waveforms": {
+          "default": false,
+          "description": "Whether sound files show their waveform instead of their icon in the\nicons view.",
+          "type": "boolean"
+        },
         "default_sort": {
           "$ref": "#/$defs/SortOrder",
           "default": "name",
@@ -355,9 +360,25 @@
           "description": "Whether that default runs from Z to A, largest or newest first.",
           "type": "boolean"
         },
+        "hover_audio": {
+          "default": true,
+          "description": "Whether resting the mouse on a sound file in the listing plays it.",
+          "type": "boolean"
+        },
+        "hover_audio_delay_ms": {
+          "default": 400,
+          "description": "How long the mouse rests on a sound file before it plays, in ms.",
+          "minimum": 0,
+          "type": "integer"
+        },
         "icon_pack": {
           "default": "default",
           "description": "Identifier of the icon pack used to render entries.",
+          "type": "string"
+        },
+        "language": {
+          "default": "auto",
+          "description": "Interface language: `\"auto\"` follows the Windows regional format\n(then the country), or one of `\"pt-BR\"`, `\"en\"`, `\"es\"`, `\"fr\"`, `\"de\"`,\n`\"it\"`, `\"ru\"`, `\"ja\"`, `\"zh-CN\"`.",
           "type": "string"
         },
         "name_lines": {
@@ -365,6 +386,11 @@
           "description": "Most lines a name takes under an icon in the icons view, the last\none ending in \"…\" when the name needs more; 0 = no limit.",
           "minimum": 0,
           "type": "integer"
+        },
+        "preview_autoplay": {
+          "default": false,
+          "description": "Whether a video or sound starts playing as soon as the preview opens it.",
+          "type": "boolean"
         },
         "scroll_smoothness": {
           "default": 50,
@@ -489,10 +515,15 @@
     "ui": {
       "$ref": "#/$defs/Ui",
       "default": {
+        "audio_waveforms": false,
         "default_sort": "name",
         "default_sort_descending": false,
+        "hover_audio": true,
+        "hover_audio_delay_ms": 400,
         "icon_pack": "default",
+        "language": "auto",
         "name_lines": 0,
+        "preview_autoplay": false,
         "scroll_smoothness": 50,
         "show_hidden": false
       },

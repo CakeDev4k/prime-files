@@ -6,53 +6,108 @@
 //! the hot-reload watcher applies it as if the file had been edited by hand,
 //! so there is one path from a setting to the window and the file stays the
 //! single source of truth. The root hands the page each config it applies.
+//!
+//! Every section is built as data (groups of rows: name, explanation,
+//! control) before it is drawn. That is what lets the search field at the top
+//! show matching rows from every section at once, and what keeps the layout
+//! decisions — side list or tabs on top, control beside or under its text —
+//! in one place that follows the window's width.
 
 use gpui::{
-    AnyElement, Context, Div, ElementId, Entity, Render, SharedString, Stateful, Window, div, prelude::*,
-    px, rgb,
+    AnyElement, Context, Div, ElementId, Entity, Render, SharedString, Stateful, Window, div, prelude::*, px,
+    rgb,
 };
-use gpui_component::{Icon, IconName};
+use gpui_component::input::{Input, InputState};
+use gpui_component::{Icon, Sizable as _};
 use nohrs_core::config::{self, Config, SortOrder, SplitDirection, ThemeMode};
+use nohrs_core::i18n::{self, Lang, tr};
 use nohrs_core::telemetry::LogErr;
+use nohrs_core::{k, t, tf};
 use nohrs_ui::theme::theme;
 
 /// The sections of the settings page, in the order the side list shows them.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum SettingsSection {
-    /// Theme mode and accent colour.
+    /// Language, tabs and panes.
+    General,
+    /// Theme, accent colour and how the listing moves.
     Appearance,
-    /// Listing and pane behaviour.
-    Explorer,
+    /// Compact mode: hiding the bars.
+    Compact,
+    /// What a folder shows and in which order.
+    Files,
+    /// Sounds and videos: hover playback, preview, waveforms.
+    Media,
+    /// The whole-computer search.
+    Search,
+    /// Opening folders from Windows and other programs here.
+    Integrations,
     /// The keyboard shortcuts, for reference.
     Shortcuts,
-    /// The config file itself and the version.
+    /// Version, updates and the config file itself.
     About,
 }
 
 impl SettingsSection {
-    const ALL: [Self; 4] = [Self::Appearance, Self::Explorer, Self::Shortcuts, Self::About];
+    const ALL: [Self; 9] = [
+        Self::General,
+        Self::Appearance,
+        Self::Compact,
+        Self::Files,
+        Self::Media,
+        Self::Search,
+        Self::Integrations,
+        Self::Shortcuts,
+        Self::About,
+    ];
 
     fn label(self) -> &'static str {
         match self {
-            Self::Appearance => "Aparência",
-            Self::Explorer => "Explorador",
-            Self::Shortcuts => "Atalhos",
-            Self::About => "Sobre",
+            Self::General => t!("Geral"),
+            Self::Appearance => t!("Aparência"),
+            Self::Compact => t!("Modo compacto"),
+            Self::Files => t!("Arquivos e pastas"),
+            Self::Media => t!("Mídia"),
+            Self::Search => t!("Busca"),
+            Self::Integrations => t!("Integração com o Windows"),
+            Self::Shortcuts => t!("Atalhos"),
+            Self::About => t!("Sobre"),
         }
     }
 
-    fn icon(self) -> IconName {
+    fn description(self) -> &'static str {
         match self {
-            Self::Appearance => IconName::Palette,
-            Self::Explorer => IconName::FolderOpen,
-            Self::Shortcuts => IconName::CaseSensitive,
-            Self::About => IconName::Info,
+            Self::General => t!("Idioma, abas e painéis."),
+            Self::Appearance => t!("Tema, cores e como a lista se move."),
+            Self::Compact => t!("Esconda as barras e deixe só os arquivos na tela."),
+            Self::Files => t!("O que aparece em cada pasta e em que ordem."),
+            Self::Media => t!("Áudio e vídeo: ouvir passando o mouse, tocar no visualizador e ver a forma de onda."),
+            Self::Search => t!("Encontrar qualquer arquivo do computador pelo nome."),
+            Self::Integrations => t!("Abrir no Prime Files as pastas do Windows e de outros programas."),
+            Self::Shortcuts => t!("As teclas que o explorador entende."),
+            Self::About => t!("Versão, atualizações e o arquivo de configuração."),
+        }
+    }
+
+    // SVGs in nohrs-ui's assets: an `IconName` without its file logs an
+    // error on every frame.
+    fn icon(self) -> &'static str {
+        match self {
+            Self::General => "icons/settings.svg",
+            Self::Appearance => "icons/palette.svg",
+            Self::Compact => "icons/layout-dashboard.svg",
+            Self::Files => "icons/folder-open.svg",
+            Self::Media => "icons/music.svg",
+            Self::Search => "icons/search.svg",
+            Self::Integrations => "icons/app-window.svg",
+            Self::Shortcuts => "icons/case-sensitive.svg",
+            Self::About => "icons/info.svg",
         }
     }
 }
 
 // Portuguese names for the accents `theme::NAMED_ACCENTS` knows, same order.
-const ACCENT_LABELS: &[&str] = &["Laranja", "Azul", "Verde-água", "Verde", "Roxo", "Rosa", "Vermelho"];
+const ACCENT_LABELS: &[&str] = &[k!("Laranja"), k!("Azul"), k!("Verde-água"), k!("Verde"), k!("Roxo"), k!("Rosa"), k!("Vermelho")];
 
 // What the explorer actually answers to on Windows. Kept by hand next to the
 // page rather than read from the keymap: half of these are `on_key_down`
@@ -60,60 +115,117 @@ const ACCENT_LABELS: &[&str] = &["Laranja", "Azul", "Verde-água", "Verde", "Rox
 // changed there has to change here too.
 const SHORTCUTS: &[(&str, &[(&str, &str)])] = &[
     (
-        "Arquivos",
+        k!("Arquivos"),
         &[
-            ("Ctrl+C", "Copiar"),
-            ("Ctrl+X", "Recortar"),
-            ("Ctrl+V", "Colar"),
-            ("F2", "Renomear"),
-            ("F5", "Atualizar a pasta"),
-            ("Delete", "Mandar para a Lixeira"),
-            ("Shift+Delete", "Excluir para sempre"),
-            ("Ctrl+Shift+N", "Nova pasta"),
-            ("Enter", "Abrir no programa padrão"),
+            ("Ctrl+C", k!("Copiar")),
+            ("Ctrl+X", k!("Recortar")),
+            ("Ctrl+V", k!("Colar")),
+            ("F2", k!("Renomear")),
+            ("F5", k!("Atualizar a pasta")),
+            ("Delete", k!("Mandar para a Lixeira")),
+            ("Shift+Delete", k!("Excluir para sempre")),
+            ("Ctrl+Shift+N", k!("Nova pasta")),
+            ("Enter", k!("Abrir no programa padrão")),
+            ("Alt+↑", k!("Subir para a pasta de cima")),
         ],
     ),
     (
-        "Seleção e busca",
+        k!("Seleção e busca"),
         &[
-            ("Ctrl+A", "Selecionar tudo"),
-            ("Esc", "Limpar a seleção ou o filtro"),
-            ("Qualquer letra", "Filtrar a pasta atual"),
-            ("Ctrl+F", "Buscar nas subpastas"),
-            ("Ctrl+Shift+F", "Buscar no índice"),
-            ("Ctrl+Shift+L", "Barra de filtros"),
+            ("Ctrl+A", k!("Selecionar tudo")),
+            ("Esc", k!("Limpar a seleção ou o filtro")),
+            (k!("Qualquer letra"), k!("Filtrar a pasta atual")),
+            ("Ctrl+F", k!("Buscar nas subpastas")),
+            ("Ctrl+E", k!("Buscar em todo o computador")),
+            ("Ctrl+Shift+F", k!("Buscar no índice")),
+            ("Ctrl+Shift+L", k!("Barra de filtros")),
         ],
     ),
     (
-        "Abas e painéis",
+        k!("Abas e painéis"),
         &[
-            ("Ctrl+T", "Nova aba"),
-            ("Ctrl+W", "Fechar aba"),
-            ("Ctrl+\\", "Dividir lado a lado"),
-            ("Ctrl+Shift+\\", "Dividir em cima e embaixo"),
-            ("Ctrl+1 / Ctrl+2", "Ir para o painel 1 ou 2"),
-            ("Ctrl+] / Ctrl+[", "Próximo / anterior painel"),
-            ("Ctrl+B", "Mostrar ou esconder a barra lateral"),
+            ("Ctrl+T", k!("Nova aba")),
+            ("Ctrl+W", k!("Fechar aba")),
+            ("Ctrl+\\", k!("Dividir lado a lado")),
+            ("Ctrl+Shift+\\", k!("Dividir em cima e embaixo")),
+            ("Ctrl+1 / Ctrl+2", k!("Ir para o painel 1 ou 2")),
+            ("Ctrl+] / Ctrl+[", k!("Próximo / anterior painel")),
+            ("Ctrl+B", k!("Mostrar ou esconder a barra lateral")),
+            ("Ctrl+'", k!("Mostrar ou esconder o terminal da aba")),
         ],
     ),
     (
-        "Exibição",
+        k!("Exibição"),
         &[
-            ("Ctrl+= / Ctrl+-", "Aumentar / diminuir o zoom"),
-            ("Ctrl+0", "Zoom padrão"),
-            ("Ctrl+roda do mouse", "Zoom contínuo"),
-            ("Ctrl+K", "Abrir o lançador"),
+            ("Ctrl+= / Ctrl+-", k!("Aumentar / diminuir o zoom")),
+            ("Ctrl+0", k!("Zoom padrão")),
+            (k!("Ctrl+roda do mouse"), k!("Zoom contínuo")),
+            ("Ctrl+K", k!("Abrir o lançador")),
         ],
     ),
 ];
 
-// What picking an option of a [`SettingsPage::choice`] does.
-#[derive(Clone, Copy)]
+// What picking an option of a control does.
+#[derive(Clone)]
 enum Pick {
     // Writes the value (already in TOML form) to `[section] key`.
-    Config(&'static str, &'static str, &'static str),
+    Config(&'static str, &'static str, SharedString),
     // Takes folders over from Explorer, or gives them back.
     DefaultExplorer(bool),
+    // Makes Listary open folders here, or in Explorer again.
+    Listary(bool),
+}
+
+// One setting: its name, what it does, and the control that changes it.
+struct Row {
+    label: &'static str,
+    hint: Option<SharedString>,
+    control: AnyElement,
+    // Writes the default back; `Some` only while the value differs from it.
+    reset: Option<Pick>,
+    // The control is laid out under the text even when there is room beside
+    // it: a row of colours or of many chips reads badly squeezed to the side.
+    wide: bool,
+}
+
+impl Row {
+    fn new(label: &'static str, hint: Option<SharedString>, control: impl IntoElement) -> Self {
+        Self { label, hint, control: control.into_any_element(), reset: None, wide: false }
+    }
+
+    fn hint(label: &'static str, hint: impl Into<SharedString>, control: impl IntoElement) -> Self {
+        Self::new(label, Some(hint.into()), control)
+    }
+
+    fn wide(mut self) -> Self {
+        self.wide = true;
+        self
+    }
+
+    // A reset to `default` (TOML) for `[section] key`, offered when `current`
+    // is not already it.
+    fn reset(mut self, (section, key): (&'static str, &'static str), is_default: bool, default: &'static str) -> Self {
+        if !is_default {
+            self.reset = Some(Pick::Config(section, key, SharedString::from(default)));
+        }
+        self
+    }
+}
+
+// A card of rows under an optional heading.
+struct Group {
+    title: Option<&'static str>,
+    rows: Vec<Row>,
+}
+
+impl Group {
+    fn new(rows: Vec<Row>) -> Self {
+        Self { title: None, rows }
+    }
+
+    fn titled(title: &'static str, rows: Vec<Row>) -> Self {
+        Self { title: Some(title), rows }
+    }
 }
 
 /// The settings page.
@@ -127,7 +239,11 @@ pub struct SettingsPage {
     confirm_reset: bool,
     // Whether folders open in Nohrs; `None` until the registry has answered.
     default_explorer: Option<bool>,
+    // What Listary opens folders with; `None` until its file has been read.
+    listary: Option<crate::listary::State>,
     updater: Entity<crate::updater::Updater>,
+    // The search field, made on the first render (it needs a `Window`).
+    search: Option<Entity<InputState>>,
 }
 
 impl SettingsPage {
@@ -135,15 +251,20 @@ impl SettingsPage {
     pub fn new(cx: &mut Context<Self>) -> Self {
         let updater = crate::updater::updater(cx);
         cx.observe(&updater, |_page, _updater, cx| cx.notify()).detach();
+        // The search section shows the index's count while it is walked.
+        cx.observe_global::<crate::explorer::everything::Everything>(|_page, cx| cx.notify()).detach();
         let mut page = Self {
-            section: SettingsSection::Appearance,
+            section: SettingsSection::General,
             config: Config::default(),
             status: None,
             confirm_reset: false,
             default_explorer: None,
+            listary: None,
             updater,
+            search: None,
         };
         page.refresh_default_explorer(cx);
+        page.refresh_listary(cx);
         page
     }
 
@@ -166,7 +287,7 @@ impl SettingsPage {
         let exe = match std::env::current_exe() {
             Ok(exe) => exe,
             Err(error) => {
-                self.status = Some((format!("Não foi possível achar o executável do Prime Files: {error}"), true));
+                self.status = Some((tf!("Não foi possível achar o executável do Prime Files: {error}", error = error), true));
                 cx.notify();
                 return;
             }
@@ -182,11 +303,58 @@ impl SettingsPage {
             let outcome = change.await;
             this.update(cx, |page, cx| {
                 page.status = Some(match outcome {
-                    Ok(()) if enable => ("Pastas, drives e Win+E agora abrem no Prime Files.".to_string(), false),
-                    Ok(()) => ("Pastas voltaram a abrir no Explorador do Windows.".to_string(), false),
-                    Err(error) => (format!("Não foi possível mudar o registro: {error}"), true),
+                    Ok(()) if enable => (t!("Pastas, drives e Win+E agora abrem no Prime Files.").to_string(), false),
+                    Ok(()) => (t!("Pastas voltaram a abrir no Explorador do Windows.").to_string(), false),
+                    Err(error) => (tf!("Não foi possível mudar o registro: {error}", error = error), true),
                 });
                 page.refresh_default_explorer(cx);
+            })
+            .log_err();
+        })
+        .detach();
+    }
+
+    fn refresh_listary(&mut self, cx: &mut Context<Self>) {
+        let query = cx.background_spawn(async { crate::listary::state() });
+        cx.spawn(async move |this: gpui::WeakEntity<Self>, cx| {
+            let state = query.await;
+            this.update(cx, |page, cx| {
+                page.listary = Some(state);
+                cx.notify();
+            })
+            .log_err();
+        })
+        .detach();
+    }
+
+    fn set_listary(&mut self, enable: bool, cx: &mut Context<Self>) {
+        let exe = match std::env::current_exe() {
+            Ok(exe) => exe,
+            Err(error) => {
+                self.status = Some((tf!("Não foi possível achar o executável do Prime Files: {error}", error = error), true));
+                cx.notify();
+                return;
+            }
+        };
+        // Closing and restarting Listary takes a few seconds.
+        self.status = Some((t!("Mudando o Listary…").to_string(), false));
+        cx.notify();
+        let change = cx.background_spawn(async move {
+            if enable {
+                crate::listary::enable(&exe)
+            } else {
+                crate::listary::disable()
+            }
+        });
+        cx.spawn(async move |this: gpui::WeakEntity<Self>, cx| {
+            let outcome = change.await;
+            this.update(cx, |page, cx| {
+                page.status = Some(match outcome {
+                    Ok(()) if enable => (t!("O Listary agora abre pastas no Prime Files.").to_string(), false),
+                    Ok(()) => (t!("O Listary voltou a abrir pastas no Explorador.").to_string(), false),
+                    Err(error) => (tf!("Não foi possível mudar o Listary: {error}", error = error), true),
+                });
+                page.refresh_listary(cx);
             })
             .log_err();
         })
@@ -197,6 +365,7 @@ impl SettingsPage {
         match pick {
             Pick::Config(section, key, value) => self.write(section, key, value.to_string(), cx),
             Pick::DefaultExplorer(enable) => self.set_default_explorer(enable, cx),
+            Pick::Listary(enable) => self.set_listary(enable, cx),
         }
     }
 
@@ -220,7 +389,7 @@ impl SettingsPage {
         cx.spawn(async move |this: gpui::WeakEntity<Self>, cx| {
             if let Err(error) = write.await {
                 this.update(cx, |page, cx| {
-                    page.status = Some((format!("Não foi possível salvar {section}.{key}: {error}"), true));
+                    page.status = Some((tf!("Não foi possível salvar {section}.{key}: {error}", section = section, key = key, error = error), true));
                     cx.notify();
                 })
                 .log_err();
@@ -234,14 +403,14 @@ impl SettingsPage {
         // A first run may not have written it yet, and there is nothing to
         // open until it exists.
         if let Err(error) = config::ensure_exists(&path) {
-            self.status = Some((format!("Não foi possível criar {}: {error}", path.display()), true));
+            self.status = Some((tf!("Não foi possível criar {path}: {error}", path = path.display(), error = error), true));
             cx.notify();
             return;
         }
         // `explorer.exe <file>` hands it to whatever program `.toml` is
         // associated with, the same way a double click in the listing does.
         if let Err(error) = std::process::Command::new("explorer.exe").arg(&path).spawn() {
-            self.status = Some((format!("Não foi possível abrir {}: {error}", path.display()), true));
+            self.status = Some((tf!("Não foi possível abrir {path}: {error}", path = path.display(), error = error), true));
             cx.notify();
         }
     }
@@ -255,7 +424,7 @@ impl SettingsPage {
             command.arg(config::paths::config_dir());
         }
         if let Err(error) = command.spawn() {
-            self.status = Some((format!("Não foi possível abrir a pasta: {error}"), true));
+            self.status = Some((tf!("Não foi possível abrir a pasta: {error}", error = error), true));
             cx.notify();
         }
     }
@@ -274,11 +443,11 @@ impl SettingsPage {
             this.update(cx, |page, cx| {
                 page.status = Some(match outcome {
                     Ok(Some(backup)) => (
-                        format!("Configurações restauradas. A versão anterior ficou em {}", backup.display()),
+                        tf!("Configurações restauradas. A versão anterior ficou em {path}", path = backup.display()),
                         false,
                     ),
-                    Ok(None) => ("Configurações restauradas.".to_string(), false),
-                    Err(error) => (format!("Não foi possível restaurar: {error}"), true),
+                    Ok(None) => (t!("Configurações restauradas.").to_string(), false),
+                    Err(error) => (tf!("Não foi possível restaurar: {error}", error = error), true),
                 });
                 cx.notify();
             })
@@ -287,63 +456,108 @@ impl SettingsPage {
         .detach();
     }
 
-    fn render_nav(&self, cx: &mut Context<Self>) -> impl IntoElement {
-        div()
-            .w(px(200.0))
-            .flex_shrink_0()
-            .h_full()
-            .flex()
-            .flex_col()
-            .gap_1()
-            .p(px(12.0))
-            .border_r_1()
-            .border_color(rgb(theme::border()))
-            .children(SettingsSection::ALL.into_iter().map(|section| {
-                let active = section == self.section;
-                div()
-                    .id(ElementId::Name(SharedString::from(format!("settings-nav-{section:?}"))))
-                    .h(px(32.0))
-                    .px(px(10.0))
-                    .flex()
-                    .items_center()
-                    .gap_2()
-                    .rounded(px(6.0))
-                    .cursor_pointer()
-                    .text_sm()
-                    .map(|this| {
-                        if active {
-                            this.bg(rgb(theme::accent_subtle())).text_color(rgb(theme::accent()))
-                        } else {
-                            this.text_color(rgb(theme::fg_secondary()))
-                                .hover(|style| style.bg(rgb(theme::bg_hover())).text_color(rgb(theme::fg())))
-                        }
-                    })
-                    .on_click(cx.listener(move |page, _event, _window, cx| page.show_section(section, cx)))
-                    .child(Icon::new(section.icon()).size_4())
-                    .child(section.label())
-            }))
+    // ---------------------------------------------------------------------
+    // The sections, as data
+
+    fn groups(&self, section: SettingsSection, cx: &mut Context<Self>) -> Vec<Group> {
+        match section {
+            SettingsSection::General => self.general(cx),
+            SettingsSection::Appearance => self.appearance(cx),
+            SettingsSection::Compact => self.compact(cx),
+            SettingsSection::Files => self.files(cx),
+            SettingsSection::Media => self.media(cx),
+            SettingsSection::Search => self.search_section(cx),
+            SettingsSection::Integrations => self.integrations(cx),
+            SettingsSection::Shortcuts => self.shortcuts(),
+            SettingsSection::About => self.about(cx),
+        }
     }
 
-    fn render_appearance(&self, cx: &mut Context<Self>) -> Div {
+    fn general(&self, cx: &mut Context<Self>) -> Vec<Group> {
+        let explorer = &self.config.explorer;
+        vec![
+            Group::new(vec![self.language_row(cx)]),
+            Group::titled(
+                t!("Abas e painéis"),
+                vec![
+                    Row::hint(
+                        t!("Reabrir as abas ao iniciar"),
+                        t!("Volta com as abas da última vez. Vale na próxima vez que o Prime Files abrir."),
+                        self.switch("restore-tabs", explorer.restore_tabs, ("explorer", "restore_tabs"), cx),
+                    )
+                    .reset(("explorer", "restore_tabs"), explorer.restore_tabs, "true"),
+                    Row::hint(
+                        t!("Divisão de painéis"),
+                        t!("Para onde Ctrl+\\ divide a janela."),
+                        self.config_choice(
+                            "split-direction",
+                            &[
+                                (t!("Lado a lado"), explorer.split_direction == SplitDirection::Vertical, "\"vertical\""),
+                                (t!("Em cima e embaixo"), explorer.split_direction == SplitDirection::Horizontal, "\"horizontal\""),
+                            ],
+                            ("explorer", "split_direction"),
+                            cx,
+                        ),
+                    )
+                    .reset(("explorer", "split_direction"), explorer.split_direction == SplitDirection::Vertical, "\"vertical\""),
+                    Row::hint(
+                        t!("Painéis sincronizados"),
+                        t!("Navegar num painel leva o outro para a mesma pasta."),
+                        self.switch("synced-panes", explorer.synced_panes, ("explorer", "synced_panes"), cx),
+                    )
+                    .reset(("explorer", "synced_panes"), !explorer.synced_panes, "false"),
+                ],
+            ),
+        ]
+    }
+
+    // Languages are offered by their own names, untranslated, so a person who
+    // cannot read the current one still finds theirs.
+    fn language_row(&self, cx: &mut Context<Self>) -> Row {
+        let chosen = Lang::parse(&self.config.ui.language);
+        let mut options: Vec<(&'static str, bool, SharedString)> =
+            vec![(t!("Automático"), chosen.is_none(), SharedString::from("\"auto\""))];
+        for lang in Lang::ALL {
+            options.push((lang.native_name(), chosen == Some(lang), SharedString::from(format!("\"{}\"", lang.code()))));
+        }
+        let options: Vec<_> = options
+            .into_iter()
+            .map(|(label, selected, value)| (label, selected, Pick::Config("ui", "language", value)))
+            .collect();
+        Row::hint(
+            t!("Idioma"),
+            tf!(
+                "Automático segue o formato regional do Windows (Hora e idioma › Região); neste computador, {language}.",
+                language = i18n::detected().native_name()
+            ),
+            self.chips("language", &options, false, cx),
+        )
+        .wide()
+        .reset(("ui", "language"), chosen.is_none(), "\"auto\"")
+    }
+
+    fn appearance(&self, cx: &mut Context<Self>) -> Vec<Group> {
         let mode = self.config.theme.mode;
         let accent = self.config.theme.accent.trim().to_string();
         let custom = accent.starts_with('#') && theme::parse_accent(&accent).is_some();
+        let ui = &self.config.ui;
 
-        // Laid out in a row of its own: the control column has no width to
-        // wrap against, and `flex_wrap` there put every swatch on its own line.
-        let swatches = div().flex().flex_row().gap_1().children(
+        let swatches = div().flex().flex_row().flex_wrap().gap_1().children(
             theme::NAMED_ACCENTS.iter().zip(ACCENT_LABELS).map(|(&(name, color), &label)| {
                 let selected = accent.eq_ignore_ascii_case(name)
                     || (color.is_none() && theme::parse_accent(&accent).is_none());
                 let swatch = color.unwrap_or_else(theme::palette_accent);
                 div()
                     .id(ElementId::Name(SharedString::from(format!("accent-{name}"))))
-                    .w(px(60.0))
+                    .w(px(64.0))
+                    .py(px(6.0))
                     .flex()
                     .flex_col()
                     .items_center()
                     .gap_1()
+                    .rounded(px(6.0))
                     .cursor_pointer()
+                    .hover(|style| style.bg(rgb(theme::bg_hover())))
                     .on_click(cx.listener(move |page, _event, _window, cx| {
                         page.write("theme", "accent", format!("\"{name}\""), cx);
                     }))
@@ -353,429 +567,496 @@ impl SettingsPage {
                             .rounded_full()
                             .bg(rgb(swatch))
                             .border_2()
-                            .border_color(rgb(if selected { theme::fg() } else { theme::bg() })),
+                            .border_color(rgb(if selected { theme::fg() } else { theme::bg_secondary() })),
                     )
                     .child(
                         div()
                             .text_xs()
                             .text_color(rgb(if selected { theme::fg() } else { theme::fg_secondary() }))
-                            .child(label),
+                            .child(tr(label)),
                     )
             }),
         );
 
-        section_body("Aparência")
-            .child(setting_row(
-                "Tema",
-                None,
-                self.config_choice(
-                    "theme-mode",
-                    &[
-                        ("Escuro", mode == ThemeMode::Dark, "\"dark\""),
-                        ("Claro", mode == ThemeMode::Light, "\"light\""),
-                        ("Igual ao Windows", mode == ThemeMode::System, "\"system\""),
-                    ],
-                    ("theme", "mode"),
-                    cx,
-                ),
-            ))
-            .child(setting_row(
-                "Cor de destaque",
-                Some(if custom {
-                    "O config.toml tem uma cor própria; escolher uma aqui a substitui."
-                } else {
-                    "Seleção, abas ativas e botões."
-                }),
-                swatches,
-            ))
-            .child(self.render_compact(cx))
+        vec![
+            Group::titled(
+                t!("Cores"),
+                vec![
+                    Row::new(
+                        t!("Tema"),
+                        None,
+                        self.config_choice(
+                            "theme-mode",
+                            &[
+                                (t!("Escuro"), mode == ThemeMode::Dark, "\"dark\""),
+                                (t!("Claro"), mode == ThemeMode::Light, "\"light\""),
+                                (t!("Igual ao Windows"), mode == ThemeMode::System, "\"system\""),
+                            ],
+                            ("theme", "mode"),
+                            cx,
+                        ),
+                    )
+                    .reset(("theme", "mode"), mode == ThemeMode::Dark, "\"dark\""),
+                    Row::hint(
+                        t!("Cor de destaque"),
+                        if custom {
+                            t!("O config.toml tem uma cor própria; escolher uma aqui a substitui.")
+                        } else {
+                            t!("Seleção, abas ativas e botões.")
+                        },
+                        swatches,
+                    )
+                    .wide()
+                    .reset(("theme", "accent"), accent.eq_ignore_ascii_case("orange"), "\"orange\""),
+                ],
+            ),
+            Group::titled(
+                t!("Lista"),
+                vec![
+                    Row::hint(
+                        t!("Rolagem suave"),
+                        t!("Quanto a roda do mouse desliza a lista em vez de pular. Desligada rola em degraus."),
+                        self.config_choice(
+                            "scroll-smoothness",
+                            &[
+                                (t!("Desligada"), ui.scroll_smoothness == 0, "0"),
+                                (t!("Dura"), ui.scroll_smoothness == 25, "25"),
+                                (t!("Média"), ui.scroll_smoothness == 50, "50"),
+                                (t!("Suave"), ui.scroll_smoothness == 75, "75"),
+                                (t!("Muito suave"), ui.scroll_smoothness == 100, "100"),
+                            ],
+                            ("ui", "scroll_smoothness"),
+                            cx,
+                        ),
+                    )
+                    .wide()
+                    .reset(("ui", "scroll_smoothness"), ui.scroll_smoothness == 50, "50"),
+                    Row::hint(
+                        t!("Linhas do nome nos ícones"),
+                        t!("Quantas linhas um nome ocupa no modo Ícones, em qualquer zoom; o resto vira \"…\"."),
+                        self.config_choice(
+                            "name-lines",
+                            &[
+                                (t!("Sem limite"), ui.name_lines == 0, "0"),
+                                ("1", ui.name_lines == 1, "1"),
+                                ("2", ui.name_lines == 2, "2"),
+                                ("3", ui.name_lines == 3, "3"),
+                                ("4", ui.name_lines == 4, "4"),
+                            ],
+                            ("ui", "name_lines"),
+                            cx,
+                        ),
+                    )
+                    .reset(("ui", "name_lines"), ui.name_lines == 0, "0"),
+                ],
+            ),
+        ]
     }
 
     // Each choice offers the default among its options, so a fresh config
     // always shows one selected.
-    fn render_compact(&self, cx: &mut Context<Self>) -> Div {
+    fn compact(&self, cx: &mut Context<Self>) -> Vec<Group> {
         let compact = &self.config.compact;
         let enabled = compact.enabled;
-        let rows = div()
-            .flex()
-            .flex_col()
-            .gap(px(20.0))
-            .child(setting_row(
-                "Modo compacto",
-                Some("Esconde as barras escolhidas, deixando só a lista; cada uma desliza para fora quando o mouse encosta na borda dela, como no Zen Browser."),
-                self.config_choice(
-                    "compact-enabled",
-                    &[("Desligado", !enabled, "false"), ("Ligado", enabled, "true")],
-                    ("compact", "enabled"),
-                    cx,
-                ),
-            ));
+        let mut groups = vec![Group::new(vec![
+            Row::hint(
+                t!("Modo compacto"),
+                t!("Esconde as barras escolhidas, deixando só a lista; cada uma desliza para fora quando o mouse encosta na borda dela, como no Zen Browser."),
+                self.switch("compact-enabled", enabled, ("compact", "enabled"), cx),
+            )
+            .reset(("compact", "enabled"), !enabled, "false"),
+        ])];
         if !enabled {
-            return rows;
+            return groups;
         }
-        rows.child(setting_row(
-            "O que esconder",
-            Some("Abas e barra de rota saem do topo, a barra lateral da esquerda, o visualizador da direita e a barra de baixo (filtro, contagem, zoom) de baixo. Só as abas é o jeito antigo."),
-            self.config_toggles(
-                "compact-hide",
-                "compact",
-                &[
-                    ("Abas", compact.hide_tabs, "hide_tabs"),
-                    ("Barra de rota", compact.hide_header, "hide_header"),
-                    ("Barra lateral", compact.hide_sidebar, "hide_sidebar"),
-                    ("Visualizador", compact.hide_preview, "hide_preview"),
-                    ("Barra de baixo", compact.hide_bottom_bar, "hide_bottom_bar"),
-                ],
-                cx,
-            ),
-        ))
-        .child(setting_row(
-            "Como as barras aparecem",
-            Some("Por cima da lista, sem mexer nela, ou empurrando a lista para abrir espaço, sem cobrir nada dela."),
-            self.config_choice(
-                "compact-overlay",
-                &[
-                    ("Por cima", compact.overlay, "true"),
-                    ("Empurrando", !compact.overlay, "false"),
-                ],
-                ("compact", "overlay"),
-                cx,
-            ),
-        ))
-        .child(setting_row(
-            "Espera para aparecer",
-            Some("Quanto tempo o mouse fica na borda antes de a barra sair."),
-            self.config_choice(
-                "compact-reveal-delay",
-                &[
-                    ("Nenhuma", compact.reveal_delay_ms == 0, "0"),
-                    ("Curta", compact.reveal_delay_ms == 100, "100"),
-                    ("Média", compact.reveal_delay_ms == 300, "300"),
-                    ("Longa", compact.reveal_delay_ms == 600, "600"),
-                ],
-                ("compact", "reveal_delay_ms"),
-                cx,
-            ),
-        ))
-        .child(setting_row(
-            "Espera para sumir",
-            Some("Quanto tempo a barra fica depois que o mouse sai dela."),
-            self.config_choice(
-                "compact-hide-delay",
-                &[
-                    ("Nenhuma", compact.hide_delay_ms == 0, "0"),
-                    ("Curta", compact.hide_delay_ms == 150, "150"),
-                    ("Média", compact.hide_delay_ms == 400, "400"),
-                    ("Longa", compact.hide_delay_ms == 1000, "1000"),
-                ],
-                ("compact", "hide_delay_ms"),
-                cx,
-            ),
-        ))
-        .child(setting_row(
-            "Animação",
-            Some("Duração do deslizar. Desligada, as barras aparecem e somem de uma vez."),
-            self.config_choice(
-                "compact-animation",
-                &[
-                    ("Desligada", compact.animation_ms == 0, "0"),
-                    ("Rápida", compact.animation_ms == 120, "120"),
-                    ("Média", compact.animation_ms == 220, "220"),
-                    ("Lenta", compact.animation_ms == 400, "400"),
-                ],
-                ("compact", "animation_ms"),
-                cx,
-            ),
-        ))
-        .child(setting_row(
-            "Área de ativação",
-            Some("Largura da faixa em cada borda que chama a barra."),
-            self.config_choice(
-                "compact-edge",
-                &[
-                    ("Fina", compact.edge_px == 4, "4"),
-                    ("Média", compact.edge_px == 8, "8"),
-                    ("Larga", compact.edge_px == 16, "16"),
-                ],
-                ("compact", "edge_px"),
-                cx,
-            ),
-        ))
-        .child(setting_row(
-            "Moldura",
-            Some("A lista fica num cartão de cantos arredondados, com uma borda da cor da janela em volta, como no Zen."),
-            self.config_choice(
-                "compact-frame",
-                &[
-                    ("Sem", compact.frame_px == 0, "0"),
-                    ("Fina", compact.frame_px == 4, "4"),
-                    ("Média", compact.frame_px == 8, "8"),
-                    ("Larga", compact.frame_px == 12, "12"),
-                ],
-                ("compact", "frame_px"),
-                cx,
-            ),
-        ))
+        groups.push(Group::titled(
+            t!("O que esconder"),
+            vec![
+                Row::hint(
+                    t!("Barras"),
+                    t!("Abas e barra de rota saem do topo, a barra lateral da esquerda, o visualizador da direita e a barra de baixo (filtro, contagem, zoom) de baixo. Só as abas é o jeito antigo."),
+                    self.config_toggles(
+                        "compact-hide",
+                        "compact",
+                        &[
+                            (t!("Abas"), compact.hide_tabs, "hide_tabs"),
+                            (t!("Barra de rota"), compact.hide_header, "hide_header"),
+                            (t!("Barra lateral"), compact.hide_sidebar, "hide_sidebar"),
+                            (t!("Visualizador"), compact.hide_preview, "hide_preview"),
+                            (t!("Barra de baixo"), compact.hide_bottom_bar, "hide_bottom_bar"),
+                        ],
+                        cx,
+                    ),
+                )
+                .wide(),
+                Row::hint(
+                    t!("Como as barras aparecem"),
+                    t!("Por cima da lista, sem mexer nela, ou empurrando a lista para abrir espaço, sem cobrir nada dela."),
+                    self.config_choice(
+                        "compact-overlay",
+                        &[(t!("Por cima"), compact.overlay, "true"), (t!("Empurrando"), !compact.overlay, "false")],
+                        ("compact", "overlay"),
+                        cx,
+                    ),
+                )
+                .reset(("compact", "overlay"), compact.overlay, "true"),
+                Row::hint(
+                    t!("Moldura"),
+                    t!("A lista fica num cartão de cantos arredondados, com uma borda da cor da janela em volta, como no Zen."),
+                    self.config_choice(
+                        "compact-frame",
+                        &[
+                            (t!("Sem"), compact.frame_px == 0, "0"),
+                            (t!("Fina"), compact.frame_px == 4, "4"),
+                            (t!("Média"), compact.frame_px == 8, "8"),
+                            (t!("Larga"), compact.frame_px == 12, "12"),
+                        ],
+                        ("compact", "frame_px"),
+                        cx,
+                    ),
+                )
+                .reset(("compact", "frame_px"), compact.frame_px == 8, "8"),
+            ],
+        ));
+        groups.push(Group::titled(
+            t!("Tempo e movimento"),
+            vec![
+                Row::hint(
+                    t!("Espera para aparecer"),
+                    t!("Quanto tempo o mouse fica na borda antes de a barra sair."),
+                    self.config_choice(
+                        "compact-reveal-delay",
+                        &[
+                            (t!("Nenhuma"), compact.reveal_delay_ms == 0, "0"),
+                            (t!("Curta"), compact.reveal_delay_ms == 100, "100"),
+                            (t!("Média"), compact.reveal_delay_ms == 300, "300"),
+                            (t!("Longa"), compact.reveal_delay_ms == 600, "600"),
+                        ],
+                        ("compact", "reveal_delay_ms"),
+                        cx,
+                    ),
+                )
+                .reset(("compact", "reveal_delay_ms"), compact.reveal_delay_ms == 100, "100"),
+                Row::hint(
+                    t!("Espera para sumir"),
+                    t!("Quanto tempo a barra fica depois que o mouse sai dela."),
+                    self.config_choice(
+                        "compact-hide-delay",
+                        &[
+                            (t!("Nenhuma"), compact.hide_delay_ms == 0, "0"),
+                            (t!("Curta"), compact.hide_delay_ms == 150, "150"),
+                            (t!("Média"), compact.hide_delay_ms == 400, "400"),
+                            (t!("Longa"), compact.hide_delay_ms == 1000, "1000"),
+                        ],
+                        ("compact", "hide_delay_ms"),
+                        cx,
+                    ),
+                )
+                .reset(("compact", "hide_delay_ms"), compact.hide_delay_ms == 400, "400"),
+                Row::hint(
+                    t!("Animação"),
+                    t!("Duração do deslizar. Desligada, as barras aparecem e somem de uma vez."),
+                    self.config_choice(
+                        "compact-animation",
+                        &[
+                            (t!("Desligada"), compact.animation_ms == 0, "0"),
+                            (t!("Rápida"), compact.animation_ms == 120, "120"),
+                            (t!("Média"), compact.animation_ms == 220, "220"),
+                            (t!("Lenta"), compact.animation_ms == 400, "400"),
+                        ],
+                        ("compact", "animation_ms"),
+                        cx,
+                    ),
+                )
+                .reset(("compact", "animation_ms"), compact.animation_ms == 220, "220"),
+                Row::hint(
+                    t!("Área de ativação"),
+                    t!("Largura da faixa em cada borda que chama a barra."),
+                    self.config_choice(
+                        "compact-edge",
+                        &[
+                            (t!("Fina"), compact.edge_px == 4, "4"),
+                            (t!("Média"), compact.edge_px == 8, "8"),
+                            (t!("Larga"), compact.edge_px == 16, "16"),
+                        ],
+                        ("compact", "edge_px"),
+                        cx,
+                    ),
+                )
+                .reset(("compact", "edge_px"), compact.edge_px == 8, "8"),
+            ],
+        ));
+        groups
     }
 
-    fn render_explorer(&self, cx: &mut Context<Self>) -> Div {
+    fn files(&self, cx: &mut Context<Self>) -> Vec<Group> {
         let ui = &self.config.ui;
-        let explorer = &self.config.explorer;
-        section_body("Explorador")
-            .child(setting_row(
-                "Itens ocultos",
-                Some("Arquivos e pastas marcados como ocultos."),
-                self.config_choice(
-                    "show-hidden",
-                    &[("Esconder", !ui.show_hidden, "false"), ("Mostrar", ui.show_hidden, "true")],
-                    ("ui", "show_hidden"),
-                    cx,
-                ),
-            ))
-            .child(setting_row(
-                "Ordenação padrão",
-                Some("Como cada pasta é ordenada ao abrir."),
+        vec![Group::new(vec![
+            Row::hint(
+                t!("Mostrar itens ocultos"),
+                t!("Arquivos e pastas marcados como ocultos."),
+                self.switch("show-hidden", ui.show_hidden, ("ui", "show_hidden"), cx),
+            )
+            .reset(("ui", "show_hidden"), !ui.show_hidden, "false"),
+            Row::hint(
+                t!("Ordenação padrão"),
+                t!("Como cada pasta é ordenada ao abrir."),
                 self.config_choice(
                     "default-sort",
                     &[
-                        ("Nome", ui.default_sort == SortOrder::Name, "\"name\""),
-                        ("Modificado", ui.default_sort == SortOrder::Modified, "\"modified\""),
-                        ("Tamanho", ui.default_sort == SortOrder::Size, "\"size\""),
-                        ("Tipo", ui.default_sort == SortOrder::Kind, "\"kind\""),
+                        (t!("Nome"), ui.default_sort == SortOrder::Name, "\"name\""),
+                        (t!("Modificado"), ui.default_sort == SortOrder::Modified, "\"modified\""),
+                        (t!("Tamanho"), ui.default_sort == SortOrder::Size, "\"size\""),
+                        (t!("Tipo"), ui.default_sort == SortOrder::Kind, "\"kind\""),
                     ],
                     ("ui", "default_sort"),
                     cx,
                 ),
-            ))
-            .child(setting_row(
-                "Direção da ordenação",
-                Some("Crescente: A→Z, menor e mais antigo primeiro. Pastas em que você mudou a ordem guardam a delas."),
+            )
+            .reset(("ui", "default_sort"), ui.default_sort == SortOrder::Name, "\"name\""),
+            Row::hint(
+                t!("Direção da ordenação"),
+                t!("Crescente: A→Z, menor e mais antigo primeiro. Pastas em que você mudou a ordem guardam a delas."),
                 self.config_choice(
                     "default-sort-direction",
                     &[
-                        ("Crescente", !ui.default_sort_descending, "false"),
-                        ("Decrescente", ui.default_sort_descending, "true"),
+                        (t!("Crescente"), !ui.default_sort_descending, "false"),
+                        (t!("Decrescente"), ui.default_sort_descending, "true"),
                     ],
                     ("ui", "default_sort_descending"),
                     cx,
                 ),
-            ))
-            .child(setting_row(
-                "Linhas do nome nos ícones",
-                Some("Quantas linhas um nome ocupa no modo Ícones, em qualquer zoom; o resto vira \"…\"."),
-                self.config_choice(
-                    "name-lines",
-                    &[
-                        ("Sem limite", ui.name_lines == 0, "0"),
-                        ("1", ui.name_lines == 1, "1"),
-                        ("2", ui.name_lines == 2, "2"),
-                        ("3", ui.name_lines == 3, "3"),
-                        ("4", ui.name_lines == 4, "4"),
-                    ],
-                    ("ui", "name_lines"),
-                    cx,
-                ),
-            ))
-            .child(setting_row(
-                "Rolagem suave",
-                Some("Quanto a roda do mouse desliza a lista em vez de pular. Desligada rola em degraus."),
-                self.config_choice(
-                    "scroll-smoothness",
-                    &[
-                        ("Desligada", ui.scroll_smoothness == 0, "0"),
-                        ("Dura", ui.scroll_smoothness == 25, "25"),
-                        ("Média", ui.scroll_smoothness == 50, "50"),
-                        ("Suave", ui.scroll_smoothness == 75, "75"),
-                        ("Muito suave", ui.scroll_smoothness == 100, "100"),
-                    ],
-                    ("ui", "scroll_smoothness"),
-                    cx,
-                ),
-            ))
-            .child(setting_row(
-                "Restaurar abas",
-                Some("Reabrir as abas da última sessão. Vale na próxima vez que o Prime Files abrir."),
-                self.config_choice(
-                    "restore-tabs",
-                    &[
-                        ("Sim", explorer.restore_tabs, "true"),
-                        ("Não", !explorer.restore_tabs, "false"),
-                    ],
-                    ("explorer", "restore_tabs"),
-                    cx,
-                ),
-            ))
-            .child(setting_row(
-                "Divisão de painéis",
-                Some("Para onde Ctrl+\\ divide a janela."),
-                self.config_choice(
-                    "split-direction",
-                    &[
-                        ("Lado a lado", explorer.split_direction == SplitDirection::Vertical, "\"vertical\""),
-                        (
-                            "Em cima e embaixo",
-                            explorer.split_direction == SplitDirection::Horizontal,
-                            "\"horizontal\"",
-                        ),
-                    ],
-                    ("explorer", "split_direction"),
-                    cx,
-                ),
-            ))
-            .child(setting_row(
-                "Painéis sincronizados",
-                Some("Navegar num painel leva o outro para a mesma pasta."),
-                self.config_choice(
-                    "synced-panes",
-                    &[
-                        ("Não", !explorer.synced_panes, "false"),
-                        ("Sim", explorer.synced_panes, "true"),
-                    ],
-                    ("explorer", "synced_panes"),
-                    cx,
-                ),
-            ))
-            .child(setting_row(
-                "Explorador padrão do Windows",
-                Some(
-                    "Pastas, drives, Win+E e o ícone do Explorador na barra de tarefas abrem no Prime Files.                      Só neste usuário do Windows; \"Não\" devolve tudo ao Explorador.",
-                ),
-                match self.default_explorer {
-                    Some(is_default) => self
-                        .choice(
-                            "default-explorer",
-                            &[
-                                ("Não", !is_default, Pick::DefaultExplorer(false)),
-                                ("Sim", is_default, Pick::DefaultExplorer(true)),
-                            ],
-                            cx,
-                        )
-                        .into_any_element(),
-                    None => div()
-                        .text_xs()
-                        .text_color(rgb(theme::fg_secondary()))
-                        .child("Verificando…")
-                        .into_any_element(),
-                },
-            ))
+            )
+            .reset(("ui", "default_sort_descending"), !ui.default_sort_descending, "false"),
+        ])]
     }
 
-    fn render_shortcuts(&self) -> Div {
-        section_body("Atalhos").children(SHORTCUTS.iter().map(|(group, keys)| {
-            div()
-                .flex()
-                .flex_col()
-                .gap_1()
-                .child(
-                    div()
-                        .pb(px(4.0))
-                        .text_xs()
-                        .font_weight(gpui::FontWeight::SEMIBOLD)
-                        .text_color(rgb(theme::fg_secondary()))
-                        .child(*group),
+    fn media(&self, cx: &mut Context<Self>) -> Vec<Group> {
+        let ui = &self.config.ui;
+        let delay = ui.hover_audio_delay_ms;
+        let mut hover = vec![
+            Row::hint(
+                t!("Tocar ao passar o mouse"),
+                t!("Deixe o mouse parado sobre um arquivo de som na lista para ouvi-lo; tirar o mouse para. Um som por vez, no volume do visualizador."),
+                self.switch("hover-audio", ui.hover_audio, ("ui", "hover_audio"), cx),
+            )
+            .reset(("ui", "hover_audio"), ui.hover_audio, "true"),
+        ];
+        if ui.hover_audio {
+            hover.push(
+                Row::hint(
+                    t!("Tempo parado antes de tocar"),
+                    t!("Curto toca enquanto você passa pela lista; longo só toca o arquivo em que você parou."),
+                    self.config_choice(
+                        "hover-audio-delay",
+                        &[
+                            (t!("Na hora"), delay == 0, "0"),
+                            ("0,2 s", delay == 200, "200"),
+                            ("0,4 s", delay == 400, "400"),
+                            ("0,7 s", delay == 700, "700"),
+                            ("1 s", delay == 1000, "1000"),
+                            ("2 s", delay == 2000, "2000"),
+                        ],
+                        ("ui", "hover_audio_delay_ms"),
+                        cx,
+                    ),
                 )
-                .children(keys.iter().map(|(keys, what)| {
-                    div()
-                        .h(px(30.0))
-                        .flex()
-                        .items_center()
-                        .justify_between()
-                        .border_b_1()
-                        .border_color(rgb(theme::border()))
-                        .child(div().text_sm().text_color(rgb(theme::fg())).child(*what))
-                        .child(
-                            div()
-                                .px(px(8.0))
-                                .py(px(2.0))
-                                .rounded(px(4.0))
-                                .bg(rgb(theme::bg_secondary()))
-                                .border_1()
-                                .border_color(rgb(theme::border()))
-                                .text_xs()
-                                .text_color(rgb(theme::fg()))
-                                .child(*keys),
-                        )
-                }))
-        }))
+                .wide()
+                .reset(("ui", "hover_audio_delay_ms"), delay == 400, "400"),
+            );
+        }
+        vec![
+            Group::titled(t!("Ouvir passando o mouse"), hover),
+            Group::titled(
+                t!("Visualizador e ícones"),
+                vec![
+                    Row::hint(
+                        t!("Tocar ao abrir no visualizador"),
+                        t!("Vídeos e sons começam a tocar assim que o visualizador os abre."),
+                        self.switch("preview-autoplay", ui.preview_autoplay, ("ui", "preview_autoplay"), cx),
+                    )
+                    .reset(("ui", "preview_autoplay"), !ui.preview_autoplay, "false"),
+                    Row::hint(
+                        t!("Forma de onda nos ícones"),
+                        t!("No modo Ícones, arquivos de som mostram a forma de onda no lugar do ícone."),
+                        self.switch("audio-waveforms", ui.audio_waveforms, ("ui", "audio_waveforms"), cx),
+                    )
+                    .reset(("ui", "audio_waveforms"), !ui.audio_waveforms, "false"),
+                ],
+            ),
+        ]
     }
 
-    fn render_about(&self, cx: &mut Context<Self>) -> Div {
+    fn search_section(&self, cx: &mut Context<Self>) -> Vec<Group> {
+        let status = crate::explorer::everything::status(cx);
+        let state = match (status.building, status.entries) {
+            (Some(found), _) => tf!("Indexando… {n} itens até agora", n = found),
+            (None, Some(entries)) => match status.built.and_then(|built| built.elapsed().ok()) {
+                Some(age) => tf!("{n} itens, atualizado {ago}", n = entries, ago = ago(age)),
+                None => tf!("{n} itens", n = entries),
+            },
+            (None, None) => t!("O índice é criado na primeira busca.").to_string(),
+        };
+        let building = status.building.is_some();
+        vec![
+            Group::new(vec![
+                Row::hint(
+                    t!("Buscar em todo o computador"),
+                    t!("Clique na lupa da barra de baixo ou aperte Ctrl+E e digite qualquer parte do nome. Vários termos filtram juntos, * e ? funcionam, e um termo com \\ procura no caminho."),
+                    div()
+                        .flex()
+                        .flex_col()
+                        .items_end()
+                        .gap_2()
+                        .child(div().text_xs().text_color(rgb(theme::fg_secondary())).child(state))
+                        .when(!building, |this| {
+                            this.child(button("everything-rebuild", t!("Reindexar agora"), false).on_click(cx.listener(
+                                |_page, _event, _window, cx| crate::explorer::everything::rebuild(cx),
+                            )))
+                        }),
+                ),
+                Row::hint(
+                    t!("Como o índice é feito"),
+                    t!("Os nomes de todas as unidades fixas ficam guardados neste computador e são relidos em segundo plano quando a busca abre e o índice tem mais de 10 minutos. Nada sai do computador."),
+                    div(),
+                ),
+            ]),
+            Group::titled(
+                t!("Outras buscas"),
+                vec![
+                    Row::hint(
+                        t!("Filtrar a pasta"),
+                        t!("Comece a digitar na lista: só os nomes da pasta aberta que combinam ficam."),
+                        key_cap(t!("Qualquer letra")),
+                    ),
+                    Row::hint(
+                        t!("Buscar nas subpastas"),
+                        t!("Procura a partir da pasta aberta, lendo o disco na hora."),
+                        key_cap("Ctrl+F"),
+                    ),
+                ],
+            ),
+        ]
+    }
+
+    fn integrations(&self, cx: &mut Context<Self>) -> Vec<Group> {
+        vec![Group::new(vec![
+            Row::hint(
+                t!("Explorador padrão do Windows"),
+                t!("Pastas, drives, Win+E e o ícone do Explorador na barra de tarefas abrem no Prime Files. Só neste usuário do Windows; desligar devolve tudo ao Explorador."),
+                match self.default_explorer {
+                    Some(is_default) => {
+                        self.switch_pick("default-explorer", is_default, Pick::DefaultExplorer(!is_default), cx).into_any_element()
+                    }
+                    None => checking().into_any_element(),
+                },
+            ),
+            Row::hint(
+                "Listary",
+                t!("Pastas abertas pelo Listary abrem no Prime Files. O Listary é reiniciado ao mudar."),
+                match self.listary {
+                    None => checking().into_any_element(),
+                    Some(crate::listary::State::NotInstalled) => div()
+                        .text_xs()
+                        .text_color(rgb(theme::fg_secondary()))
+                        .child(t!("Não instalado"))
+                        .into_any_element(),
+                    Some(state) => {
+                        let ours = state == crate::listary::State::Ours;
+                        self.switch_pick("listary", ours, Pick::Listary(!ours), cx).into_any_element()
+                    }
+                },
+            ),
+        ])]
+    }
+
+    fn shortcuts(&self) -> Vec<Group> {
+        SHORTCUTS
+            .iter()
+            .map(|(group, keys)| Group {
+                title: Some(tr(group)),
+                rows: keys.iter().map(|(keys, what)| Row::new(tr(what), None, key_cap(tr(keys)))).collect(),
+            })
+            .collect()
+    }
+
+    fn about(&self, cx: &mut Context<Self>) -> Vec<Group> {
         let path = config::paths::config_file();
-        section_body("Sobre")
-            .child(setting_row(
-                "Arquivo de configuração",
-                Some("Tudo desta página fica nele, e editá-lo à mão vale na hora."),
-                div()
-                    .flex()
-                    .flex_col()
-                    .gap_2()
-                    .child(
-                        div()
-                            .text_xs()
-                            .text_color(rgb(theme::fg_secondary()))
-                            .child(path.display().to_string()),
+        vec![
+            Group::titled(
+                t!("Atualizações"),
+                vec![
+                    Row::new(
+                        t!("Versão"),
+                        None,
+                        div().text_sm().text_color(rgb(theme::fg())).child(env!("CARGO_PKG_VERSION")),
+                    ),
+                    self.updates_row(cx),
+                    Row::hint(
+                        t!("Atualizar automaticamente"),
+                        t!("Procura uma versão nova ao abrir, baixa em segundo plano e instala quando você fecha o Prime Files."),
+                        self.switch("updates-automatic", self.config.updates.automatic, ("updates", "automatic"), cx),
                     )
-                    .child(
+                    .reset(("updates", "automatic"), self.config.updates.automatic, "true"),
+                ],
+            ),
+            Group::titled(
+                t!("Arquivo de configuração"),
+                vec![
+                    Row::hint(
+                        "config.toml",
+                        t!("Tudo desta página fica nele, e editá-lo à mão vale na hora."),
                         div()
                             .flex()
+                            .flex_col()
+                            .items_end()
                             .gap_2()
-                            .child(button("open-config", "Abrir config.toml", false).on_click(
-                                cx.listener(|page, _event, _window, cx| page.open_config_file(cx)),
-                            ))
-                            .child(button("show-config", "Mostrar na pasta", false).on_click(
-                                cx.listener(|page, _event, _window, cx| page.show_config_folder(cx)),
-                            )),
+                            .child(div().text_xs().text_color(rgb(theme::fg_secondary())).child(path.display().to_string()))
+                            .child(
+                                div()
+                                    .flex()
+                                    .gap_2()
+                                    .child(button("open-config", t!("Abrir config.toml"), false).on_click(
+                                        cx.listener(|page, _event, _window, cx| page.open_config_file(cx)),
+                                    ))
+                                    .child(button("show-config", t!("Mostrar na pasta"), false).on_click(
+                                        cx.listener(|page, _event, _window, cx| page.show_config_folder(cx)),
+                                    )),
+                            ),
                     ),
-            ))
-            .child(setting_row(
-                "Restaurar padrão",
-                Some("Troca o arquivo pelo padrão; o atual fica guardado ao lado."),
-                button(
-                    "reset-config",
-                    if self.confirm_reset { "Clique de novo para confirmar" } else { "Restaurar padrão" },
-                    self.confirm_reset,
-                )
-                .on_click(cx.listener(|page, _event, _window, cx| page.reset_config(cx))),
-            ))
-            .child(setting_row(
-                "Versão",
-                None,
-                div().text_sm().text_color(rgb(theme::fg())).child(env!("CARGO_PKG_VERSION")),
-            ))
-            .child(self.render_updates(cx))
-            .child(setting_row(
-                "Atualizar automaticamente",
-                Some("Procura uma versão nova ao abrir, baixa em segundo plano e instala quando você fecha o Prime Files."),
-                self.config_choice(
-                    "updates-automatic",
-                    &[
-                        ("Sim", self.config.updates.automatic, "true"),
-                        ("Não", !self.config.updates.automatic, "false"),
-                    ],
-                    ("updates", "automatic"),
-                    cx,
-                ),
-            ))
+                    Row::hint(
+                        t!("Restaurar padrão"),
+                        t!("Troca o arquivo pelo padrão; o atual fica guardado ao lado."),
+                        button(
+                            "reset-config",
+                            if self.confirm_reset { t!("Clique de novo para confirmar") } else { t!("Restaurar padrão") },
+                            self.confirm_reset,
+                        )
+                        .on_click(cx.listener(|page, _event, _window, cx| page.reset_config(cx))),
+                    ),
+                ],
+            ),
+        ]
     }
 
-    fn render_updates(&self, cx: &mut Context<Self>) -> Div {
+    fn updates_row(&self, cx: &mut Context<Self>) -> Row {
         use crate::updater::Status;
         let status = self.updater.read(cx).status.clone();
         let (text, error) = match &status {
-            Status::NotInstalled => ("Esta cópia não foi instalada pelo instalador, então não se atualiza sozinha.".to_string(), false),
-            Status::Idle => ("Ainda não procurou.".to_string(), false),
-            Status::Checking => ("Procurando…".to_string(), false),
-            Status::UpToDate => ("Você está na versão mais nova.".to_string(), false),
-            Status::Downloading(version) => (format!("Baixando a versão {version}…"), false),
-            Status::Ready { version, .. } => (format!("A versão {version} está pronta para instalar."), false),
-            Status::Failed(error) => (format!("Não deu para atualizar: {error}"), true),
+            Status::NotInstalled => (t!("Esta cópia não foi instalada pelo instalador, então não se atualiza sozinha.").to_string(), false),
+            Status::Idle => (t!("Ainda não procurou.").to_string(), false),
+            Status::Checking => (t!("Procurando…").to_string(), false),
+            Status::UpToDate => (t!("Você está na versão mais nova.").to_string(), false),
+            Status::Downloading(version) => (tf!("Baixando a versão {version}…", version = version), false),
+            Status::Ready { version, .. } => (tf!("A versão {version} está pronta para instalar.", version = version), false),
+            Status::Failed(error) => (tf!("Não deu para atualizar: {error}", error = error), true),
         };
         let busy = matches!(status, Status::Checking | Status::Downloading(_));
         let can_check = !busy && status != Status::NotInstalled;
         let ready = matches!(status, Status::Ready { .. });
-        setting_row(
-            "Atualizações",
-            Some("Vêm das releases do Prime Files no GitHub; cada instalador é conferido pelo SHA256SUMS.txt antes de rodar."),
+        Row::hint(
+            t!("Procurar versão nova"),
+            t!("Vêm das releases do Prime Files no GitHub; cada instalador é conferido pelo SHA256SUMS.txt antes de rodar."),
             div()
                 .flex()
                 .flex_col()
@@ -793,14 +1074,14 @@ impl SettingsPage {
                         .flex()
                         .gap_2()
                         .when(can_check, |row| {
-                            row.child(button("check-updates", "Procurar agora", false).on_click(cx.listener(
+                            row.child(button("check-updates", t!("Procurar agora"), false).on_click(cx.listener(
                                 |page, _event, _window, cx| {
                                     page.updater.update(cx, |updater, cx| updater.check(cx));
                                 },
                             )))
                         })
                         .when(ready, |row| {
-                            row.child(button("install-update", "Atualizar agora", false).on_click(cx.listener(
+                            row.child(button("install-update", t!("Atualizar agora"), false).on_click(cx.listener(
                                 |page, _event, _window, cx| {
                                     page.updater.update(cx, |updater, cx| updater.install_now(cx));
                                 },
@@ -810,30 +1091,81 @@ impl SettingsPage {
         )
     }
 
-    // A `choice` whose every option writes its TOML value to `key` (a
-    // `(section, key)` pair).
+    // ---------------------------------------------------------------------
+    // Controls
+
+    // An on/off switch for a boolean `[section] key`.
+    fn switch(
+        &self,
+        id: &'static str,
+        on: bool,
+        (section, key): (&'static str, &'static str),
+        cx: &mut Context<Self>,
+    ) -> Stateful<Div> {
+        let value = if on { "false" } else { "true" };
+        self.switch_pick(id, on, Pick::Config(section, key, SharedString::from(value)), cx)
+    }
+
+    // An on/off switch whose click does `pick` (what turns it the other way).
+    fn switch_pick(&self, id: &'static str, on: bool, pick: Pick, cx: &mut Context<Self>) -> Stateful<Div> {
+        const WIDTH: f32 = 38.0;
+        const HEIGHT: f32 = 22.0;
+        const KNOB: f32 = 16.0;
+        let inset = (HEIGHT - KNOB) / 2.0;
+        div()
+            .id(id)
+            .flex_shrink_0()
+            .flex()
+            .items_center()
+            .gap_2()
+            .cursor_pointer()
+            .on_click(cx.listener(move |page, _event, _window, cx| page.pick(pick.clone(), cx)))
+            .child(
+                div()
+                    .text_xs()
+                    .text_color(rgb(if on { theme::fg() } else { theme::fg_secondary() }))
+                    .child(if on { t!("Ligado") } else { t!("Desligado") }),
+            )
+            .child(
+                div()
+                    .relative()
+                    .w(px(WIDTH))
+                    .h(px(HEIGHT))
+                    .rounded_full()
+                    .border_1()
+                    .map(|track| {
+                        if on {
+                            track.bg(rgb(theme::accent())).border_color(rgb(theme::accent()))
+                        } else {
+                            track.bg(rgb(theme::bg())).border_color(rgb(theme::border_hover()))
+                        }
+                    })
+                    .child(
+                        div()
+                            .absolute()
+                            .top(px(inset - 1.0))
+                            .left(px(if on { WIDTH - KNOB - inset - 1.0 } else { inset - 1.0 }))
+                            .size(px(KNOB))
+                            .rounded_full()
+                            .bg(rgb(if on { theme::accent_fg() } else { theme::fg_secondary() })),
+                    ),
+            )
+    }
+
+    // A row of exclusive options whose every option writes its TOML value to
+    // `key` (a `(section, key)` pair).
     fn config_choice(
         &self,
         id: &'static str,
         options: &[(&'static str, bool, &'static str)],
         (section, key): (&'static str, &'static str),
         cx: &mut Context<Self>,
-    ) -> impl IntoElement + use<> {
+    ) -> Div {
         let options: Vec<_> = options
             .iter()
-            .map(|&(label, selected, value)| (label, selected, Pick::Config(section, key, value)))
+            .map(|&(label, selected, value)| (label, selected, Pick::Config(section, key, SharedString::from(value))))
             .collect();
-        self.choice(id, &options, cx)
-    }
-
-    // A row of mutually exclusive options, each doing its `Pick`.
-    fn choice(
-        &self,
-        id: &'static str,
-        options: &[(&'static str, bool, Pick)],
-        cx: &mut Context<Self>,
-    ) -> impl IntoElement + use<> {
-        self.chips(id, options, false, cx)
+        self.chips(id, &options, false, cx)
     }
 
     // Independent on/off switches in one row: each chip flips its own key
@@ -844,41 +1176,45 @@ impl SettingsPage {
         section: &'static str,
         options: &[(&'static str, bool, &'static str)],
         cx: &mut Context<Self>,
-    ) -> impl IntoElement + use<> {
+    ) -> Div {
         let options: Vec<_> = options
             .iter()
-            .map(|&(label, on, key)| (label, on, Pick::Config(section, key, if on { "false" } else { "true" })))
+            .map(|&(label, on, key)| {
+                (label, on, Pick::Config(section, key, SharedString::from(if on { "false" } else { "true" })))
+            })
             .collect();
         self.chips(id, &options, true, cx)
     }
 
-    // The row of chips behind `choice` and `config_toggles`. A selected chip
-    // only answers a click when the chips are toggles.
-    fn chips(
-        &self,
-        id: &'static str,
-        options: &[(&'static str, bool, Pick)],
-        toggles: bool,
-        cx: &mut Context<Self>,
-    ) -> impl IntoElement + use<> {
+    // The row of chips behind `config_choice` and `config_toggles`. A
+    // selected chip only answers a click when the chips are toggles, which
+    // also show a check so "on" reads apart from "chosen".
+    fn chips(&self, id: &'static str, options: &[(&'static str, bool, Pick)], toggles: bool, cx: &mut Context<Self>) -> Div {
         div()
             .flex()
+            // Only long rows wrap: a short row beside its text measured at
+            // its narrowest and broke onto two lines.
+            .when(options.len() > 5, |this| this.flex_wrap())
             .p(px(2.0))
             .gap(px(2.0))
-            .rounded(px(6.0))
-            .bg(rgb(theme::bg_secondary()))
+            .rounded(px(7.0))
+            .bg(rgb(theme::bg()))
             .border_1()
             .border_color(rgb(theme::border()))
-            .children(options.iter().enumerate().map(|(ix, &(label, selected, pick))| {
+            .children(options.iter().enumerate().map(|(ix, (label, selected, pick))| {
+                let selected = *selected;
+                let pick = pick.clone();
                 div()
                     .id(ElementId::NamedInteger(id.into(), ix as u64))
                     .h(px(26.0))
-                    .px(px(12.0))
+                    .px(px(11.0))
                     .flex()
                     .items_center()
-                    .rounded(px(4.0))
+                    .gap_1()
+                    .rounded(px(5.0))
                     .cursor_pointer()
                     .text_sm()
+                    .whitespace_nowrap()
                     .map(|this| {
                         if selected {
                             this.bg(rgb(theme::accent())).text_color(rgb(theme::accent_fg()))
@@ -888,46 +1224,373 @@ impl SettingsPage {
                         }
                     })
                     .when(!selected || toggles, |this| {
-                        this.on_click(cx.listener(move |page, _event, _window, cx| page.pick(pick, cx)))
+                        this.on_click(cx.listener(move |page, _event, _window, cx| page.pick(pick.clone(), cx)))
                     })
-                    .child(label)
+                    .when(toggles && selected, |this| this.child(Icon::new(Icon::empty()).path("icons/check.svg").size_3()))
+                    .child(*label)
             }))
+    }
+
+    // ---------------------------------------------------------------------
+    // Layout
+
+    fn search_input(&mut self, window: &mut Window, cx: &mut Context<Self>) -> Entity<InputState> {
+        let input = match &self.search {
+            Some(input) => input.clone(),
+            None => {
+                let input = cx.new(|cx| InputState::new(window, cx));
+                self.search = Some(input.clone());
+                input
+            }
+        };
+        // Set each render: the language may have changed since.
+        input.update(cx, |state, cx| state.set_placeholder(t!("Buscar uma configuração…"), window, cx));
+        input
+    }
+
+    fn render_search_field(&self, input: &Entity<InputState>) -> Div {
+        div()
+            .h(px(32.0))
+            .w_full()
+            .flex()
+            .items_center()
+            .gap_2()
+            .px(px(10.0))
+            .rounded(px(7.0))
+            .bg(rgb(theme::bg()))
+            .border_1()
+            .border_color(rgb(theme::border()))
+            .child(Icon::new(Icon::empty()).path("icons/search.svg").size_4().text_color(rgb(theme::muted())))
+            .child(div().flex_1().min_w(px(0.0)).child(Input::new(input).small().appearance(false).cleanable(true)))
+    }
+
+    fn render_nav_item(&self, section: SettingsSection, horizontal: bool, cx: &mut Context<Self>) -> Stateful<Div> {
+        let active = section == self.section;
+        div()
+            .id(ElementId::Name(SharedString::from(format!("settings-nav-{section:?}"))))
+            .h(px(34.0))
+            .px(px(10.0))
+            .flex()
+            .flex_shrink_0()
+            .items_center()
+            .gap_2()
+            .rounded(px(7.0))
+            .cursor_pointer()
+            .text_sm()
+            .whitespace_nowrap()
+            .map(|this| {
+                if active {
+                    this.bg(rgb(theme::accent_subtle())).text_color(rgb(theme::accent()))
+                } else {
+                    this.text_color(rgb(theme::fg_secondary()))
+                        .hover(|style| style.bg(rgb(theme::bg_hover())).text_color(rgb(theme::fg())))
+                }
+            })
+            .when(!horizontal, |this| this.w_full())
+            .on_click(cx.listener(move |page, _event, window, cx| {
+                // Picking a section ends a search: what was looked for is
+                // now the section on screen.
+                if let Some(input) = &page.search {
+                    input.update(cx, |state, cx| state.set_value("", window, cx));
+                }
+                page.show_section(section, cx);
+            }))
+            .child(Icon::new(Icon::empty()).path(section.icon()).size_4())
+            .child(section.label())
+    }
+
+    fn render_group(&self, group: Group, stacked: bool, cx: &mut Context<Self>) -> Div {
+        let count = group.rows.len();
+        div()
+            .flex()
+            .flex_col()
+            .gap(px(8.0))
+            .when_some(group.title, |this, title| {
+                this.child(
+                    div()
+                        .px(px(4.0))
+                        .text_xs()
+                        .font_weight(gpui::FontWeight::SEMIBOLD)
+                        .text_color(rgb(theme::fg_secondary()))
+                        .child(title),
+                )
+            })
+            .child(
+                div()
+                    .flex()
+                    .flex_col()
+                    .rounded(px(10.0))
+                    .bg(rgb(theme::bg_secondary()))
+                    .border_1()
+                    .border_color(rgb(theme::border()))
+                    .children(group.rows.into_iter().enumerate().map(|(ix, row)| {
+                        self.render_row(row, stacked, ix + 1 < count, cx)
+                    })),
+            )
+    }
+
+    fn render_row(&self, row: Row, stacked: bool, divider: bool, cx: &mut Context<Self>) -> Div {
+        let stacked = stacked || row.wide;
+        let reset = row.reset.map(|pick| {
+            div()
+                .id(ElementId::Name(SharedString::from(format!("reset-{}", row.label))))
+                .size(px(24.0))
+                .flex()
+                .flex_shrink_0()
+                .items_center()
+                .justify_center()
+                .rounded(px(5.0))
+                .cursor_pointer()
+                .text_color(rgb(theme::muted()))
+                .hover(|style| style.bg(rgb(theme::bg_hover())).text_color(rgb(theme::fg())))
+                .tooltip(|window, cx| gpui_component::tooltip::Tooltip::new(t!("Voltar ao padrão")).build(window, cx))
+                .on_click(cx.listener(move |page, _event, _window, cx| page.pick(pick.clone(), cx)))
+                .child(Icon::new(Icon::empty()).path("icons/refresh-cw.svg").size_3())
+        });
+        // Stacked, the reset sits by the name (under it is the control);
+        // side by side, between the text and the control.
+        let (reset_by_label, reset_beside) = if stacked { (reset, None) } else { (None, reset) };
+        let text = div()
+            .flex()
+            .flex_col()
+            .gap(px(3.0))
+            .flex_1()
+            .min_w(px(0.0))
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .gap_1()
+                    .child(div().text_sm().font_weight(gpui::FontWeight::MEDIUM).text_color(rgb(theme::fg())).child(row.label))
+                    // Stacked, the reset sits by the name: under it is the control.
+                    .children(reset_by_label),
+            )
+            .when_some(row.hint, |this, hint| {
+                this.child(div().text_xs().line_height(px(17.0)).text_color(rgb(theme::fg_secondary())).child(hint))
+            });
+        div()
+            .px(px(16.0))
+            .py(px(13.0))
+            .when(divider, |this| this.border_b_1().border_color(rgb(theme::border())))
+            .map(|this| {
+                if stacked {
+                    this.flex().flex_col().gap(px(10.0)).child(text).child(div().child(row.control))
+                } else {
+                    this.flex()
+                        .items_center()
+                        .justify_between()
+                        .gap(px(20.0))
+                        .child(text)
+                        .children(reset_beside)
+                        .child(div().flex_shrink_0().child(row.control))
+                }
+            })
     }
 }
 
-fn section_body(title: &'static str) -> Div {
-    div().flex().flex_col().gap(px(20.0)).child(
+impl SettingsPage {
+    fn render_section(&self, section: SettingsSection, stacked: bool, cx: &mut Context<Self>) -> Div {
+        let groups = self.groups(section, cx);
         div()
-            .text_xl()
-            .font_weight(gpui::FontWeight::SEMIBOLD)
-            .text_color(rgb(theme::fg()))
-            .child(title),
-    )
-}
+            .flex()
+            .flex_col()
+            .gap(px(22.0))
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .gap(px(12.0))
+                    .child(
+                        div()
+                            .size(px(40.0))
+                            .flex()
+                            .flex_shrink_0()
+                            .items_center()
+                            .justify_center()
+                            .rounded(px(10.0))
+                            .bg(rgb(theme::accent_subtle()))
+                            .text_color(rgb(theme::accent()))
+                            .child(Icon::new(Icon::empty()).path(section.icon()).size_5()),
+                    )
+                    .child(
+                        div()
+                            .flex()
+                            .flex_col()
+                            .gap(px(2.0))
+                            .child(
+                                div()
+                                    .text_xl()
+                                    .font_weight(gpui::FontWeight::SEMIBOLD)
+                                    .text_color(rgb(theme::fg()))
+                                    .child(section.label()),
+                            )
+                            .child(div().text_sm().text_color(rgb(theme::fg_secondary())).child(section.description())),
+                    ),
+            )
+            .children(groups.into_iter().map(|group| self.render_group(group, stacked, cx)))
+    }
 
-// A setting: its name and explanation on the left, the control on the right.
-fn setting_row(label: &'static str, hint: Option<&'static str>, control: impl IntoElement) -> Div {
-    div()
-        .flex()
-        .items_start()
-        .justify_between()
-        .gap(px(24.0))
-        .pb(px(16.0))
-        .border_b_1()
-        .border_color(rgb(theme::border()))
-        .child(
+    // Every row whose name, explanation or section matches `query`, under its
+    // section's name.
+    fn render_results(&self, query: &str, stacked: bool, cx: &mut Context<Self>) -> Div {
+        let folded = fold(query);
+        let needle = folded.as_str();
+        let mut found = 0;
+        let mut body = div().flex().flex_col().gap(px(22.0));
+        for section in SettingsSection::ALL {
+            let section_matches =
+                fold(section.label()).contains(needle) || fold(section.description()).contains(needle);
+            let rows: Vec<Row> = self
+                .groups(section, cx)
+                .into_iter()
+                .flat_map(|group| {
+                    let group_matches = group.title.is_some_and(|title| fold(title).contains(needle));
+                    group.rows.into_iter().filter(move |row| {
+                        section_matches
+                            || group_matches
+                            || fold(row.label).contains(needle)
+                            || row.hint.as_ref().is_some_and(|hint| fold(hint).contains(needle))
+                    })
+                })
+                .collect();
+            if rows.is_empty() {
+                continue;
+            }
+            found += rows.len();
+            body = body.child(
+                div()
+                    .flex()
+                    .flex_col()
+                    .gap(px(8.0))
+                    .child(
+                        div()
+                            .id(ElementId::Name(SharedString::from(format!("result-section-{section:?}"))))
+                            .flex()
+                            .items_center()
+                            .gap_2()
+                            .px(px(4.0))
+                            .cursor_pointer()
+                            .text_sm()
+                            .font_weight(gpui::FontWeight::SEMIBOLD)
+                            .text_color(rgb(theme::fg()))
+                            .hover(|style| style.text_color(rgb(theme::accent())))
+                            .on_click(cx.listener(move |page, _event, window, cx| {
+                                if let Some(input) = &page.search {
+                                    input.update(cx, |state, cx| state.set_value("", window, cx));
+                                }
+                                page.show_section(section, cx);
+                            }))
+                            .child(Icon::new(Icon::empty()).path(section.icon()).size_4().text_color(rgb(theme::accent())))
+                            .child(section.label()),
+                    )
+                    .child(self.render_group(Group::new(rows), stacked, cx)),
+            );
+        }
+        if found == 0 {
+            body = body.child(
+                div()
+                    .py(px(40.0))
+                    .flex()
+                    .justify_center()
+                    .text_sm()
+                    .text_color(rgb(theme::fg_secondary()))
+                    .child(tf!("Nenhuma configuração com \"{query}\".", query = query.trim())),
+            );
+        }
+        body
+    }
+
+    fn render_status(&self, cx: &mut Context<Self>) -> Option<Div> {
+        let (message, error) = self.status.clone()?;
+        Some(
             div()
                 .flex()
-                .flex_col()
-                .gap_1()
-                .min_w(px(160.0))
-                .flex_1()
-                .child(div().text_sm().text_color(rgb(theme::fg())).child(label))
-                .when_some(hint, |this, hint| {
-                    this.child(div().text_xs().text_color(rgb(theme::fg_secondary())).child(hint))
-                }),
+                .items_center()
+                .gap_2()
+                .px(px(14.0))
+                .py(px(10.0))
+                .rounded(px(8.0))
+                .border_1()
+                .border_color(rgb(if error { theme::danger() } else { theme::border() }))
+                .bg(rgb(theme::bg_secondary()))
+                .child(
+                    div()
+                        .flex_1()
+                        .text_sm()
+                        .text_color(rgb(if error { theme::danger() } else { theme::fg() }))
+                        .child(message),
+                )
+                .child(
+                    div()
+                        .id("settings-status-close")
+                        .size(px(22.0))
+                        .flex()
+                        .items_center()
+                        .justify_center()
+                        .rounded(px(4.0))
+                        .cursor_pointer()
+                        .text_color(rgb(theme::muted()))
+                        .hover(|style| style.bg(rgb(theme::bg_hover())).text_color(rgb(theme::fg())))
+                        .on_click(cx.listener(|page, _event, _window, cx| {
+                            page.status = None;
+                            cx.notify();
+                        }))
+                        .child(Icon::new(Icon::empty()).path("icons/close.svg").size_3()),
+                ),
         )
-        .child(div().flex_shrink_0().child(control))
+    }
+}
+
+// Lowercase without accents, so "audio" finds "Áudio" and "configuracao"
+// finds "configuração".
+fn fold(text: &str) -> String {
+    text.to_lowercase()
+        .chars()
+        .map(|c| match c {
+            'á' | 'à' | 'â' | 'ã' | 'ä' | 'å' => 'a',
+            'é' | 'è' | 'ê' | 'ë' => 'e',
+            'í' | 'ì' | 'î' | 'ï' => 'i',
+            'ó' | 'ò' | 'ô' | 'õ' | 'ö' => 'o',
+            'ú' | 'ù' | 'û' | 'ü' => 'u',
+            'ç' => 'c',
+            'ñ' => 'n',
+            'ß' => 's',
+            other => other,
+        })
+        .collect()
+}
+
+// A key or key combination drawn as a keycap.
+fn key_cap(keys: &'static str) -> Div {
+    div()
+        .px(px(8.0))
+        .py(px(2.0))
+        .rounded(px(5.0))
+        .bg(rgb(theme::bg()))
+        .border_1()
+        .border_color(rgb(theme::border_hover()))
+        .text_xs()
+        .text_color(rgb(theme::fg()))
+        .whitespace_nowrap()
+        .child(keys)
+}
+
+fn checking() -> Div {
+    div().text_xs().text_color(rgb(theme::fg_secondary())).child(t!("Verificando…"))
+}
+
+// "agora", "há 3 min", "há 2 h", "há 4 dias".
+fn ago(age: std::time::Duration) -> String {
+    let minutes = age.as_secs() / 60;
+    if minutes < 1 {
+        t!("agora mesmo").to_string()
+    } else if minutes < 60 {
+        tf!("há {n} min", n = minutes)
+    } else if minutes < 48 * 60 {
+        tf!("há {n} h", n = minutes / 60)
+    } else {
+        tf!("há {n} dias", n = minutes / (24 * 60))
+    }
 }
 
 fn button(id: &'static str, label: &'static str, danger: bool) -> Stateful<Div> {
@@ -940,55 +1603,106 @@ fn button(id: &'static str, label: &'static str, danger: bool) -> Stateful<Div> 
         .rounded(px(6.0))
         .cursor_pointer()
         .text_sm()
+        .whitespace_nowrap()
         .border_1()
+        .bg(rgb(theme::bg()))
         .map(|this| {
             if danger {
                 this.border_color(rgb(theme::danger())).text_color(rgb(theme::danger()))
             } else {
-                this.border_color(rgb(theme::border())).text_color(rgb(theme::fg()))
+                this.border_color(rgb(theme::border_hover())).text_color(rgb(theme::fg()))
             }
         })
         .hover(|style| style.bg(rgb(theme::bg_hover())))
         .child(label)
 }
 
+/// Window narrower than this puts the sections in a row of tabs on top.
+const NARROW: f32 = 760.0;
+/// Content narrower than this puts each control under its text.
+const STACK: f32 = 620.0;
+const NAV_WIDTH: f32 = 232.0;
+
 impl Render for SettingsPage {
-    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let body = match self.section {
-            SettingsSection::Appearance => self.render_appearance(cx),
-            SettingsSection::Explorer => self.render_explorer(cx),
-            SettingsSection::Shortcuts => self.render_shortcuts(),
-            SettingsSection::About => self.render_about(cx),
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let input = self.search_input(window, cx);
+        let query = input.read(cx).value().to_string();
+        let searching = !query.trim().is_empty();
+        let width = f32::from(window.viewport_size().width);
+        let narrow = width < NARROW;
+        let content_width = if narrow { width } else { width - NAV_WIDTH };
+        let stacked = content_width < STACK;
+
+        let body = if searching {
+            self.render_results(&query, stacked, cx)
+        } else {
+            self.render_section(self.section, stacked, cx)
         };
+        let status = self.render_status(cx);
+
+        let nav = if narrow {
+            div()
+                .w_full()
+                .flex_shrink_0()
+                .flex()
+                .flex_col()
+                .gap_2()
+                .px(px(12.0))
+                .pt(px(10.0))
+                .pb(px(8.0))
+                .border_b_1()
+                .border_color(rgb(theme::border()))
+                .bg(rgb(theme::toolbar_bg()))
+                .child(self.render_search_field(&input))
+                .child(
+                    div()
+                        .id("settings-nav-row")
+                        .w_full()
+                        .flex()
+                        .gap_1()
+                        .overflow_x_scroll()
+                        .children(SettingsSection::ALL.into_iter().map(|section| self.render_nav_item(section, true, cx))),
+                )
+        } else {
+            div()
+                .w(px(NAV_WIDTH))
+                .flex_shrink_0()
+                .h_full()
+                .flex()
+                .flex_col()
+                .gap(px(2.0))
+                .p(px(12.0))
+                .border_r_1()
+                .border_color(rgb(theme::border()))
+                .bg(rgb(theme::toolbar_bg()))
+                // Flex, so the field takes the full width: in a plain block
+                // its `w_full` resolved to its content's width.
+                .child(div().pb(px(10.0)).flex().flex_col().child(self.render_search_field(&input)))
+                .children(SettingsSection::ALL.into_iter().map(|section| self.render_nav_item(section, false, cx)))
+        };
+
         div()
             .size_full()
             .flex()
-            .flex_row()
+            .map(|this| if narrow { this.flex_col() } else { this.flex_row() })
             .bg(rgb(theme::bg()))
-            .child(self.render_nav(cx))
+            .child(nav)
             .child(
                 div()
                     .id("settings-content")
                     .flex_1()
                     .min_w(px(0.0))
-                    .h_full()
+                    .min_h(px(0.0))
                     .overflow_y_scroll()
-                    .px(px(32.0))
+                    .px(px(if narrow { 14.0 } else { 32.0 }))
                     .py(px(24.0))
                     .child(
                         div()
-                            .max_w(px(760.0))
+                            .max_w(px(820.0))
                             .flex()
                             .flex_col()
                             .gap_4()
-                            .when_some(self.status.clone(), |this, (message, error)| {
-                                this.child(
-                                    div()
-                                        .text_sm()
-                                        .text_color(rgb(if error { theme::danger() } else { theme::fg_secondary() }))
-                                        .child(message),
-                                )
-                            })
+                            .children(status)
                             .child(body),
                     ),
             )
@@ -998,5 +1712,14 @@ impl Render for SettingsPage {
 impl crate::Page for SettingsPage {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
         <Self as Render>::render(self, window, cx).into_any_element()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn search_ignores_case_and_accents() {
+        assert_eq!(super::fold("Áudio nos ÍCONES"), "audio nos icones");
+        assert!(super::fold("Configuração").contains(&super::fold("configuracao")));
     }
 }

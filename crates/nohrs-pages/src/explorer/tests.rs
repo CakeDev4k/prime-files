@@ -134,12 +134,17 @@ async fn apply_config_ui_reflects_ui_section(cx: &mut TestAppContext) {
     window
         .update(cx, |page, _window, cx| {
             let ui = config::Ui {
+                language: "auto".to_string(),
                 default_sort: config::SortOrder::Size,
                 default_sort_descending: false,
                 show_hidden: true,
                 icon_pack: "default".to_string(),
                 name_lines: 0,
                 scroll_smoothness: 50,
+                audio_waveforms: false,
+                preview_autoplay: false,
+                hover_audio: false,
+                hover_audio_delay_ms: 400,
             };
             page.apply_config_ui(&ui, cx);
             assert!(page.show_hidden);
@@ -177,12 +182,17 @@ async fn config_reload_keeps_a_sort_chosen_in_the_session(cx: &mut TestAppContex
     window
         .update(cx, |page, _window, cx| {
             let ui = config::Ui {
+                language: "auto".to_string(),
                 default_sort: config::SortOrder::Name,
                 default_sort_descending: false,
                 show_hidden: false,
                 icon_pack: "default".to_string(),
                 name_lines: 0,
                 scroll_smoothness: 50,
+                audio_waveforms: false,
+                preview_autoplay: false,
+                hover_audio: false,
+                hover_audio_delay_ms: 400,
             };
             page.apply_config_ui(&ui, cx);
             page.set_sort(SortKey::Modified, false, cx);
@@ -323,6 +333,78 @@ async fn the_preview_follows_the_arrow_keys_once_they_stop(cx: &mut TestAppConte
             let c = dir.path().join("c.txt").to_string_lossy().into_owned();
             assert_eq!(pane.preview_path.as_deref(), Some(c.as_str()));
             assert_eq!(pane.preview_text.as_deref(), Some("C"));
+        })
+        .unwrap();
+}
+
+// A press on an item the preview lists becomes a drag out only once the
+// pointer has moved past the threshold with the button held, as in the
+// listing; a release before that stays the click that opens the item.
+#[gpui::test]
+async fn a_press_on_a_preview_item_becomes_a_drag_past_the_threshold(cx: &mut TestAppContext) {
+    let window = new_explorer(cx);
+    let moved = |x: f32, y: f32, held: bool| gpui::MouseMoveEvent {
+        position: gpui::point(gpui::px(x), gpui::px(y)),
+        pressed_button: held.then_some(gpui::MouseButton::Left),
+        modifiers: Default::default(),
+    };
+    window
+        .update(cx, |pane, _window, _cx| {
+            let photo = r"C:\pasta\foto.jpg";
+            pane.press_preview_item(photo, gpui::point(gpui::px(100.0), gpui::px(100.0)));
+            assert!(pane.preview_drag_ready(&moved(103.0, 102.0, true)).is_none(), "a tremble is not a drag");
+            assert!(pane.preview_drag.is_some(), "and the press is still there");
+            let dragged = pane.preview_drag_ready(&moved(100.0, 110.0, true)).expect("past the threshold");
+            assert_eq!(dragged.path(), std::path::Path::new(photo));
+            assert!(pane.preview_drag.is_none(), "a drag starts once");
+
+            // The button came up somewhere the release was not seen.
+            pane.press_preview_item(photo, gpui::point(gpui::px(100.0), gpui::px(100.0)));
+            assert!(pane.preview_drag_ready(&moved(130.0, 100.0, false)).is_none());
+            assert!(pane.preview_drag.is_none());
+
+            pane.press_preview_item(photo, gpui::point(gpui::px(100.0), gpui::px(100.0)));
+            pane.release_preview_item();
+            assert!(pane.preview_drag_ready(&moved(130.0, 100.0, true)).is_none(), "released: a click");
+        })
+        .unwrap();
+}
+
+// After a drag out of the folder the preview lists — a move, if it landed in
+// Explorer on the same drive — the listing is read again where it was.
+#[gpui::test]
+async fn the_preview_listing_is_read_again_after_a_drag(cx: &mut TestAppContext) {
+    let dir = tempfile::tempdir().unwrap();
+    let folder = dir.path().join("fotos");
+    std::fs::create_dir(&folder).unwrap();
+    std::fs::write(folder.join("a.jpg"), "a").unwrap();
+    std::fs::write(folder.join("b.jpg"), "b").unwrap();
+    let folder_path = folder.to_string_lossy().into_owned();
+    let window = new_explorer(cx);
+    window
+        .update(cx, |pane, window, cx| pane.open_preview(folder_path.clone(), window, cx))
+        .unwrap();
+    cx.run_until_parked();
+    let names = |pane: &ExplorerPane| -> Vec<String> {
+        pane.preview_listing
+            .as_ref()
+            .map(|listing| listing.items.iter().map(|item| item.name.clone()).collect())
+            .unwrap_or_default()
+    };
+    window
+        .read_with(cx, |pane, _cx| assert_eq!(names(pane), ["a.jpg", "b.jpg"]))
+        .unwrap();
+
+    // Moved away by whoever took the drop.
+    std::fs::remove_file(folder.join("a.jpg")).unwrap();
+    window
+        .update(cx, |pane, _window, cx| pane.refresh_preview_listing(cx))
+        .unwrap();
+    cx.run_until_parked();
+    window
+        .read_with(cx, |pane, _cx| {
+            assert_eq!(names(pane), ["b.jpg"]);
+            assert_eq!(pane.preview_path.as_deref(), Some(folder_path.as_str()), "the same folder, still previewed");
         })
         .unwrap();
 }
@@ -798,12 +880,17 @@ async fn split_pane_inherits_applied_ui_config(cx: &mut TestAppContext) {
     window
         .update(cx, |page, window, cx| {
             let ui = config::Ui {
+                language: "auto".to_string(),
                 default_sort: config::SortOrder::Size,
                 default_sort_descending: false,
                 show_hidden: true,
                 icon_pack: "default".to_string(),
                 name_lines: 0,
                 scroll_smoothness: 50,
+                audio_waveforms: false,
+                preview_autoplay: false,
+                hover_audio: false,
+                hover_audio_delay_ms: 400,
             };
             page.apply_config_ui(&ui, cx);
 
@@ -1981,7 +2068,7 @@ async fn a_rename_runs_off_the_ui_thread(cx: &mut TestAppContext) {
 async fn new_folder_picks_a_unique_name(cx: &mut TestAppContext) {
     let dir = tempfile::tempdir().unwrap();
     let root = dir.path();
-    std::fs::create_dir(root.join("New Folder")).unwrap();
+    std::fs::create_dir(root.join("Nova pasta")).unwrap();
     let (window, pane) = new_explorer_in_root(cx);
     window
         .update(cx, |_root, window, cx| {
@@ -1994,7 +2081,7 @@ async fn new_folder_picks_a_unique_name(cx: &mut TestAppContext) {
         .unwrap();
     cx.run_until_parked();
     assert!(
-        root.join("New Folder (2)").is_dir(),
+        root.join("Nova pasta (2)").is_dir(),
         "a new folder avoids colliding with the existing one"
     );
 }
@@ -2011,7 +2098,7 @@ async fn copy_selection_reports_status(cx: &mut TestAppContext) {
             pane.copy_selection(cx);
             assert_eq!(
                 pane.status_for_footer(),
-                Some(("1 item(s) copied".to_string(), StatusLevel::Info))
+                Some(("1 item copiado".to_string(), StatusLevel::Info))
             );
         })
         .unwrap();
@@ -2142,7 +2229,7 @@ async fn delete_permanent_reports_failure_in_status(cx: &mut TestAppContext) {
         .read_with(cx, |pane, _cx| {
             let (text, level) = pane.status_for_footer().expect("a status was set");
             assert_eq!(level, StatusLevel::Error);
-            assert!(text.contains("1 of 1"), "got: {text}");
+            assert!(text.contains("1 de 1"), "got: {text}");
         })
         .unwrap();
 }
@@ -2168,7 +2255,7 @@ async fn rename_to_invalid_name_reports_error(cx: &mut TestAppContext) {
         .read_with(cx, |pane, _cx| {
             let (text, level) = pane.status_for_footer().expect("a status was set");
             assert_eq!(level, StatusLevel::Error);
-            assert!(text.contains("Rename failed"), "got: {text}");
+            assert!(text.contains("Não foi possível renomear"), "got: {text}");
         })
         .unwrap();
     assert!(root.join("a.txt").exists(), "the original is untouched");
@@ -2628,12 +2715,17 @@ async fn each_folder_opens_with_the_zoom_and_sort_it_was_left_with(cx: &mut Test
     window
         .update(cx, |page, window, cx| {
             let ui = config::Ui {
+                language: "auto".to_string(),
                 default_sort: config::SortOrder::Name,
                 default_sort_descending: true,
                 show_hidden: false,
                 icon_pack: "default".to_string(),
                 name_lines: 0,
                 scroll_smoothness: 50,
+                audio_waveforms: false,
+                preview_autoplay: false,
+                hover_audio: false,
+                hover_audio_delay_ms: 400,
             };
             page.apply_config_ui(&ui, cx);
 

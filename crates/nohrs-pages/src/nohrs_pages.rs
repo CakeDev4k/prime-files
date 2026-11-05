@@ -15,6 +15,9 @@ pub mod file_dialog;
 /// The local channel other programs (a second `nohrs.exe`, the Listary
 /// plugin) reach the running instance through.
 pub mod ipc;
+pub mod listary;
+/// Which language "auto" means on this machine.
+pub mod locale;
 /// A reusable 2-way split/tab container shared across pages.
 pub mod compact;
 pub mod pane_group;
@@ -31,6 +34,8 @@ pub mod s3;
 pub mod settings;
 /// The right-click menu: the Windows context menu with Nohrs's entries.
 pub(crate) mod shell_menu;
+/// The terminal panel under the explorer, one shell per tab.
+pub mod terminal;
 
 pub use root::RootView;
 

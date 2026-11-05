@@ -12,6 +12,7 @@ use std::rc::Rc;
 use std::sync::{Arc, Once};
 use std::time::Duration;
 
+use gpui::prelude::FluentBuilder as _;
 use gpui::*;
 use gpui_component::resizable::ResizableState;
 use nohrs_core::config::{Compact, Explorer as ExplorerConfig, SplitDirection, Ui};
@@ -25,6 +26,7 @@ use serde::{Deserialize, Serialize};
 use super::state::ExplorerPane;
 use super::types::{PaneEvent, StatusLevel};
 use crate::pane_group::{PaneGroup, PaneGroupCallbacks};
+use crate::terminal::{TERMINAL_CONTEXT, TerminalEvent, TerminalView};
 
 // Key context the pane shortcuts are bound under, so they only fire while the
 // explorer (and not another page) is focused.
@@ -38,6 +40,10 @@ const SESSION_KEY: KvKey = kv_key!("session.explorer_tabs");
 // writing the session snapshot, so high-frequency changes don't hammer redb's
 // fsync-on-commit (`docs/persistence.md` §3).
 const SAVE_DEBOUNCE: Duration = Duration::from_millis(500);
+
+const TERMINAL_DEFAULT_HEIGHT: f32 = 260.0;
+const TERMINAL_MIN_HEIGHT: f32 = 80.0;
+const TERMINAL_HEADER_HEIGHT: f32 = 28.0;
 
 /// A persisted snapshot of one pane: its tabs (each a directory) and which is
 /// active.
@@ -76,6 +82,8 @@ actions!(
         CloseTab,
         /// Toggle the active tab's left quick-access sidebar.
         ToggleSidebar,
+        /// Show or hide the terminal of the focused tab.
+        ToggleTerminal,
     ]
 );
 
@@ -110,6 +118,15 @@ fn bind_pane_keys(cx: &mut App) {
             KeyBinding::new("ctrl-w", CloseTab, Some(PANES_CONTEXT)),
             KeyBinding::new("cmd-b", ToggleSidebar, Some(PANES_CONTEXT)),
             KeyBinding::new("ctrl-b", ToggleSidebar, Some(PANES_CONTEXT)),
+            // Ctrl+' is VS Code's spelling on ABNT2, where ` is a dead key.
+            KeyBinding::new("ctrl-`", ToggleTerminal, Some(PANES_CONTEXT)),
+            KeyBinding::new("ctrl-'", ToggleTerminal, Some(PANES_CONTEXT)),
+            // Keys the shell needs more than the explorer does, while typing in
+            // the terminal: Ctrl+B and Ctrl+[ ] \ are readline and escape keys.
+            KeyBinding::new("ctrl-b", NoAction, Some(TERMINAL_CONTEXT)),
+            KeyBinding::new("ctrl-[", NoAction, Some(TERMINAL_CONTEXT)),
+            KeyBinding::new("ctrl-]", NoAction, Some(TERMINAL_CONTEXT)),
+            KeyBinding::new("ctrl-\\", NoAction, Some(TERMINAL_CONTEXT)),
         ]);
     });
 }
@@ -159,6 +176,18 @@ pub struct ExplorerPage {
     // mutation reschedules.
     save_task: Option<Task<()>>,
     focus_handle: FocusHandle,
+    // Each tab's terminals, started the first time the panel shows that tab.
+    terminals: HashMap<EntityId, TerminalSet>,
+    // The pending move of an unused terminal to its tab's folder, replaced
+    // (and so cancelled) by each new navigation.
+    terminal_follow: Option<Task<()>>,
+    terminal_open: bool,
+    terminal_height: Pixels,
+    // Where a drag of the panel's top edge started: pointer y and height.
+    terminal_resize: Option<(Pixels, Pixels)>,
+    // A restarted terminal takes the focus the old one had, on the next
+    // render, which is where the window is at hand.
+    focus_terminal_on_next_render: Option<Entity<TerminalView>>,
 }
 
 impl Focusable for ExplorerPage {
@@ -184,6 +213,7 @@ impl ExplorerPage {
         // Before any tab reads a folder, so the first one already opens as it
         // was left.
         super::folder_views::FolderViews::install(store.clone(), cx);
+        super::waveforms::install_store(store.clone());
         let build_search_service = search_service.clone();
         let (group, first_tab) = PaneGroup::new(
             Box::new(move |window, cx| {
@@ -203,6 +233,12 @@ impl ExplorerPage {
             store,
             save_task: None,
             focus_handle: cx.focus_handle(),
+            terminals: HashMap::new(),
+            terminal_follow: None,
+            terminal_open: false,
+            terminal_height: px(TERMINAL_DEFAULT_HEIGHT),
+            terminal_resize: None,
+            focus_terminal_on_next_render: None,
         };
         page.subscribe_tab(&first_tab, cx);
         // The root pane's tab shows its sidebar; tabs opened later default to
@@ -352,6 +388,7 @@ impl ExplorerPage {
         // Dropping each removed tab's subscription deregisters its event handler.
         for id in &outcome.removed {
             self.tab_subscriptions.remove(id);
+            self.terminals.remove(id);
         }
         self.schedule_save(cx);
         cx.notify();
@@ -440,6 +477,7 @@ impl ExplorerPage {
         }
         for id in &removed {
             self.tab_subscriptions.remove(id);
+            self.terminals.remove(id);
         }
         self.schedule_save(cx);
         cx.notify();
@@ -719,10 +757,358 @@ impl ExplorerPage {
     }
 }
 
+/// One explorer tab's terminals: the panel's own tabs, one shown.
+struct TerminalSet {
+    terminals: Vec<(Entity<TerminalView>, Subscription)>,
+    active: usize,
+}
+
+impl TerminalSet {
+    fn active(&self) -> Option<&Entity<TerminalView>> {
+        self.terminals.get(self.active).or(self.terminals.last()).map(|(terminal, _)| terminal)
+    }
+
+    fn index_of(&self, id: EntityId) -> Option<usize> {
+        self.terminals.iter().position(|(terminal, _)| terminal.entity_id() == id)
+    }
+}
+
+/// How long the folder must stay put before an unused terminal follows it:
+/// arrowing through folders would otherwise start and kill a shell at each.
+const TERMINAL_FOLLOW_DELAY: Duration = Duration::from_millis(350);
+
+impl ExplorerPage {
+    fn toggle_terminal(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.terminal_open = !self.terminal_open;
+        if self.terminal_open {
+            let mut terminal = self.focused_terminal(cx);
+            // Opening shows the tab's folder at once; the follow delay is for
+            // moving through folders with the panel open.
+            let tab = self.group.active_pane().clone();
+            let wanted = terminal_directory(&tab.read(cx).cwd);
+            let view = terminal.read(cx);
+            if !view.is_used() && !view.has_exited() && view.directory() != wanted.as_path() {
+                self.replace_terminal(tab.entity_id(), terminal.entity_id(), false, cx);
+                terminal = self.focused_terminal(cx);
+            }
+            window.focus(&terminal.focus_handle(cx));
+        } else {
+            self.group.focus_active(window, cx);
+        }
+        cx.notify();
+    }
+
+    // The focused tab's shown terminal, started in that tab's folder if it
+    // has none.
+    fn focused_terminal(&mut self, cx: &mut Context<Self>) -> Entity<TerminalView> {
+        let tab = self.group.active_pane().clone();
+        if let Some(terminal) = self.terminals.get(&tab.entity_id()).and_then(TerminalSet::active) {
+            return terminal.clone();
+        }
+        self.add_terminal(&tab, cx)
+    }
+
+    // A new terminal in the tab's folder, shown.
+    fn add_terminal(&mut self, tab: &Entity<ExplorerPane>, cx: &mut Context<Self>) -> Entity<TerminalView> {
+        let (terminal, subscription) = self.spawn_terminal(tab, cx);
+        let set = self
+            .terminals
+            .entry(tab.entity_id())
+            .or_insert_with(|| TerminalSet { terminals: Vec::new(), active: 0 });
+        set.terminals.push((terminal.clone(), subscription));
+        set.active = set.terminals.len() - 1;
+        terminal
+    }
+
+    fn spawn_terminal(
+        &mut self,
+        tab: &Entity<ExplorerPane>,
+        cx: &mut Context<Self>,
+    ) -> (Entity<TerminalView>, Subscription) {
+        let directory = terminal_directory(&tab.read(cx).cwd);
+        let terminal = cx.new(|cx| TerminalView::new(directory, cx));
+        let tab_id = tab.entity_id();
+        let subscription = cx.subscribe(&terminal, move |page: &mut Self, terminal, event, cx| match event {
+            TerminalEvent::RestartRequested => page.replace_terminal(tab_id, terminal.entity_id(), true, cx),
+        });
+        (terminal, subscription)
+    }
+
+    // A new shell in the folder the tab is in now, in place of `terminal_id`.
+    fn replace_terminal(&mut self, tab_id: EntityId, terminal_id: EntityId, take_focus: bool, cx: &mut Context<Self>) {
+        let Some(tab) = self.group.all_tabs().into_iter().find(|tab| tab.entity_id() == tab_id) else {
+            return;
+        };
+        let Some(index) = self.terminals.get(&tab_id).and_then(|set| set.index_of(terminal_id)) else {
+            return;
+        };
+        let replacement = self.spawn_terminal(&tab, cx);
+        let terminal = replacement.0.clone();
+        if let Some(slot) = self.terminals.get_mut(&tab_id).and_then(|set| set.terminals.get_mut(index)) {
+            // Dropping the old view ends its shell.
+            *slot = replacement;
+        }
+        if take_focus {
+            self.focus_terminal_on_next_render = Some(terminal);
+        }
+        cx.notify();
+    }
+
+    fn close_terminal(&mut self, tab_id: EntityId, index: usize, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(set) = self.terminals.get_mut(&tab_id) else {
+            return;
+        };
+        if index < set.terminals.len() {
+            // Dropping the view and its subscription ends the shell.
+            drop(set.terminals.remove(index));
+        }
+        if set.terminals.is_empty() {
+            // The last one closed: the panel goes with it, as in VS Code.
+            self.terminals.remove(&tab_id);
+            self.terminal_open = false;
+            self.group.focus_active(window, cx);
+        } else {
+            set.active = set.active.min(set.terminals.len() - 1);
+            if let Some(terminal) = set.active() {
+                window.focus(&terminal.focus_handle(cx));
+            }
+        }
+        cx.notify();
+    }
+
+    // The shown terminal of the focused tab, if nothing was typed into it and
+    // the tab is now in another folder, moves there: a fresh shell, after the
+    // folder has stayed put a moment. Asked on every render of the panel, so
+    // navigating, switching tabs and opening the panel all land here.
+    fn follow_tab_folder(&mut self, terminal: &Entity<TerminalView>, window: &Window, cx: &mut Context<Self>) {
+        let tab = self.group.active_pane().clone();
+        let wanted = terminal_directory(&tab.read(cx).cwd);
+        let view = terminal.read(cx);
+        if view.is_used() || view.has_exited() || view.directory() == wanted.as_path() {
+            self.terminal_follow = None;
+            return;
+        }
+        if self.terminal_follow.is_some() {
+            return;
+        }
+        let take_focus = terminal.focus_handle(cx).is_focused(window);
+        let (tab_id, terminal_id) = (tab.entity_id(), terminal.entity_id());
+        self.terminal_follow = Some(cx.spawn(async move |this: gpui::WeakEntity<Self>, cx| {
+            cx.background_executor().timer(TERMINAL_FOLLOW_DELAY).await;
+            this.update(cx, |page, cx| {
+                page.terminal_follow = None;
+                // Still the shown one, still unused: a key pressed during the
+                // wait keeps it.
+                let shown = page.terminals.get(&tab_id).and_then(TerminalSet::active).cloned();
+                if shown.is_some_and(|shown| shown.entity_id() == terminal_id && !shown.read(cx).is_used()) {
+                    page.replace_terminal(tab_id, terminal_id, take_focus, cx);
+                }
+            })
+            .log_err();
+        }));
+    }
+
+    // `AnyElement`, not `impl IntoElement`: that would keep `self` and `cx`
+    // borrowed for as long as the element lives.
+    fn render_terminal_panel(&mut self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
+        let terminal = self.focused_terminal(cx);
+        if self.focus_terminal_on_next_render.take().is_some() {
+            window.focus(&terminal.focus_handle(cx));
+        }
+        self.follow_tab_folder(&terminal, window, cx);
+        let tab_id = self.group.active_pane().entity_id();
+        // The folder, not the title the shell sets: PowerShell sets it to
+        // its own executable's path, which says nothing about where it is.
+        let label = terminal.read(cx).directory().display().to_string();
+        let (names, active) = match self.terminals.get(&tab_id) {
+            Some(set) => (
+                set.terminals
+                    .iter()
+                    .map(|(terminal, _)| {
+                        let directory = terminal.read(cx).directory().to_path_buf();
+                        directory
+                            .file_name()
+                            .map(|name| name.to_string_lossy().into_owned())
+                            .unwrap_or_else(|| directory.display().to_string())
+                    })
+                    .collect::<Vec<_>>(),
+                set.active,
+            ),
+            None => (Vec::new(), 0),
+        };
+
+        let tabs = names.into_iter().enumerate().map(|(index, name)| {
+            let shown = index == active;
+            div()
+                .id(("terminal-tab", index))
+                .flex_shrink_0()
+                .h(px(22.0))
+                .pl(px(8.0))
+                .pr(px(4.0))
+                .flex()
+                .items_center()
+                .gap(px(4.0))
+                .rounded(px(4.0))
+                .text_xs()
+                .cursor_pointer()
+                .when(shown, |tab| tab.bg(rgb(theme::bg_hover())).text_color(rgb(theme::fg())))
+                .when(!shown, |tab| {
+                    tab.text_color(rgb(theme::fg_secondary())).hover(|tab| tab.bg(rgb(theme::bg_hover())))
+                })
+                .on_click(cx.listener(move |page, _, window, cx| {
+                    if let Some(set) = page.terminals.get_mut(&tab_id) {
+                        set.active = index;
+                        if let Some(terminal) = set.active() {
+                            window.focus(&terminal.focus_handle(cx));
+                        }
+                    }
+                    cx.notify();
+                }))
+                .child(div().max_w(px(140.0)).whitespace_nowrap().text_ellipsis().overflow_hidden().child(name))
+                .child(
+                    div()
+                        .id(("terminal-tab-close", index))
+                        .p(px(2.0))
+                        .rounded(px(3.0))
+                        .hover(|button| button.bg(rgb(theme::border())))
+                        .on_click(cx.listener(move |page, _, window, cx| {
+                            cx.stop_propagation();
+                            page.close_terminal(tab_id, index, window, cx);
+                        }))
+                        .child(
+                            gpui_component::Icon::new(gpui_component::IconName::Close)
+                                .size_3()
+                                .text_color(rgb(theme::fg_secondary())),
+                        ),
+                )
+        });
+
+        div()
+            .relative()
+            .flex_shrink_0()
+            .h(self.terminal_height)
+            .flex()
+            .flex_col()
+            .border_t_1()
+            .border_color(rgb(theme::border()))
+            .child(
+                div()
+                    .h(px(TERMINAL_HEADER_HEIGHT))
+                    .flex_shrink_0()
+                    .flex()
+                    .items_center()
+                    .justify_between()
+                    .gap(px(8.0))
+                    .px(px(8.0))
+                    .bg(rgb(theme::toolbar_bg()))
+                    .child(
+                        div()
+                            .flex()
+                            .items_center()
+                            .gap(px(4.0))
+                            .min_w(px(0.0))
+                            .overflow_hidden()
+                            .child(
+                                div()
+                                    .flex_shrink_0()
+                                    .mr(px(4.0))
+                                    .text_xs()
+                                    .font_weight(FontWeight::SEMIBOLD)
+                                    .text_color(rgb(theme::fg()))
+                                    .child("Terminal"),
+                            )
+                            .children(tabs)
+                            .child(
+                                // Another shell, in the tab's folder.
+                                div()
+                                    .id("terminal-new")
+                                    .flex_shrink_0()
+                                    .p(px(4.0))
+                                    .rounded(px(4.0))
+                                    .cursor_pointer()
+                                    .hover(|button| button.bg(rgb(theme::bg_hover())))
+                                    .on_click(cx.listener(|page, _, window, cx| {
+                                        let tab = page.group.active_pane().clone();
+                                        let terminal = page.add_terminal(&tab, cx);
+                                        window.focus(&terminal.focus_handle(cx));
+                                        cx.notify();
+                                    }))
+                                    .child(
+                                        gpui_component::Icon::new(gpui_component::IconName::Plus)
+                                            .size_3p5()
+                                            .text_color(rgb(theme::fg_secondary())),
+                                    ),
+                            )
+                            .child(
+                                div()
+                                    .ml(px(4.0))
+                                    .min_w(px(0.0))
+                                    .text_xs()
+                                    .text_color(rgb(theme::fg_secondary()))
+                                    .whitespace_nowrap()
+                                    .text_ellipsis()
+                                    .overflow_hidden()
+                                    .child(label),
+                            ),
+                    )
+                    .child(
+                        div()
+                            .id("terminal-close")
+                            .flex_shrink_0()
+                            .p(px(4.0))
+                            .rounded(px(4.0))
+                            .cursor_pointer()
+                            .hover(|button| button.bg(rgb(theme::bg_hover())))
+                            .on_click(cx.listener(|page, _, window, cx| page.toggle_terminal(window, cx)))
+                            .child(
+                                gpui_component::Icon::new(gpui_component::IconName::Close)
+                                    .size_4()
+                                    .text_color(rgb(theme::fg_secondary())),
+                            ),
+                    ),
+            )
+            .child(div().flex_1().min_h(px(0.0)).child(terminal))
+            .child(
+                // The top edge: drag to change the height, double click for
+                // the default. Last so it lies over the header.
+                div()
+                    .id("terminal-resize")
+                    .absolute()
+                    .left_0()
+                    .right_0()
+                    .top(px(-3.0))
+                    .h(px(6.0))
+                    .cursor_row_resize()
+                    .on_mouse_down(
+                        MouseButton::Left,
+                        cx.listener(|page, event: &MouseDownEvent, _window, cx| {
+                            if event.click_count >= 2 {
+                                page.terminal_height = px(TERMINAL_DEFAULT_HEIGHT);
+                                page.terminal_resize = None;
+                            } else {
+                                page.terminal_resize = Some((event.position.y, page.terminal_height));
+                            }
+                            cx.stop_propagation();
+                            cx.notify();
+                        }),
+                    ),
+            )
+            .into_any_element()
+    }
+}
+
+// The tab's folder when it is one on disk; places like "This PC" or the
+// network have no folder a shell can start in.
+fn terminal_directory(cwd: &str) -> std::path::PathBuf {
+    let path = std::path::PathBuf::from(cwd);
+    if path.is_dir() { path } else { std::path::PathBuf::from(home_dir()) }
+}
+
 impl Render for ExplorerPage {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let callbacks = Self::pane_callbacks();
         let body = self.group.render(window, cx, &callbacks);
+        let terminal_panel = self.terminal_open.then(|| self.render_terminal_panel(window, cx));
 
         div()
             .size_full()
@@ -758,6 +1144,34 @@ impl Render for ExplorerPage {
                 let tab = this.group.active_tab(pane);
                 this.close_tab_in_pane(pane, tab, window, cx);
             }))
+            .on_action(cx.listener(|this, _: &ToggleTerminal, window, cx| {
+                this.toggle_terminal(window, cx);
+            }))
+            .when(self.terminal_resize.is_some(), |this| {
+                this.on_mouse_move(cx.listener(|page, event: &MouseMoveEvent, window, cx| {
+                    let Some((start, height)) = page.terminal_resize else {
+                        return;
+                    };
+                    if event.pressed_button != Some(MouseButton::Left) {
+                        page.terminal_resize = None;
+                        cx.notify();
+                        return;
+                    }
+                    // The list keeps room too.
+                    let limit = (window.viewport_size().height - px(TERMINAL_MIN_HEIGHT * 2.0))
+                        .max(px(TERMINAL_MIN_HEIGHT));
+                    page.terminal_height =
+                        (height + start - event.position.y).clamp(px(TERMINAL_MIN_HEIGHT), limit);
+                    cx.notify();
+                }))
+                .on_mouse_up(
+                    MouseButton::Left,
+                    cx.listener(|page, _: &MouseUpEvent, _window, cx| {
+                        page.terminal_resize = None;
+                        cx.notify();
+                    }),
+                )
+            })
             .on_action(cx.listener(|this, _: &ToggleSidebar, _window, cx| {
                 let pane = this.group.active();
                 let tab_index = this.group.active_tab(pane);
@@ -765,7 +1179,8 @@ impl Render for ExplorerPage {
                     tab.update(cx, |tab, cx| tab.toggle_sidebar(cx));
                 }
             }))
-            .child(body)
+            .child(div().flex_1().min_h(px(0.0)).flex().flex_col().child(body))
+            .children(terminal_panel)
     }
 }
 

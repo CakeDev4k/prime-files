@@ -1,3 +1,5 @@
+use nohrs_core::{t, tf};
+use nohrs_core::i18n;
 use crate::explorer::entries::FolderOrder;
 use crate::explorer::filter::KindFilter;
 use gpui_component::tooltip::Tooltip;
@@ -19,17 +21,24 @@ pub fn render(
 ) -> impl IntoElement + use<> {
     let input = page.quick_input(window, cx);
     let files = page.entries.iter().filter(|entry| entry.kind != "dir").count();
-    let placeholder = if page.quick_recursive {
-        "Buscar nas subpastas…".to_string()
+    let everything = page.everything_on();
+    let placeholder = if everything {
+        // While the index is read or walked, the field says so itself: the
+        // status beside it has no room when the window is split.
+        page.everything_status(cx).unwrap_or_else(|| t!("Buscar em todo o computador…").to_string())
+    } else if page.quick_recursive {
+        t!("Buscar nas subpastas…").to_string()
     } else {
-        format!("Filtrar {files} arquivos…")
+        tf!("Filtrar {files} arquivos…", files = files)
     };
     input.update(cx, |state, cx| state.set_placeholder(placeholder, window, cx));
 
     // Read during render, as the search bar does, so every keystroke narrows
     // the listing or restarts the search.
     let typed = input.read(cx).value().to_string();
-    if page.quick_recursive {
+    if everything {
+        page.search_everything(typed, cx);
+    } else if page.quick_recursive {
         page.search_subfolders(typed, cx);
     } else if typed != page.name_filter {
         page.name_filter = typed;
@@ -38,7 +47,11 @@ pub fn render(
 
     let recursive = page.quick_recursive;
     // A file operation's report, a search's progress, or nothing.
+    let everything_status = page.everything_status(cx);
     let (status, status_color) = match (page.status_for_footer(), &page.deep_search) {
+        (None, _) if everything_status.is_some() => {
+            (everything_status.unwrap_or_default(), theme::fg_secondary())
+        }
         (Some((text, level)), _) => (
             text,
             match level {
@@ -48,9 +61,9 @@ pub fn render(
             },
         ),
         (None, Some(search)) if search.running => {
-            (format!("Buscando… {}", search.found), theme::fg_secondary())
+            (tf!("Buscando… {n}", n = search.found), theme::fg_secondary())
         }
-        (None, Some(search)) => (format!("{} encontrados", search.found), theme::fg_secondary()),
+        (None, Some(search)) => (tf!("{n} encontrados", n = search.found), theme::fg_secondary()),
         (None, None) => (String::new(), theme::fg_secondary()),
     };
 
@@ -107,9 +120,35 @@ pub fn render(
                 .border_1()
                 .border_color(rgb(theme::border()))
                 .child(
-                    Icon::new(IconName::Search)
-                        .size_3()
-                        .text_color(rgb(theme::muted())),
+                    // The glyph is the switch to "Everything" mode: every
+                    // name on the computer instead of this folder's.
+                    div()
+                        .id("quick-bar-everything")
+                        .size(px(20.0))
+                        .ml(px(-6.0))
+                        .flex()
+                        .flex_shrink_0()
+                        .items_center()
+                        .justify_center()
+                        .rounded(px(3.0))
+                        .cursor_pointer()
+                        .when(everything, |button| {
+                            button.bg(rgb(theme::accent())).text_color(rgb(theme::bg()))
+                        })
+                        .when(!everything, |button| {
+                            button
+                                .text_color(rgb(theme::muted()))
+                                .hover(|button| button.bg(rgb(theme::bg_hover())).text_color(rgb(theme::fg())))
+                        })
+                        .tooltip(|window, cx| {
+                            Tooltip::new(t!("Buscar em todo o computador (Ctrl+E)")).build(window, cx)
+                        })
+                        .on_click(cx.listener(|page, _, window, cx| {
+                            let on = !page.everything_on();
+                            page.set_everything(on, cx);
+                            page.focus_quick_input(None, window, cx);
+                        }))
+                        .child(Icon::new(IconName::Search).size_3()),
                 )
                 .child(
                     div().flex_1().min_w(px(0.0)).child(
@@ -159,7 +198,7 @@ pub fn render(
         )
         .when(selected > 0, |bar| {
             bar.child(
-                bar_button("bar-selected", Icon::new(IconName::Check), format!("{selected} selecionados"), false)
+                bar_button("bar-selected", Icon::new(IconName::Check), tf!("{n} selecionados", n = selected), false)
                     // Clicking the count clears the selection.
                     .on_click(cx.listener(|page, _, _, cx| {
                         page.clear_selection();
@@ -168,6 +207,22 @@ pub fn render(
             )
             .child(divider())
         })
+        .child(
+            // Opens or closes the terminal under the explorer, in this tab's
+            // folder: the same action as Ctrl+', which the page above every
+            // tab answers.
+            bar_button(
+                "bar-terminal",
+                Icon::new(Icon::empty()).path(SharedString::from("icons/square-terminal.svg")),
+                String::new(),
+                false,
+            )
+            .tooltip(|window, cx| Tooltip::new("Terminal (Ctrl+')").build(window, cx))
+            .on_click(cx.listener(|_page, _, window, cx| {
+                window.dispatch_action(Box::new(crate::explorer::page::ToggleTerminal), cx);
+            })),
+        )
+        .child(divider())
         .child(
             div()
                 .flex()
@@ -188,9 +243,9 @@ pub fn render(
         .child({
             let order = page.folder_order;
             let (icon, tip) = match order {
-                FolderOrder::First => ("icons/folder-up.svg", "Pastas primeiro, depois arquivos"),
-                FolderOrder::Last => ("icons/folder-down.svg", "Arquivos primeiro, depois pastas"),
-                FolderOrder::Mixed => ("icons/folder.svg", "Pastas e arquivos misturados"),
+                FolderOrder::First => ("icons/folder-up.svg", t!("Pastas primeiro, depois arquivos")),
+                FolderOrder::Last => ("icons/folder-down.svg", t!("Arquivos primeiro, depois pastas")),
+                FolderOrder::Mixed => ("icons/folder.svg", t!("Pastas e arquivos misturados")),
             };
             bar_button(
                 "bar-folder-order",
@@ -199,7 +254,7 @@ pub fn render(
                 false,
             )
             .tooltip(move |window, cx| {
-                Tooltip::new(format!("{tip}. Clique para alternar.")).build(window, cx)
+                Tooltip::new(tf!("{tip}. Clique para alternar.", tip = tip)).build(window, cx)
             })
             .on_click(cx.listener(|page, _, _, cx| {
                 page.folder_order = page.folder_order.next();
@@ -294,7 +349,7 @@ fn render_zoom_switch(
                     cx.notify();
                 }))
                 .child(view_icon(current).size_3p5().text_color(rgb(theme::muted())))
-                .child(current)
+                .child(i18n::tr(current))
                 .child(
                     div()
                         .h_full()
@@ -483,7 +538,7 @@ fn preset_row(
         } else {
             theme::fg_secondary()
         })))
-        .child(name)
+        .child(i18n::tr(name))
 }
 
 // Each view's glyph: a picture for tiles, the shape of the listing otherwise.
@@ -537,6 +592,9 @@ impl ExplorerPane {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if recursive {
+            self.set_everything(false, cx);
+        }
         if self.quick_recursive != recursive {
             self.quick_recursive = recursive;
             if recursive {

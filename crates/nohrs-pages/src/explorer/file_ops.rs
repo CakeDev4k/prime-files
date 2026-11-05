@@ -9,6 +9,8 @@
 //! surfaced to the footer status bar — the aggregated error dialog and progress
 //! UI are tracked separately in #188.
 
+use nohrs_core::{k, t, tf};
+use nohrs_core::i18n;
 use std::collections::VecDeque;
 use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
@@ -120,10 +122,7 @@ fn free_destination(dir: &Path, name: &OsStr) -> Result<PathBuf> {
         return Ok(dst);
     }
     let name = name.to_str().ok_or_else(|| {
-        Error::Other(format!(
-            "{} is taken and its name cannot be numbered",
-            dst.display()
-        ))
+        Error::Other(tf!("{path} já existe e não dá para numerar o nome", path = dst.display()))
     })?;
     ops::destination_in(dir, OsStr::new(&ops::unique_name(dir, name)))
 }
@@ -295,7 +294,7 @@ impl OpReport {
             }
             return (
                 StatusLevel::Error,
-                format!("{} of {total} failed", self.failures.len()),
+                tf!("{failed} de {total} falharam", failed = self.failures.len(), total = total),
             );
         }
         match self.leftovers.as_slice() {
@@ -318,10 +317,12 @@ impl OpReport {
             // as "1 item(s) pasted — 2 left something behind".
             many => (
                 StatusLevel::Warning,
-                format!(
-                    "{success_label} — left something behind in {} places: {}",
-                    many.len(),
-                    many.iter()
+                tf!(
+                    "{done} — sobrou algo em {count} lugares: {places}",
+                    done = success_label,
+                    count = many.len(),
+                    places = many
+                        .iter()
                         .map(|left| left.at.display().to_string())
                         .collect::<Vec<_>>()
                         .join(", "),
@@ -357,10 +358,11 @@ fn apply_to_free_name(mode: ClipMode, src: &Path, dst: &Path) -> Result<Applied>
         return Ok(Applied::Cleanly);
     };
     if failure.leftover() == ops::Leftover::WholeDestination {
-        let message = format!(
-            "{} was copied to {}, but the original could not be fully removed: {failure}",
-            src.display(),
-            dst.display(),
+        let message = tf!(
+            "{source} foi copiado para {destination}, mas o original não pôde ser removido por inteiro: {failure}",
+            source = src.display(),
+            destination = dst.display(),
+            failure = failure,
         );
         // Logged here because a leftover is the one outcome `footer` does not
         // write out: it shows the message once and then drops it, so without
@@ -405,10 +407,10 @@ fn overwrite_apply(mode: ClipMode, src: &Path, dst: &Path) -> Result<Applied> {
         // reports "1 of 1 failed" and the only record of where the original went
         // is a log line.
         if failure.leftover() == ops::Leftover::WholeDestination {
-            let message = format!(
-                "{} could not be cleared after copying it aside; the whole original is at {}",
-                dst.display(),
-                backup.display(),
+            let message = tf!(
+                "{destination} não pôde ser esvaziado depois de copiado à parte; o original inteiro está em {backup}",
+                destination = dst.display(),
+                backup = backup.display(),
             );
             return Err(Error::Other(format!("{failure} — {message}")));
         }
@@ -425,14 +427,15 @@ fn overwrite_apply(mode: ClipMode, src: &Path, dst: &Path) -> Result<Applied> {
             // it from the listing. Litter rather than loss, since replacing it
             // is what the user asked for, but litter that is their own data, so
             // it is named rather than logged and forgotten.
-            let message = format!(
-                // Opening on the scratch path rather than on `{dst} was
-                // replaced, but`, which is how the staging message opens: the
-                // two can be joined, and repeating the clause made the footer
-                // say the same thing twice before getting to either path.
-                "the copy of the original kept at {} could not be removed after replacing {}: {error}",
-                backup.display(),
-                dst.display(),
+            // Opening on the scratch path rather than on `{dst} was
+            // replaced, but`, which is how the staging message opens: the
+            // two can be joined, and repeating the clause made the footer
+            // say the same thing twice before getting to either path.
+            let message = tf!(
+                "a cópia do original guardada em {backup} não pôde ser removida depois de substituir {destination}: {error}",
+                backup = backup.display(),
+                destination = dst.display(),
+                error = error,
             );
             tracing::warn!("{message}");
             return Ok(applied.and(message, backup.clone()));
@@ -446,10 +449,11 @@ fn overwrite_apply(mode: ClipMode, src: &Path, dst: &Path) -> Result<Applied> {
         // there is the rollback's own fragment, and it has to go for the message
         // below — the original is at `backup` — to be the whole truth.
         drop_claimed(&failure, dst);
-        let message = format!(
-            "failed to restore {} after a failed overwrite (original kept at {}): {failure}",
-            dst.display(),
-            backup.display(),
+        let message = tf!(
+            "não foi possível restaurar {destination} depois de uma substituição que falhou (original guardado em {backup}): {failure}",
+            destination = dst.display(),
+            backup = backup.display(),
+            failure = failure,
         );
         // The overwrite's own error is what went wrong first, but this is the
         // one the user has to act on: their original is not at `dst` and not in
@@ -484,10 +488,10 @@ fn build_and_commit(mode: ClipMode, src: &Path, dst: &Path, staged: &Path) -> Re
         // back, and a retry is what the user wants. The scratch path rides along
         // on the error so the batch reports it instead of only the log.
         if failure.leftover() == ops::Leftover::WholeDestination {
-            let message = format!(
-                "{} could not be cleared after copying it aside; the whole copy is at {}",
-                src.display(),
-                staged.display(),
+            let message = tf!(
+                "{source} não pôde ser esvaziado depois de copiado à parte; a cópia inteira está em {copy}",
+                source = src.display(),
+                copy = staged.display(),
             );
             return Err(Error::Other(format!("{failure} — {message}")));
         }
@@ -511,10 +515,11 @@ fn build_and_commit(mode: ClipMode, src: &Path, dst: &Path, staged: &Path) -> Re
         // their file, next to the whole copy. What is left is litter at a
         // scratch path, so the operation stands and says where the litter is.
         if failure.leftover() == ops::Leftover::WholeDestination {
-            let message = format!(
-                "{} was replaced, but the staging copy at {} could not be cleared: {failure}",
-                dst.display(),
-                staged.display(),
+            let message = tf!(
+                "{destination} foi substituído, mas a cópia temporária em {copy} não pôde ser apagada: {failure}",
+                destination = dst.display(),
+                copy = staged.display(),
+                failure = failure,
             );
             tracing::warn!("{message}");
             return Ok(Applied::leftover(message, staged.to_path_buf()));
@@ -650,12 +655,12 @@ impl ExplorerPane {
         // item in the trash would succeed, and it would be a one-way door.
         let ledger = self.trash_ledger.clone();
         if let Err(error) = ledger.to_record() {
-            self.set_status(StatusLevel::Error, format!("Can't move to trash: {error}"));
+            self.set_status(StatusLevel::Error, tf!("Não dá para mandar para a Lixeira: {error}", error = error));
             cx.notify();
             return;
         }
         let total = paths.len();
-        let label = format!("{total} item(s) moved to trash");
+        let label = i18n::plural(total, k!("{n} item enviado para a Lixeira"), k!("{n} itens enviados para a Lixeira"));
         self.run_fs_op(total, label, cx, move || {
             let mut report = OpReport::default();
             // Read in here rather than captured: `to_record` borrows from
@@ -681,7 +686,7 @@ impl ExplorerPane {
 
     pub(crate) fn delete_permanent_paths(&mut self, paths: Vec<String>, cx: &mut Context<Self>) {
         let total = paths.len();
-        let label = format!("{total} item(s) deleted");
+        let label = i18n::plural(total, k!("{n} item excluído"), k!("{n} itens excluídos"));
         self.run_fs_op(total, label, cx, move || {
             let mut report = OpReport::default();
             for path in paths {
@@ -713,11 +718,11 @@ impl ExplorerPane {
         let buffers = paths.iter().map(PathBuf::from).collect();
         ExplorerClipboard::write(Some((mode, buffers)), cx);
         cx.write_to_clipboard(ClipboardItem::new_string(paths.join("\n")));
-        let verb = match mode {
-            ClipMode::Copy => "copied",
-            ClipMode::Cut => "cut",
+        let message = match mode {
+            ClipMode::Copy => i18n::plural(paths.len(), k!("{n} item copiado"), k!("{n} itens copiados")),
+            ClipMode::Cut => i18n::plural(paths.len(), k!("{n} item recortado"), k!("{n} itens recortados")),
         };
-        self.set_status(StatusLevel::Info, format!("{} item(s) {verb}", paths.len()));
+        self.set_status(StatusLevel::Info, message);
         cx.notify();
     }
 
@@ -904,14 +909,11 @@ impl ExplorerPane {
             ExplorerClipboard::begin_cut(cx);
             ExplorerClipboard::write(None, cx)
         });
-        let label = format!(
-            "{total} item(s) {}",
-            if mode == ClipMode::Cut {
-                "moved"
-            } else {
-                "pasted"
-            }
-        );
+        let label = if mode == ClipMode::Cut {
+            i18n::plural(total, k!("{n} item movido"), k!("{n} itens movidos"))
+        } else {
+            i18n::plural(total, k!("{n} item colado"), k!("{n} itens colados"))
+        };
         self.run_fs_op_with(
             total,
             label,
@@ -1135,10 +1137,10 @@ impl ExplorerPane {
                     }
                 }
                 self.reload(cx);
-                self.set_status(StatusLevel::Info, format!("Renamed to {final_name}"));
+                self.set_status(StatusLevel::Info, tf!("Renomeado para {name}", name = final_name));
             }
             Err(error) => {
-                self.set_status(StatusLevel::Error, format!("Rename failed: {error}"));
+                self.set_status(StatusLevel::Error, tf!("Não foi possível renomear: {error}", error = error));
             }
         }
         cx.notify();
@@ -1148,7 +1150,7 @@ impl ExplorerPane {
     /// inline rename of it so the user can name it (§1, §6).
     pub(crate) fn create_new_folder(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let parent = PathBuf::from(&self.cwd);
-        let name = ops::unique_name(&parent, "New Folder");
+        let name = ops::unique_name(&parent, t!("Nova pasta"));
         match ops::create_dir(&parent, &name) {
             Ok(path) => {
                 self.reload(cx);
@@ -1166,7 +1168,7 @@ impl ExplorerPane {
             Err(error) => {
                 self.set_status(
                     StatusLevel::Error,
-                    format!("Couldn't create folder: {error}"),
+                    tf!("Não foi possível criar a pasta: {error}", error = error),
                 );
                 cx.notify();
             }
@@ -1464,13 +1466,13 @@ mod op_report_tests {
         // The two messages both open on "/dst/x was replaced, but", which the
         // footer used to say twice before reaching either path.
         assert!(
-            !text.contains("was replaced, but"),
+            !text.contains("foi substituído, mas"),
             "the sentences are what gets dropped, not the paths: {text}"
         );
         // One item, two leftovers: the count belongs to the places, and saying
         // it against the items read as "1 item(s) pasted — 2 left something
         // behind".
-        assert!(text.contains("in 2 places"), "got: {text}");
+        assert!(text.contains("em 2 lugares"), "got: {text}");
         assert!(text.starts_with("1 item(s) pasted"), "got: {text}");
     }
 
@@ -1488,7 +1490,7 @@ mod op_report_tests {
         report.failed("/src/other: permission denied".into());
         let (level, text) = report.footer(2, "2 item(s) moved");
         assert_eq!(level, StatusLevel::Error);
-        assert_eq!(text, "1 of 2 failed");
+        assert_eq!(text, "1 de 2 falharam");
     }
 }
 

@@ -25,6 +25,8 @@ pub fn render(
     // has to release a folder's thumbnails on leaving it just as the grid does.
     page.thumbnails.show_directory(&page.cwd, cx);
     page.thumbnails.begin_frame(cx);
+    page.waveforms.show_directory(&page.cwd);
+    page.waveforms.begin_frame();
     page.sync_hit_boxes();
 
     let file_list = match page.view_mode {
@@ -33,6 +35,25 @@ pub fn render(
         ViewMode::Grid => grid::render(page, window, cx),
     };
     let file_list = with_wheel_zoom(page, file_list, listing_scrollbar(page), cx);
+
+    // This PC opens on how full each drive is, as Explorer's does.
+    let drives = page
+        .cwd
+        .eq_ignore_ascii_case(crate::explorer::places::THIS_PC)
+        .then(|| drive_cards(page, cx))
+        .flatten();
+    let file_list = match drives {
+        Some(cards) => div()
+            .size_full()
+            .flex()
+            .flex_col()
+            .child(cards)
+            // Flex itself: the listing grows with `flex_1`, which in a
+            // plain block came out zero tall.
+            .child(div().flex_1().min_h(px(0.0)).flex().flex_col().child(file_list))
+            .into_any_element(),
+        None => file_list,
+    };
 
     if page.search_visible {
         div()
@@ -45,6 +66,123 @@ pub fn render(
     } else {
         file_list
     }
+}
+
+/// The drives of This PC as cards: icon, name, a bar of the used space and
+/// "free of total". `None` until the listing holds a drive.
+fn drive_cards(page: &mut ExplorerPane, cx: &mut Context<ExplorerPane>) -> Option<AnyElement> {
+    use nohrs_ui::theme::theme;
+    let drives: Vec<_> = page
+        .entries
+        .iter()
+        .filter(|entry| crate::explorer::drives::drive_root(&entry.path).is_some())
+        .map(|entry| (entry.name.clone(), entry.path.clone()))
+        .collect();
+    if drives.is_empty() {
+        return None;
+    }
+    let cards = drives.into_iter().enumerate().map(|(ix, (name, path))| {
+        let space = crate::explorer::drives::space(&path, cx);
+        let icon = page.thumbnails.icon(&path, true, 32, cx);
+        let opened = path.clone();
+        let menu_path = path.clone();
+        div()
+            .id(("drive-card", ix))
+            .w(px(250.0))
+            .p(px(10.0))
+            .flex()
+            .gap(px(10.0))
+            .items_center()
+            .rounded(px(8.0))
+            .border_1()
+            .border_color(rgb(theme::border()))
+            .bg(rgb(theme::bg_secondary()))
+            .cursor_pointer()
+            .hover(|this| this.bg(rgb(theme::bg_hover())))
+            .on_click(cx.listener(move |pane, _, window, cx| pane.change_dir(opened.clone(), window, cx)))
+            .on_mouse_down(
+                MouseButton::Right,
+                cx.listener(move |pane, event: &MouseDownEvent, window, cx| {
+                    cx.stop_propagation();
+                    if let Some(ix) = pane.filtered_entries.iter().position(|entry| entry.path == menu_path) {
+                        pane.select_single(ix);
+                        pane.open_context_menu(Some(ix), event.modifiers.shift, window, cx);
+                    }
+                }),
+            )
+            .child(match icon {
+                Some(image) => img(ImageSource::Render(image)).size(px(32.0)).flex_shrink_0().into_any_element(),
+                None => gpui_component::Icon::new(gpui_component::Icon::empty()).path("icons/database.svg")
+                    .size(px(28.0))
+                    .text_color(rgb(theme::gray_500()))
+                    .into_any_element(),
+            })
+            .child(
+                div()
+                    .flex_1()
+                    .min_w(px(0.0))
+                    .flex()
+                    .flex_col()
+                    .gap(px(4.0))
+                    .child(
+                        div()
+                            .text_sm()
+                            .text_color(rgb(theme::fg()))
+                            .overflow_hidden()
+                            .text_ellipsis()
+                            .whitespace_nowrap()
+                            .child(name),
+                    )
+                    .child(usage_bar(space, 6.0))
+                    .child(
+                        div()
+                            .text_xs()
+                            .text_color(rgb(theme::fg_secondary()))
+                            .whitespace_nowrap()
+                            .child(space.map(|space| space.describe()).unwrap_or_default()),
+                    ),
+            )
+    });
+    Some(
+        div()
+            .flex_shrink_0()
+            .w_full()
+            .px(px(12.0))
+            .pt(px(10.0))
+            .pb(px(6.0))
+            .flex()
+            .flex_col()
+            .gap(px(8.0))
+            .child(
+                div()
+                    .text_xs()
+                    .font_weight(FontWeight::SEMIBOLD)
+                    .text_color(rgb(theme::fg_secondary()))
+                    .child(nohrs_core::t!("Unidades e armazenamento")),
+            )
+            .child(div().flex().flex_wrap().gap(px(8.0)).children(cards))
+            .into_any_element(),
+    )
+}
+
+/// A bar of a drive's used space: the accent colour, red when nearly full,
+/// empty while the size is not known yet.
+pub(crate) fn usage_bar(space: Option<crate::explorer::drives::Space>, height: f32) -> Div {
+    use nohrs_ui::theme::theme;
+    let (fraction, color) = match space {
+        Some(space) => (
+            space.used_fraction().clamp(0.0, 1.0),
+            if space.nearly_full() { theme::danger() } else { theme::accent() },
+        ),
+        None => (0.0, theme::accent()),
+    };
+    div()
+        .w_full()
+        .h(px(height))
+        .rounded(px(height / 2.0))
+        .bg(rgb(theme::border()))
+        .overflow_hidden()
+        .child(div().h_full().w(relative(fraction)).bg(rgb(color)))
 }
 
 /// Height of a group's header row in the list.
@@ -144,8 +282,16 @@ fn with_wheel_zoom(
         .children(page.marquee_overlay())
         .child(
             canvas(
-                move |bounds, _, _| hit_boxes.set_listing(bounds),
-                move |bounds, _, window, _cx| {
+                move |bounds, window, _| {
+                    hit_boxes.set_listing(bounds);
+                    // The wheel belongs to the listing only where nothing is
+                    // drawn over it: compact mode's sliding bars (sidebar,
+                    // preview) float over the listing, and with the bounds
+                    // alone the listing took their wheel, so they could not
+                    // scroll and the files behind them did.
+                    window.insert_hitbox(bounds, HitboxBehavior::Normal)
+                },
+                move |bounds, wheel_hitbox, window, _cx| {
                     let entity = entity.clone();
                     // The rectangle follows the pointer outside the listing
                     // too (that is how it scrolls), so these listen to the
@@ -178,7 +324,10 @@ fn with_wheel_zoom(
                         }
                     });
                     window.on_mouse_event(move |event: &ScrollWheelEvent, phase, window, cx| {
-                        if phase != DispatchPhase::Capture || !bounds.contains(&event.position) {
+                        if phase != DispatchPhase::Capture
+                            || !bounds.contains(&event.position)
+                            || !wheel_hitbox.is_hovered(window)
+                        {
                             return;
                         }
                         if !event.modifiers.secondary() {

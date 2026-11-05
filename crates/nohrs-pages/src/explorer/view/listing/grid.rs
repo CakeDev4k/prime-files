@@ -257,7 +257,20 @@ fn render_grid_item(
     };
 
     let is_dir = item.kind == "dir";
-    let thumbnail = page.thumbnails.get(&item.path, tile.thumbnail, cx);
+    // A sound file with waveforms on asks for its waveform and, until it
+    // arrives or if it cannot be had, the type's icon: one image shared by
+    // every file of the extension, where the thumbnail would have the Shell
+    // read each file for an icon that is about to be covered.
+    let waveform_wanted =
+        page.audio_waveforms && item.kind == "file" && crate::explorer::waveforms::is_audio(&item.path);
+    let waveform = waveform_wanted
+        .then(|| page.waveforms.get(&item.path, item.size, item.modified, cx))
+        .flatten();
+    let thumbnail = match (waveform_wanted, &waveform) {
+        (_, Some(_)) => None,
+        (true, None) => page.thumbnails.icon(&item.path, false, tile.thumbnail, cx),
+        (false, None) => page.thumbnails.get(&item.path, tile.thumbnail, cx),
+    };
     let activation_item = item.clone();
     let preview_item = item.clone();
 
@@ -277,6 +290,7 @@ fn render_grid_item(
 
     div()
         .id(("grid-tile", ix))
+        .map(|this| page.hover_audio_target(this, &item, cx))
         .relative()
         .flex_shrink_0()
         .w(px(tile.width))
@@ -334,12 +348,13 @@ fn render_grid_item(
                 .flex()
                 .items_center()
                 .justify_center()
-                .child(match thumbnail {
-                    Some(image) => img(ImageSource::Render(image))
+                .child(match (waveform, thumbnail) {
+                    (Some(bars), _) => crate::explorer::waveforms::canvas(bars, tile.icon, selected),
+                    (None, Some(image)) => img(ImageSource::Render(image))
                         .size_full()
                         .object_fit(ObjectFit::Contain)
                         .into_any_element(),
-                    None => Icon::new(icon_name)
+                    (None, None) => Icon::new(icon_name)
                         .size(px((tile.icon * 0.6).max(24.0)))
                         .text_color(rgb(if is_dir {
                             theme::accent()

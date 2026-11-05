@@ -1,6 +1,8 @@
 //! What the preview pane lists for a folder (its contents) and for a zip
 //! archive (the entries inside it), read off the UI thread.
 
+use nohrs_core::{k, t, tf};
+use nohrs_core::i18n;
 use std::path::Path;
 
 use super::entries::SortName;
@@ -21,6 +23,9 @@ pub(crate) struct ListingItem {
     pub size: Option<u64>,
     /// Nesting inside a zip, for indenting; always 0 for a folder.
     pub depth: usize,
+    /// Last change, Unix seconds, for a folder's own files (0 inside an
+    /// archive): with the size, what tells a waveform is still the file's.
+    pub modified: u64,
 }
 
 /// A folder's or an archive's contents, as the preview pane shows them.
@@ -49,6 +54,11 @@ pub(crate) fn read_folder(folder: &Path, show_hidden: bool) -> std::io::Result<P
                 is_dir: metadata.is_dir(),
                 size: (!metadata.is_dir()).then_some(metadata.len()),
                 depth: 0,
+                modified: metadata
+                    .modified()
+                    .ok()
+                    .and_then(|time| time.duration_since(std::time::UNIX_EPOCH).ok())
+                    .map_or(0, |elapsed| elapsed.as_secs()),
                 name,
             })
         })
@@ -61,9 +71,9 @@ pub(crate) fn read_folder(folder: &Path, show_hidden: bool) -> std::io::Result<P
     let folders = items.iter().filter(|item| item.is_dir).count();
     let files = items.len() - folders;
     let summary = if items.is_empty() {
-        "Pasta vazia".to_string()
+        t!("Pasta vazia").to_string()
     } else {
-        format!("{} · {}", count(folders, "pasta", "pastas"), count(files, "arquivo", "arquivos"))
+        format!("{} · {}", count_folders(folders), count_files(files))
     };
     Ok(cap(items, summary))
 }
@@ -271,15 +281,16 @@ fn archive_tree(entries: Vec<(String, bool, u64)>) -> PreviewListing {
             is_dir: *is_dir,
             size: *size,
             depth: path.matches('/').count(),
+            modified: 0,
         })
         .collect();
     let folders = items.iter().filter(|item| item.is_dir).count();
     let files = items.len() - folders;
-    let summary = format!(
-        "{} · {} · {} descompactado",
-        count(folders, "pasta", "pastas"),
-        count(files, "arquivo", "arquivos"),
-        human_size(total)
+    let summary = tf!(
+        "{folders} · {files} · {size} descompactado",
+        folders = count_folders(folders),
+        files = count_files(files),
+        size = human_size(total)
     );
     cap(items, summary)
 }
@@ -321,8 +332,12 @@ fn natural_key(name: &str) -> SortName {
     SortName::new(name)
 }
 
-fn count(n: usize, one: &str, many: &str) -> String {
-    format!("{n} {}", if n == 1 { one } else { many })
+fn count_folders(n: usize) -> String {
+    i18n::plural(n, k!("{n} pasta"), k!("{n} pastas"))
+}
+
+fn count_files(n: usize) -> String {
+    i18n::plural(n, k!("{n} arquivo"), k!("{n} arquivos"))
 }
 
 /// `1.5 MB`, `320 KB`: the size as the listing shows it.

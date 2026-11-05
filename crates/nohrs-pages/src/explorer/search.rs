@@ -1,3 +1,4 @@
+use nohrs_core::{t, tf};
 use super::ExplorerPane;
 use super::types::{SearchFileResult, SearchMatch, StatusLevel};
 use gpui::{AppContext, AsyncApp, Context, Window};
@@ -28,7 +29,7 @@ impl ExplorerPane {
             self.apply_filter();
             self.set_status(
                 StatusLevel::Error,
-                "Search index unavailable; filtering current folder by name only",
+                t!("Índice de busca indisponível; filtrando só pelo nome na pasta atual"),
             );
             cx.notify();
             return;
@@ -82,7 +83,7 @@ impl ExplorerPane {
                                 this.filtered_entries = Vec::new();
                                 this.set_status(
                                     StatusLevel::Error,
-                                    format!("Search failed: {}", error),
+                                    tf!("A busca falhou: {error}", error = error),
                                 );
                             }
                         }

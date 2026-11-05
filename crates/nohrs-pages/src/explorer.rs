@@ -1,10 +1,13 @@
 pub(crate) mod context_menu;
 mod drag;
+pub(crate) mod drives;
 mod entries;
+pub(crate) mod everything;
 pub(crate) mod file_ops;
 mod filter;
 mod folder_views;
 mod grouping;
+mod hover_audio;
 mod list_setup;
 mod marquee;
 mod navigation;
@@ -22,6 +25,7 @@ mod quick_search;
 mod search;
 mod state;
 pub(crate) mod thumbnails;
+pub(crate) mod waveforms;
 mod tree;
 mod types;
 /// Rendering of a single explorer pane: header, sidebar, listing, and preview.

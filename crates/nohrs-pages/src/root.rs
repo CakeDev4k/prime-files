@@ -7,6 +7,7 @@
 //! (search). The binary just opens a window hosting this view; the future
 //! launcher window will be a symmetric root in `nohrs-launcher`.
 
+use nohrs_core::{t, tf};
 use crate::explorer::ExplorerPage;
 use crate::explorer::StatusLevel;
 use crate::{
@@ -146,12 +147,12 @@ impl RootView {
             {
                 announced = true;
                 let message = if updater.read(cx).automatic {
-                    format!("A versão {version} foi baixada e será instalada quando você fechar o Prime Files.")
+                    tf!("A versão {version} foi baixada e será instalada quando você fechar o Prime Files.", version = version)
                 } else {
-                    format!("A versão {version} foi baixada. Instale em Configurações › Sobre.")
+                    tf!("A versão {version} foi baixada. Instale em Configurações › Sobre.", version = version)
                 };
                 window.push_notification(
-                    gpui_component::notification::Notification::info(message).title("Atualização pronta"),
+                    gpui_component::notification::Notification::info(message).title(t!("Atualização pronta")),
                     cx,
                 );
             }
@@ -190,6 +191,12 @@ impl RootView {
             config::ThemeMode::System => GpuiThemeMode::from(window.appearance()),
         };
         crate::explorer::note_theme_mode(config.theme.mode);
+        // Every view reads the language while it renders, so a change only
+        // needs all windows to draw again (the settings page, the menus, the
+        // title bar — not only the explorer this function updates).
+        if nohrs_core::i18n::apply_preference(&config.ui.language) {
+            cx.refresh_windows();
+        }
         // Before `restyle_components`, which reads these tokens.
         theme::set_dark(mode.is_dark());
         theme::set_accent(theme::parse_accent(&config.theme.accent));
@@ -287,7 +294,7 @@ impl RootView {
                     .flex_shrink_0()
                     .text_color(rgb(theme::accent()))
                     .font_weight(gpui::FontWeight::SEMIBOLD)
-                    .child(format!("Choosing for {browser} ({})", dialog.title)),
+                    .child(tf!("Escolhendo para {browser} ({title})", browser = browser, title = dialog.title)),
             )
             .child(
                 div()
@@ -297,7 +304,7 @@ impl RootView {
                     .whitespace_nowrap()
                     .text_ellipsis()
                     .text_color(rgb(theme::fg_secondary()))
-                    .child("Double-click or press Enter on a file to send it. Esc gives the dialog back."),
+                    .child(t!("Duplo clique ou Enter num arquivo para enviá-lo. Esc devolve a janela.")),
             )
             .child(
                 div()
@@ -316,7 +323,7 @@ impl RootView {
                         crate::file_dialog::cancel();
                         cx.notify();
                     }))
-                    .child("Cancel"),
+                    .child(t!("Cancelar")),
             )
     }
 
@@ -516,7 +523,7 @@ impl RootView {
         cx: &mut Context<Self>,
     ) {
         let section = match action.command {
-            AccountMenuCommand::Settings => SettingsSection::Appearance,
+            AccountMenuCommand::Settings => SettingsSection::General,
             AccountMenuCommand::Keymap => SettingsSection::Shortcuts,
             AccountMenuCommand::Themes => SettingsSection::Appearance,
         };
@@ -556,7 +563,7 @@ impl RootView {
                         view.set_page(PageKind::Explorer, cx);
                     }))
                     .child(Icon::new(IconName::ArrowLeft).size_4())
-                    .child("Voltar aos arquivos"),
+                    .child(t!("Voltar aos arquivos")),
             )
             .child(div().flex_1().min_h(px(0.0)).child(page))
             .into_any_element()

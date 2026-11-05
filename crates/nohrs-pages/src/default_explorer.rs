@@ -7,6 +7,7 @@
 //! here. Written through `reg.exe` rather than the registry API so each entry
 //! reads exactly like the line in the `.bat` that a person can check by hand.
 
+use nohrs_core::t;
 use std::io;
 use std::path::Path;
 use std::process::Command;
@@ -63,7 +64,7 @@ pub fn enable(exe: &Path) -> io::Result<()> {
     for class in FOLDER_CLASSES {
         let shell = format!(r"HKCU\Software\Classes\{class}\shell");
         let verb = format!(r"{shell}\{VERB}");
-        reg_ok(&["add", &verb, "/ve", "/d", "Abrir no Prime Files", "/f"])?;
+        reg_ok(&["add", &verb, "/ve", "/d", t!("Abrir no Prime Files"), "/f"])?;
         reg_ok(&["add", &verb, "/v", "Icon", "/d", &quoted, "/f"])?;
         reg_ok(&["add", &format!(r"{verb}\command"), "/ve", "/d", &format!("{quoted} \"%1\""), "/f"])?;
         reg_ok(&["add", &shell, "/ve", "/d", VERB, "/f"])?;

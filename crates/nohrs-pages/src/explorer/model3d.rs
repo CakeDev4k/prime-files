@@ -6,6 +6,7 @@
 //! the size of the pane, redrawn on a worker thread split into bands, keeps
 //! up with a drag on models of a few hundred thousand triangles.
 
+use nohrs_core::t;
 use gpui::{Context, RenderImage, Task};
 use std::sync::Arc;
 
@@ -209,7 +210,7 @@ fn load(path: &str) -> Result<Mesh, String> {
         _ => load_gltf(path)?,
     };
     if mesh.triangles.is_empty() {
-        return Err("O modelo não tem triângulos".to_string());
+        return Err(t!("O modelo não tem triângulos").to_string());
     }
     normalize(&mut mesh.positions);
     Ok(mesh)
@@ -319,8 +320,8 @@ fn load_fbx(path: &str) -> Result<Mesh, String> {
     let file = std::fs::File::open(path).map_err(|error| error.to_string())?;
     let tree = match AnyTree::from_seekable_reader(std::io::BufReader::new(file)) {
         Ok(AnyTree::V7400(_, tree, _)) => tree,
-        Ok(_) => return Err("Versão de FBX não suportada".to_string()),
-        Err(_) => return Err("Só FBX binário é suportado (este parece ser FBX em texto)".to_string()),
+        Ok(_) => return Err(t!("Versão de FBX não suportada").to_string()),
+        Err(_) => return Err(t!("Só FBX binário é suportado (este parece ser FBX em texto)").to_string()),
     };
     let root = tree.root();
     let number = |value: &AttributeValue| match value {

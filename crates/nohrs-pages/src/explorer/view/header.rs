@@ -1,3 +1,5 @@
+use nohrs_core::{k, t};
+use nohrs_core::i18n;
 use super::super::types::ViewMode;
 use crate::explorer::ExplorerPane;
 use gpui::prelude::*;
@@ -16,7 +18,18 @@ pub fn render(
     _window: &mut Window,
     cx: &mut Context<ExplorerPane>,
 ) -> impl IntoElement + use<> {
-    let parts = path_parts(&page.cwd);
+    // This PC is an address, not a path: one crumb with its name. Under a
+    // drive, a crumb for it comes first, as in Explorer, leading back to it.
+    let location = page.location_name();
+    let parts = if location.is_some() { Vec::new() } else { path_parts(&page.cwd) };
+    let under_this_pc = location.is_none() && starts_with_drive(&page.cwd);
+    let this_pc_name = page
+        .sidebar
+        .places
+        .as_ref()
+        .and_then(|places| places.this_pc.as_ref())
+        .map(|place| place.name.clone())
+        .unwrap_or_else(|| i18n::tr(crate::explorer::places::THIS_PC_NAME).to_string());
 
     let (display_parts, is_truncated) = if parts.len() > 5 {
         (parts[(parts.len() - 5)..].to_vec(), true)
@@ -25,6 +38,13 @@ pub fn render(
     };
 
     let mut bc = Breadcrumb::new();
+    if let Some(name) = location {
+        bc = bc.child(BreadcrumbItem::new(name));
+    } else if under_this_pc {
+        bc = bc.child(BreadcrumbItem::new(this_pc_name).on_click(cx.listener(|this, _, window, cx| {
+            this.change_dir(crate::explorer::places::THIS_PC.to_string(), window, cx)
+        })));
+    }
 
     if is_truncated {
         bc = bc.child(BreadcrumbItem::new("…").on_click(cx.listener(move |_this, _, _, _| {})));
@@ -61,6 +81,7 @@ pub fn render(
 
     let can_go_back = page.history_index > 0;
     let can_go_forward = page.history_index + 1 < page.history.len();
+    let can_go_up = crate::explorer::navigation::parent_location(&page.cwd).is_some();
 
     // Store search_visible for use in search toggle style
     let preview_visible = page.preview_visible;
@@ -116,6 +137,36 @@ pub fn render(
                                 .text_color(rgb(theme::gray_600())),
                         ),
                 )
+                // Up and refresh beside back and forward, in Explorer's order.
+                .child(
+                    ListItem::new("nav-up")
+                        .px(px(8.0))
+                        .py(px(6.0))
+                        .rounded(px(6.0))
+                        .when(!can_go_up, |this| this.opacity(0.35))
+                        .when(can_go_up, |this| {
+                            this.on_click(cx.listener(|view, _, window, cx| view.go_up(window, cx)))
+                        })
+                        .child(
+                            Icon::new(Icon::empty())
+                                .path("icons/arrow-up.svg")
+                                .size_4()
+                                .text_color(rgb(theme::gray_600())),
+                        ),
+                )
+                .child(
+                    ListItem::new("nav-refresh")
+                        .px(px(8.0))
+                        .py(px(6.0))
+                        .rounded(px(6.0))
+                        .on_click(cx.listener(|view, _, _, cx| view.reload(cx)))
+                        .child(
+                            Icon::new(Icon::empty())
+                                .path("icons/refresh-cw.svg")
+                                .size_4()
+                                .text_color(rgb(theme::gray_600())),
+                        ),
+                )
                 .child(
                     div()
                         .w(px(1.0))
@@ -148,21 +199,6 @@ pub fn render(
                 .child(bc)
                 .into_any_element(),
         })
-        // Explorer keeps its refresh button at the end of the address bar.
-        .child(
-            ListItem::new("nav-refresh")
-                .flex_shrink_0()
-                .px(px(8.0))
-                .py(px(6.0))
-                .rounded(px(6.0))
-                .on_click(cx.listener(|view, _, _, cx| view.reload(cx)))
-                .child(
-                    Icon::new(Icon::empty())
-                        .path("icons/refresh-cw.svg")
-                        .size_4()
-                        .text_color(rgb(theme::gray_600())),
-                ),
-        )
         .child(
             div()
                 .flex()
@@ -175,7 +211,7 @@ pub fn render(
                         .text_color(rgb(theme::fg_secondary()))
                         .whitespace_nowrap()
                         .mr(px(4.0))
-                        .child(format!("{} items", entry_count)),
+                        .child(i18n::plural(entry_count, k!("{n} item"), k!("{n} itens"))),
                 )
                 .child(render_view_mode_toggle(page, cx))
                 .child(
@@ -224,7 +260,7 @@ fn render_view_mode_toggle(
             ViewMode::List,
             "view-mode-list",
             Icon::new(Icon::empty()).path(SharedString::from("icons/list.svg")),
-            "List",
+            t!("Lista"),
             cx,
         ))
         .child(view_mode_button(
@@ -232,7 +268,7 @@ fn render_view_mode_toggle(
             ViewMode::Grid,
             "view-mode-grid",
             Icon::new(IconName::LayoutDashboard),
-            "Grid",
+            t!("Grade"),
             cx,
         ))
 }
@@ -279,6 +315,12 @@ fn view_mode_button(
         )
 }
 
+// `C:\...`: a path on a lettered drive, which Explorer shows under This PC.
+fn starts_with_drive(path: &str) -> bool {
+    let bytes = path.as_bytes();
+    bytes.len() >= 2 && bytes[0].is_ascii_alphabetic() && bytes[1] == b':'
+}
+
 fn path_parts(path: &str) -> Vec<String> {
     use std::path::Component;
     let mut parts: Vec<String> = Vec::new();
@@ -315,6 +357,18 @@ mod tests {
             path_parts(r"\\server\share\docs"),
             [r"\\server\share\", "docs"]
         );
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn up_goes_to_the_parent_and_from_a_drive_to_this_pc() {
+        use crate::explorer::navigation::parent_location;
+        use crate::explorer::places::THIS_PC;
+        assert_eq!(parent_location(r"C:\Users\ada").as_deref(), Some(r"C:\Users"));
+        assert_eq!(parent_location(r"C:\Users").as_deref(), Some(r"C:\"));
+        assert_eq!(parent_location(r"C:\").as_deref(), Some(THIS_PC));
+        assert_eq!(parent_location(r"d:").as_deref(), Some(THIS_PC));
+        assert_eq!(parent_location(THIS_PC), None);
     }
 
     #[cfg(unix)]

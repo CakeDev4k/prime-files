@@ -5,5 +5,7 @@
 pub mod config;
 /// Crate-wide error and `Result` types.
 pub mod errors;
+/// Interface language: `t!`/`tf!` and the translation table.
+pub mod i18n;
 /// Logging and other telemetry setup.
 pub mod telemetry;

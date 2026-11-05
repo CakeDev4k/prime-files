@@ -160,7 +160,7 @@ impl ExplorerPane {
                 }
             }
         });
-        self.preview_media = Some(MediaPreview {
+        let media = MediaPreview {
             commands,
             frame: None,
             position: 0.0,
@@ -171,7 +171,13 @@ impl ExplorerPane {
             peaks: Arc::default(),
             peak_max: 0.0,
             _task: task,
-        });
+        };
+        // The engine takes Play before the file is open and starts once it
+        // is, so autoplay needs no wait for the first state.
+        if self.preview_autoplay {
+            media.send(Command::Play);
+        }
+        self.preview_media = Some(MediaPreview { playing: self.preview_autoplay, ..media });
         cx.notify();
     }
 
@@ -369,7 +375,7 @@ mod platform {
                     // 0.61 hands the extended code back as a `Result`, the
                     // failure HRESULT riding in its `Err`.
                     windows::core::HRESULT::from(unsafe { error.GetExtendedErrorCode() }),
-                    "Windows não consegue reproduzir este arquivo",
+                    nohrs_core::t!("Windows não consegue reproduzir este arquivo"),
                 ));
             }
             let has_video = unsafe { engine.HasVideo() }.as_bool();

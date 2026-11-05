@@ -243,6 +243,9 @@ pub struct ExplorerPane {
     pub(crate) path_edit: Option<super::path_edit::PathEditState>,
     /// A left press on an entry that may become a drag.
     pub(crate) drag_candidate: Option<super::drag::DragCandidate>,
+    /// A left press on an item the preview lists (a folder's contents) that
+    /// may become a drag out.
+    pub(crate) preview_drag: Option<super::drag::PreviewDragCandidate>,
     /// A selection rectangle being dragged over the listing (`marquee.rs`).
     pub(crate) marquee: Option<super::marquee::Marquee>,
     /// Where each entry was painted, for the rectangle's hit test.
@@ -305,6 +308,15 @@ pub struct ExplorerPane {
     pub(crate) name_filter_input: Option<Entity<InputState>>,
     /// Thumbnails of the directory on screen.
     pub(crate) thumbnails: super::thumbnails::Thumbnails,
+    /// Waveforms of the sound files in the icons view (`ui.audio_waveforms`).
+    pub(crate) waveforms: super::waveforms::Waveforms,
+    pub(crate) audio_waveforms: bool,
+    /// Whether media opened in the preview starts playing (`ui.preview_autoplay`).
+    pub(crate) preview_autoplay: bool,
+    /// The sound file the mouse rests on, playing or about to (`ui.hover_audio`).
+    pub(crate) hover_audio: Option<super::hover_audio::HoverAudio>,
+    pub(crate) hover_audio_enabled: bool,
+    pub(crate) hover_audio_delay_ms: u32,
     /// The context menu on screen, if any.
     pub(crate) context_menu: Option<super::context_menu::OpenMenu>,
     /// Whether the preview pane is shown (the bottom bar's panel button).
@@ -320,6 +332,8 @@ pub struct ExplorerPane {
     pub(crate) hit_folders: std::collections::HashMap<String, String>,
     /// The subfolder search in progress or last finished.
     pub(crate) deep_search: Option<super::quick_search::DeepSearch>,
+    /// The bar searches the whole computer ("Everything" mode) when set.
+    pub(crate) everything: Option<super::everything::EverythingMode>,
     /// Decoded frames of the GIF playing in the preview, and which one it is.
     pub(crate) gif_cache: Option<(String, Entity<gpui::RetainAllImageCache>)>,
     /// The `[compact]` settings, handed over by the pane group each render.
@@ -357,6 +371,9 @@ impl EventEmitter<PaneEvent> for ExplorerPane {}
 
 impl crate::pane_group::PaneItem for ExplorerPane {
     fn tab_title(&self, _cx: &gpui::App) -> String {
+        if let Some(name) = self.location_name() {
+            return name;
+        }
         std::path::Path::new(&self.cwd)
             .file_name()
             .map(|name| name.to_string_lossy().to_string())
@@ -510,6 +527,7 @@ impl ExplorerPane {
             renaming: None,
             path_edit: None,
             drag_candidate: None,
+            preview_drag: None,
             marquee: None,
             hit_boxes: Default::default(),
             paste_plan: None,
@@ -534,12 +552,19 @@ impl ExplorerPane {
             name_filter: String::new(),
             name_filter_input: None,
             thumbnails: Default::default(),
+            waveforms: Default::default(),
+            audio_waveforms: false,
+            preview_autoplay: false,
+            hover_audio: None,
+            hover_audio_enabled: true,
+            hover_audio_delay_ms: 400,
             context_menu: None,
             preview_visible: true,
             zoom_menu_open: false,
             zoom_dragging: false,
             quick_recursive: false,
             deep_search: None,
+            everything: None,
             hit_folders: Default::default(),
             gif_cache: None,
             compact: Default::default(),
@@ -1129,6 +1154,17 @@ impl ExplorerPane {
             changed = true;
         }
         self.scroll_smoothness = ui.scroll_smoothness;
+        self.preview_autoplay = ui.preview_autoplay;
+        self.hover_audio_delay_ms = ui.hover_audio_delay_ms;
+        if self.hover_audio_enabled != ui.hover_audio {
+            self.hover_audio_enabled = ui.hover_audio;
+            self.end_hover_audio();
+            cx.notify();
+        }
+        if self.audio_waveforms != ui.audio_waveforms {
+            self.audio_waveforms = ui.audio_waveforms;
+            cx.notify();
+        }
         if self.name_lines != ui.name_lines {
             self.name_lines = ui.name_lines;
             // Every tile row's height follows its longest name.

@@ -1,3 +1,4 @@
+use nohrs_core::t;
 use nohrs_core::config;
 use nohrs_ui::components::file_list::FileListDelegate;
 
@@ -148,9 +149,9 @@ impl ExplorerPane {
             })
             .max()
             .unwrap_or(0);
-        let heading = ["Name", "Type", "Size", "Modified"]
+        let heading = [t!("Nome"), t!("Tipo"), t!("Tamanho"), t!("Modificado")]
             .get(column)
-            .map_or(0, |label| label.len() + 2);
+            .map_or(0, |label| label.chars().count() + 2);
         let indent = if column == 0 { view_name_indent() } else { 0.0 };
         let fitted = (indent + widest.max(heading) as f32 * GLYPH + PADDING)
             .clamp(config::MIN_COLUMN_WIDTH, 900.0);

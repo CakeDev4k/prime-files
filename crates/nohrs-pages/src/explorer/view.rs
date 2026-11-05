@@ -103,6 +103,19 @@ pub fn render(
                 cx.stop_propagation();
                 return;
             }
+            if key_lc == "e" && with_modifier && !modifiers.shift {
+                let on = !this.everything_on();
+                this.set_everything(on, cx);
+                this.focus_quick_input(None, window, cx);
+                cx.stop_propagation();
+                return;
+            }
+            // Esc with nothing typed leaves the whole-computer search.
+            if key_lc == "escape" && this.everything_on() && this.deep_search.is_none() {
+                this.set_everything(false, cx);
+                cx.stop_propagation();
+                return;
+            }
             let quick_bar_active = this.deep_search.is_some() || !this.name_filter.is_empty();
             if key_lc == "escape" && quick_bar_active {
                 this.clear_quick_input(window, cx);
@@ -127,6 +140,11 @@ pub fn render(
             // event; anything unmatched falls through to the selection model below.
             let shift = modifiers.shift;
             match key_lc.as_str() {
+                "up" if modifiers.alt => {
+                    this.go_up(window, cx);
+                    cx.stop_propagation();
+                    return;
+                }
                 "delete" if shift => {
                     this.request_permanent_delete(window, cx);
                     cx.stop_propagation();
@@ -757,7 +775,7 @@ fn compact_chrome(
         .name_filter_input
         .as_ref()
         .is_some_and(|input| input.read(cx).focus_handle(cx).is_focused(window));
-    let filtering = filter_focused || page.quick_recursive || !page.name_filter.is_empty();
+    let filtering = filter_focused || page.quick_recursive || page.everything_on() || !page.name_filter.is_empty();
 
     let mut frame = false;
     if let Some(top) = &page.top_reveal {

@@ -15,6 +15,7 @@
 //! and later; the installer asks for 1903), which handles TLS, proxies and
 //! redirects the way the system does, instead of adding an HTTP stack.
 
+use nohrs_core::{t, tf};
 use std::io;
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -167,7 +168,7 @@ fn file_hash(path: &Path) -> io::Result<String> {
 fn check_and_download(on_progress: &dyn Fn(Status)) -> Result<Option<(Version, PathBuf)>, String> {
     let latest = fetch(&format!("https://api.github.com/repos/{REPOSITORY}/releases/latest"))?;
     let Some(release) = parse_release(&latest) else {
-        return Err("a última release não tem o instalador ou o SHA256SUMS.txt".into());
+        return Err(t!("a última release não tem o instalador ou o SHA256SUMS.txt").into());
     };
     if release.version <= current_version() {
         return Ok(None);
@@ -176,7 +177,7 @@ fn check_and_download(on_progress: &dyn Fn(Status)) -> Result<Option<(Version, P
 
     let sums = String::from_utf8_lossy(&fetch(&release.sums_url)?).to_string();
     let Some(expected) = listed_hash(&sums, &release.installer_name) else {
-        return Err(format!("{} não está no {SUMS_NAME}", release.installer_name));
+        return Err(tf!("{installer} não está no {sums}", installer = release.installer_name, sums = SUMS_NAME));
     };
     let folder = std::env::temp_dir().join("PrimeFiles-Update");
     std::fs::create_dir_all(&folder).map_err(|error| error.to_string())?;
@@ -190,7 +191,7 @@ fn check_and_download(on_progress: &dyn Fn(Status)) -> Result<Option<(Version, P
             if let Err(error) = std::fs::remove_file(&partial) {
                 tracing::warn!("could not delete the bad download {}: {error}", partial.display());
             }
-            return Err(format!("o instalador baixado não confere com o {SUMS_NAME}"));
+            return Err(tf!("o instalador baixado não confere com o {sums}", sums = SUMS_NAME));
         }
         std::fs::rename(&partial, &installer).map_err(|error| error.to_string())?;
     }
@@ -330,7 +331,7 @@ impl Updater {
         match run_installer(installer, true) {
             Ok(()) => cx.quit(),
             Err(error) => {
-                self.status = Status::Failed(format!("não foi possível abrir o instalador: {error}"));
+                self.status = Status::Failed(tf!("não foi possível abrir o instalador: {error}", error = error));
                 cx.notify();
             }
         }

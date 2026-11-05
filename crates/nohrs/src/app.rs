@@ -48,6 +48,10 @@ impl NohrsApp {
         }
         let config_error = config::report_diagnostics(&diagnostics);
 
+        // Before any window draws a word: "auto" needs to know the answer.
+        nohrs_pages::locale::detect_and_record();
+        nohrs_core::i18n::apply_preference(&config.ui.language);
+
         // GPUI drives the app (replacing `#[tokio::main]`; ADR 0004, async-runtime.md
         // §7). The search service is now tokio-free — its file watcher and progress
         // channels run on std threads and runtime-agnostic channels — so no async

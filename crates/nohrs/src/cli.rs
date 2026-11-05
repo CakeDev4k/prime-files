@@ -43,6 +43,10 @@ pub enum Command {
     },
     /// Open the launcher window on its own, without the explorer.
     Launcher,
+    /// Gives Listary's folders back to Explorer if they open here. Run by the
+    /// uninstaller, which cannot edit Listary's JSON itself.
+    #[command(hide = true)]
+    ForgetListary,
 }
 
 #[derive(Subcommand, Debug)]

@@ -1,3 +1,4 @@
+use nohrs_core::t;
 use crate::explorer::ExplorerPane;
 use crate::explorer::places::{Place, THIS_PC};
 use gpui::prelude::*;
@@ -35,7 +36,7 @@ pub fn render(
     );
 
     let this_pc = places.this_pc.clone().unwrap_or_else(|| Place {
-        name: "This PC".to_string(),
+        name: t!("Este Computador").to_string(),
         path: None,
         parsing_name: THIS_PC.to_string(),
         pinned: false,
@@ -147,6 +148,7 @@ fn row(
     };
     let opened = place.clone();
     let menu = place.clone();
+    let drive_space = place.path.as_deref().and_then(|path| crate::explorer::drives::space(path, cx));
     div()
         .id(SharedString::from(format!("place-{depth}-{}", place.parsing_name)))
         .w_full()
@@ -181,6 +183,20 @@ fn row(
                 .text_color(rgb(theme::fg()))
                 .child(place.name.clone()),
         )
+        .when_some(drive_space, |this, space| {
+            // How full the drive is, beside its name: a glance at C: and D:
+            // without opening This PC.
+            this.child(
+                div()
+                    .id(SharedString::from(format!("drive-space-{}", place.parsing_name)))
+                    .w(px(34.0))
+                    .flex_shrink_0()
+                    .child(crate::explorer::view::listing::usage_bar(Some(space), 4.0))
+                    .tooltip(move |window, cx| {
+                        gpui_component::tooltip::Tooltip::new(space.describe()).build(window, cx)
+                    }),
+            )
+        })
         .when(place.pinned, |this| {
             this.child(
                 Icon::new(Icon::empty())

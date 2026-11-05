@@ -1,3 +1,4 @@
+use nohrs_core::t;
 use crate::theme::theme;
 use gpui::{ParentElement, Styled, Window, div, px, rgb};
 use gpui_component::list::{ListDelegate, ListItem, ListState};
@@ -232,7 +233,7 @@ pub fn format_date(timestamp: &u64) -> String {
 /// Derive a human-readable type label from an entry's name and kind (e.g. `Folder`, `PNG`, `Link`).
 pub fn get_file_type(name: &str, kind: &str) -> String {
     match kind {
-        "dir" => "Folder".to_string(),
+        "dir" => t!("Pasta").to_string(),
         "file" => {
             if let Some(ext) = std::path::Path::new(name)
                 .extension()
@@ -240,10 +241,10 @@ pub fn get_file_type(name: &str, kind: &str) -> String {
             {
                 ext.to_uppercase()
             } else {
-                "File".to_string()
+                t!("Arquivo").to_string()
             }
         }
-        "symlink" => "Link".to_string(),
+        "symlink" => t!("Atalho").to_string(),
         other => other.to_string(),
     }
 }
@@ -314,9 +315,9 @@ mod tests {
     #[test]
     fn get_file_type_maps_kinds_and_extensions() {
         assert_eq!(get_file_type("photo.png", "file"), "PNG");
-        assert_eq!(get_file_type("Makefile", "file"), "File");
-        assert_eq!(get_file_type("src", "dir"), "Folder");
-        assert_eq!(get_file_type("link", "symlink"), "Link");
+        assert_eq!(get_file_type("Makefile", "file"), "Arquivo");
+        assert_eq!(get_file_type("src", "dir"), "Pasta");
+        assert_eq!(get_file_type("link", "symlink"), "Atalho");
     }
 
     #[test]

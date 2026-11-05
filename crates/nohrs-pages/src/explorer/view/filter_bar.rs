@@ -1,3 +1,4 @@
+use nohrs_core::tf;
 use crate::explorer::ExplorerPane;
 use crate::explorer::filter::KindFilter;
 use gpui::prelude::*;
@@ -76,7 +77,7 @@ pub fn render(
                 .text_xs()
                 .text_color(rgb(theme::muted()))
                 .whitespace_nowrap()
-                .child(format!("{shown} of {total}")),
+                .child(tf!("{shown} de {total}", shown = shown, total = total)),
         )
         .child(
             div()

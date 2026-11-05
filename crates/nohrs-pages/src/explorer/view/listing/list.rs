@@ -1,3 +1,4 @@
+use nohrs_core::t;
 use super::row;
 use crate::explorer::ExplorerPane;
 use crate::explorer::grouping::{self, ListRow};
@@ -184,7 +185,7 @@ fn render_header_row(
                 .h_full()
                 .child(render_resizable_column_header(
                     page,
-                    "Name",
+                    t!("Nome"),
                     SortKey::Name,
                     0,
                     col_name,
@@ -192,7 +193,7 @@ fn render_header_row(
                 ))
                 .child(render_resizable_column_header(
                     page,
-                    "Type",
+                    t!("Tipo"),
                     SortKey::Type,
                     1,
                     col_type,
@@ -200,7 +201,7 @@ fn render_header_row(
                 ))
                 .child(render_resizable_column_header(
                     page,
-                    "Size",
+                    t!("Tamanho"),
                     SortKey::Size,
                     2,
                     col_size,
@@ -208,7 +209,7 @@ fn render_header_row(
                 ))
                 .child(render_resizable_column_header(
                     page,
-                    "Modified",
+                    t!("Modificado"),
                     SortKey::Modified,
                     3,
                     col_modified,

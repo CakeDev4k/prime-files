@@ -1,3 +1,4 @@
+use nohrs_core::tf;
 use nohrs_core::config;
 use nohrs_services::fs::listing::{FileEntryDto, ListParams, list_dir_sync};
 
@@ -48,7 +49,25 @@ struct RefreshExtras {
     preview: Option<String>,
 }
 
+/// Where "up" leads from `path`, as in Explorer: the parent folder, and
+/// This PC from a drive's root. `None` at This PC itself and at a root with
+/// nothing above it (a network share).
+pub(crate) fn parent_location(path: &str) -> Option<String> {
+    if path.eq_ignore_ascii_case(super::places::THIS_PC) {
+        return None;
+    }
+    let bytes = path.trim_end_matches(['\\', '/']).as_bytes();
+    if bytes.len() == 2 && bytes[0].is_ascii_alphabetic() && bytes[1] == b':' {
+        return Some(super::places::THIS_PC.to_string());
+    }
+    std::path::Path::new(path).parent().map(|parent| parent.to_string_lossy().into_owned())
+}
+
 fn read_folder(path: &str) -> Listing {
+    // Not a folder on disk: the Shell says what it holds.
+    if path.eq_ignore_ascii_case(super::places::THIS_PC) {
+        return Ok(super::places::this_pc_entries());
+    }
     list_dir_sync(ListParams {
         path,
         limit: config::DIR_LISTING_LIMIT,
@@ -145,6 +164,7 @@ impl ExplorerPane {
     }
 
     pub(crate) fn reload(&mut self, cx: &mut Context<Self>) {
+        self.end_hover_audio();
         // Mark as loaded regardless of outcome so an empty or unreadable
         // directory is not re-read on every subsequent render.
         self.loaded = true;
@@ -311,6 +331,9 @@ impl ExplorerPane {
         self.cancel_rename(window, cx);
         self.close_search(window, cx);
         self.clear_name_filter();
+        // A folder opened from a search of the whole computer is where the
+        // person wanted to go: the folder shows, not the search.
+        self.set_everything(false, cx);
         self.tree.reset();
         self.push_history(path.clone());
         self.cwd = path;
@@ -373,6 +396,15 @@ impl ExplorerPane {
         }
     }
 
+    /// Goes to the folder that holds this one (Alt+Up, the arrow beside
+    /// back and forward).
+    pub(crate) fn go_up(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(parent) = parent_location(&self.cwd) else {
+            return;
+        };
+        self.change_dir(parent, window, cx);
+    }
+
     pub(crate) fn go_forward(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if self.history_index + 1 < self.history.len() {
             self.history_index += 1;
@@ -428,7 +460,7 @@ impl ExplorerPane {
         // without a shell in between to misread `&` or `^` in the name.
         #[cfg(not(test))]
         if let Err(error) = std::process::Command::new("explorer.exe").arg(path).spawn() {
-            self.set_status(StatusLevel::Error, format!("Could not open {path}: {error}"));
+            self.set_status(StatusLevel::Error, tf!("Não foi possível abrir {path}: {error}", path = path, error = error));
         }
     }
 }

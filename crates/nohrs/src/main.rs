@@ -30,6 +30,18 @@ fn main() {
         std::process::exit(cli::run_config_command(action, &cli));
     }
 
+    if let Some(cli::Command::ForgetListary) = &cli.command {
+        nohrs_core::telemetry::logging::init_logging();
+        let code = match nohrs_pages::listary::disable() {
+            Ok(()) => 0,
+            Err(error) => {
+                tracing::error!("could not give Listary's folders back to Explorer: {error}");
+                1
+            }
+        };
+        std::process::exit(code);
+    }
+
     // One window per user: a running instance takes the path (or just comes
     // forward), which is what Listary and "Open with" expect of a file
     // manager. Only when nobody answers does this process open a window.

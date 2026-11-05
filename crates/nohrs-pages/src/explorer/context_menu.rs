@@ -1,3 +1,4 @@
+use nohrs_core::{t, tf};
 use std::sync::Mutex;
 
 use gpui::{AppContext as _, AsyncWindowContext, Context, Pixels, Point, WeakEntity, Window};
@@ -200,7 +201,7 @@ impl ExplorerPane {
     // Nohrs's entries for a listing menu: the view and sort submenus on the
     // folder's empty space, "Show more options" on files.
     fn listing_entries(&self, purpose: &MenuPurpose, cx: &mut Context<Self>) -> Vec<Entry> {
-        let more = Entry::command(Command::MoreOptions as u32, "Mostrar mais opções")
+        let more = Entry::command(Command::MoreOptions as u32, t!("Mostrar mais opções"))
             .with_icon("icons/ellipsis.svg")
             .with_shortcut("Shift+F10");
         match purpose {
@@ -437,18 +438,18 @@ impl ExplorerPane {
             return;
         };
         let own = vec![
-            Entry::command(Command::FitColumn as u32, "Ajustar coluna ao conteúdo")
+            Entry::command(Command::FitColumn as u32, t!("Ajustar coluna ao conteúdo"))
                 .with_icon("icons/columns.svg")
                 .enabled(column.is_some_and(|column| self.column_visible(column))),
-            Entry::command(Command::FitAllColumns as u32, "Ajustar todas as colunas ao conteúdo")
+            Entry::command(Command::FitAllColumns as u32, t!("Ajustar todas as colunas ao conteúdo"))
                 .with_icon("icons/table.svg"),
             Entry::Separator,
-            Entry::check(Command::ColumnName as u32, "Nome", true).enabled(false),
-            Entry::check(Command::ColumnType as u32, "Tipo", self.column_visible(1)),
-            Entry::check(Command::ColumnSize as u32, "Tamanho", self.column_visible(2)),
+            Entry::check(Command::ColumnName as u32, t!("Nome"), true).enabled(false),
+            Entry::check(Command::ColumnType as u32, t!("Tipo"), self.column_visible(1)),
+            Entry::check(Command::ColumnSize as u32, t!("Tamanho"), self.column_visible(2)),
             Entry::check(
                 Command::ColumnModified as u32,
-                "Data de modificação",
+                t!("Data de modificação"),
                 self.column_visible(3),
             ),
         ];
@@ -494,47 +495,47 @@ impl ExplorerPane {
         let group = |command, label, by| Entry::radio(command as u32, label, self.group_by == by);
         vec![
             Entry::submenu(
-                "Exibir",
+                t!("Exibir"),
                 vec![
                     Entry::radio(
                         Command::ViewGrid as u32,
-                        "Ícones",
+                        t!("Ícones"),
                         self.view_mode == ViewMode::Grid,
                     ),
                     Entry::radio(
                         Command::ViewCompact as u32,
-                        "Lista",
+                        t!("Lista"),
                         self.view_mode == ViewMode::Compact,
                     ),
                     Entry::radio(
                         Command::ViewTree as u32,
-                        "Árvore",
+                        t!("Árvore"),
                         self.view_mode == ViewMode::Tree,
                     ),
                     Entry::radio(
                         Command::ViewList as u32,
-                        "Detalhes",
+                        t!("Detalhes"),
                         self.view_mode == ViewMode::List,
                     ),
                     Entry::Separator,
-                    Entry::check(Command::ToggleHidden as u32, "Itens ocultos", self.show_hidden),
+                    Entry::check(Command::ToggleHidden as u32, t!("Itens ocultos"), self.show_hidden),
                     Entry::Separator,
                     Entry::submenu(
-                        "Tema",
+                        t!("Tema"),
                         vec![
                             Entry::radio(
                                 Command::ThemeDark as u32,
-                                "Escuro",
+                                t!("Escuro"),
                                 theme == ThemeMode::Dark,
                             ),
                             Entry::radio(
                                 Command::ThemeLight as u32,
-                                "Claro",
+                                t!("Claro"),
                                 theme == ThemeMode::Light,
                             ),
                             Entry::radio(
                                 Command::ThemeSystem as u32,
-                                "Igual ao Windows",
+                                t!("Igual ao Windows"),
                                 theme == ThemeMode::System,
                             ),
                         ],
@@ -544,38 +545,38 @@ impl ExplorerPane {
             )
             .with_icon("icons/eye.svg"),
             Entry::submenu(
-                "Classificar por",
+                t!("Classificar por"),
                 vec![
-                    sort(Command::SortName, "Nome", SortKey::Name),
-                    sort(Command::SortType, "Tipo", SortKey::Type),
-                    sort(Command::SortSize, "Tamanho", SortKey::Size),
-                    sort(Command::SortModified, "Data de modificação", SortKey::Modified),
+                    sort(Command::SortName, t!("Nome"), SortKey::Name),
+                    sort(Command::SortType, t!("Tipo"), SortKey::Type),
+                    sort(Command::SortSize, t!("Tamanho"), SortKey::Size),
+                    sort(Command::SortModified, t!("Data de modificação"), SortKey::Modified),
                     Entry::Separator,
-                    Entry::radio(Command::SortAscending as u32, "Crescente", self.sort_asc),
-                    Entry::radio(Command::SortDescending as u32, "Decrescente", !self.sort_asc),
+                    Entry::radio(Command::SortAscending as u32, t!("Crescente"), self.sort_asc),
+                    Entry::radio(Command::SortDescending as u32, t!("Decrescente"), !self.sort_asc),
                 ],
             )
             .with_icon("icons/arrow-up-down.svg"),
             Entry::submenu(
-                "Agrupar por",
+                t!("Agrupar por"),
                 vec![
-                    group(Command::GroupNone, "Nenhum", GroupBy::None),
+                    group(Command::GroupNone, t!("Nenhum"), GroupBy::None),
                     Entry::Separator,
-                    group(Command::GroupKind, "Tipo", GroupBy::Kind),
-                    group(Command::GroupModified, "Data de modificação", GroupBy::Modified),
-                    group(Command::GroupSize, "Tamanho", GroupBy::Size),
+                    group(Command::GroupKind, t!("Tipo"), GroupBy::Kind),
+                    group(Command::GroupModified, t!("Data de modificação"), GroupBy::Modified),
+                    group(Command::GroupSize, t!("Tamanho"), GroupBy::Size),
                 ],
             )
             .with_icon("icons/layers.svg"),
-            Entry::command(Command::Refresh as u32, "Atualizar")
+            Entry::command(Command::Refresh as u32, t!("Atualizar"))
                 .with_icon("icons/refresh-cw.svg")
                 .with_shortcut("F5"),
             Entry::Separator,
-            Entry::command(Command::Paste as u32, "Colar")
+            Entry::command(Command::Paste as u32, t!("Colar"))
                 .with_icon("icons/clipboard.svg")
                 .with_shortcut("Ctrl+V")
                 .enabled(self.can_paste(cx)),
-            Entry::command(Command::NewFolder as u32, "Nova pasta")
+            Entry::command(Command::NewFolder as u32, t!("Nova pasta"))
                 .with_icon("icons/folder-plus.svg")
                 .with_shortcut("Ctrl+Shift+N"),
         ]
@@ -673,7 +674,7 @@ impl ExplorerPane {
                 this.update(cx, |pane, cx| {
                     pane.set_status(
                         StatusLevel::Error,
-                        format!("Could not save {section}.{key}: {error}"),
+                        tf!("Não foi possível salvar {section}.{key}: {error}", section = section, key = key, error = error),
                     );
                     cx.notify();
                 })
@@ -686,10 +687,10 @@ impl ExplorerPane {
 
 fn quick_actions() -> Vec<QuickAction> {
     vec![
-        QuickAction { id: Command::Cut as u32, icon: "icons/scissors.svg", label: "Recortar (Ctrl+X)" },
-        QuickAction { id: Command::Copy as u32, icon: "icons/copy.svg", label: "Copiar (Ctrl+C)" },
-        QuickAction { id: Command::Rename as u32, icon: "icons/pencil.svg", label: "Renomear (F2)" },
-        QuickAction { id: Command::Delete as u32, icon: "icons/trash-2.svg", label: "Excluir (Delete)" },
+        QuickAction { id: Command::Cut as u32, icon: "icons/scissors.svg", label: t!("Recortar (Ctrl+X)") },
+        QuickAction { id: Command::Copy as u32, icon: "icons/copy.svg", label: t!("Copiar (Ctrl+C)") },
+        QuickAction { id: Command::Rename as u32, icon: "icons/pencil.svg", label: t!("Renomear (F2)") },
+        QuickAction { id: Command::Delete as u32, icon: "icons/trash-2.svg", label: t!("Excluir (Delete)") },
     ]
 }
 

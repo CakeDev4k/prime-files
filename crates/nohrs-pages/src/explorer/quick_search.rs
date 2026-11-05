@@ -30,6 +30,13 @@ pub struct DeepSearch {
     _task: Task<()>,
 }
 
+impl DeepSearch {
+    /// A search for `query` whose hits `task` is delivering.
+    pub(crate) fn new(query: String, task: Task<()>) -> Self {
+        Self { query, found: 0, running: true, _task: task }
+    }
+}
+
 impl ExplorerPane {
     /// What names are highlighted by: the subfolder search's query or the
     /// filter's, reduced to its literal part when it is a wildcard (`*.png`
@@ -41,7 +48,7 @@ impl ExplorerPane {
             None => self.search_query.as_str(),
         };
         query
-            .split(['*', '?'])
+            .split(['*', '?', ' ', '\\'])
             .max_by_key(|part| part.len())
             .unwrap_or("")
             .trim()
@@ -106,7 +113,7 @@ impl ExplorerPane {
         cx.notify();
     }
 
-    fn add_search_hits(&mut self, batch: Vec<FileEntryDto>) {
+    pub(crate) fn add_search_hits(&mut self, batch: Vec<FileEntryDto>) {
         let results = self.search_results.get_or_insert_with(Vec::new);
         results.extend(batch.iter().map(|entry| SearchFileResult {
             path: entry.path.clone(),
@@ -114,12 +121,17 @@ impl ExplorerPane {
             filename: entry.name.clone(),
             matches: Vec::new(),
         }));
-        // Shown beside each hit as "name › folder", as File Pilot does.
-        let root = std::path::Path::new(&self.cwd);
+        // Shown beside each hit as "name › folder", as File Pilot does: from
+        // where the search started, or the whole folder for a search of the
+        // whole computer.
+        let root = (!self.everything_on()).then(|| std::path::Path::new(&self.cwd));
         for entry in &batch {
             let folder = std::path::Path::new(&entry.path)
                 .parent()
-                .and_then(|parent| parent.strip_prefix(root).ok())
+                .and_then(|parent| match root {
+                    Some(root) => parent.strip_prefix(root).ok(),
+                    None => Some(parent),
+                })
                 .map(|relative| relative.to_string_lossy().into_owned())
                 .unwrap_or_default();
             if !folder.is_empty() {

@@ -1,3 +1,5 @@
+use nohrs_core::{k, t, tf};
+use nohrs_core::i18n;
 use crate::explorer::ExplorerPane;
 use gpui::prelude::*;
 use gpui::*;
@@ -81,7 +83,7 @@ pub fn render(
         .preview_path
         .as_ref()
         .map(|p| path_name(p))
-        .unwrap_or_else(|| "Preview".to_string());
+        .unwrap_or_else(|| t!("Visualizador").to_string());
 
     let content = if let Some(editor) = &page.preview_editor {
         div().flex_1().child(editor.clone()).into_any_element()
@@ -190,7 +192,7 @@ pub fn render(
                     .whitespace_nowrap()
                     .text_sm()
                     .text_color(rgb(theme::muted()))
-                    .child("No file selected"),
+                    .child(t!("Nenhum arquivo selecionado")),
             )
             .into_any_element()
     };
@@ -560,11 +562,11 @@ fn render_model(page: &mut ExplorerPane, window: &mut Window, cx: &mut Context<E
         return div().into_any_element();
     };
     let status = match (&model.error, model.mesh.is_some()) {
-        (Some(error), _) => format!("Não foi possível abrir o modelo: {error}"),
-        (None, false) => "Abrindo…".to_string(),
-        (None, true) => format!(
-            "{} triângulos · arraste para girar, roda para aproximar, duplo clique volta",
-            model.triangle_count()
+        (Some(error), _) => tf!("Não foi possível abrir o modelo: {error}", error = error),
+        (None, false) => t!("Abrindo…").to_string(),
+        (None, true) => tf!(
+            "{n} triângulos · arraste para girar, roda para aproximar, duplo clique volta",
+            n = model.triangle_count()
         ),
     };
     let view = model.view.clone();
@@ -648,13 +650,13 @@ fn render_pdf(page: &ExplorerPane) -> AnyElement {
         return div().into_any_element();
     };
     let status = match (&pdf.error, pdf.total) {
-        (Some(error), _) => format!("Não foi possível abrir o PDF: {error}"),
-        (None, None) => "Abrindo…".to_string(),
+        (Some(error), _) => tf!("Não foi possível abrir o PDF: {error}", error = error),
+        (None, None) => t!("Abrindo…").to_string(),
         (None, Some(total)) if (pdf.pages.len() as u32) < total.min(40) => {
-            format!("{} de {total} páginas…", pdf.pages.len())
+            tf!("{loaded} de {total} páginas…", loaded = pdf.pages.len(), total = total)
         }
-        (None, Some(total)) if total > 40 => format!("Primeiras 40 de {total} páginas"),
-        (None, Some(total)) => format!("{total} {}", if total == 1 { "página" } else { "páginas" }),
+        (None, Some(total)) if total > 40 => tf!("Primeiras 40 de {total} páginas", total = total),
+        (None, Some(total)) => i18n::plural(total as usize, k!("{n} página"), k!("{n} páginas")),
     };
     div()
         .flex_1()
@@ -797,7 +799,7 @@ fn render_media(page: &ExplorerPane, cx: &mut Context<ExplorerPane>) -> AnyEleme
                     .size_16()
                     .text_color(rgb(theme::gray_400())),
             ),
-            (None, None) => screen.child(div().text_xs().text_color(rgb(theme::muted())).child("Carregando…")),
+            (None, None) => screen.child(div().text_xs().text_color(rgb(theme::muted())).child(t!("Carregando…"))),
         });
     let controls = div()
         .flex_shrink_0()
@@ -1086,10 +1088,20 @@ fn render_listing(
         render_listing_rows(listing.clone(), zoom, scale, &scroll, cx)
     };
     div()
+        .id("preview-listing-area")
         .flex_1()
         .min_h(px(0.0))
         .flex()
         .flex_col()
+        // Here, around the items rather than on each: a press that moves fast
+        // leaves its row before it has moved far enough to be a drag.
+        .on_mouse_move(cx.listener(|this, event: &MouseMoveEvent, window, cx| {
+            this.preview_drag_moved(event, window, cx);
+        }))
+        .on_mouse_up(
+            MouseButton::Left,
+            cx.listener(|this, _event: &MouseUpEvent, _window, _cx| this.release_preview_item()),
+        )
         .child(
             div()
                 .flex_shrink_0()
@@ -1099,7 +1111,7 @@ fn render_listing(
                 .text_color(rgb(theme::muted()))
                 .child(match listing.hidden {
                     0 => listing.summary.clone(),
-                    hidden => format!("{} · mais {hidden} não listados", listing.summary),
+                    hidden => tf!("{summary} · mais {hidden} não listados", summary = listing.summary, hidden = hidden),
                 }),
         )
         .child(
@@ -1125,6 +1137,19 @@ fn render_listing(
                 ),
         )
         .into_any_element()
+}
+
+// A press on an item of the listing, which becomes a drag out if the pointer
+// moves (`drag::preview_drag_moved`, wired on the listing around the items).
+// An archive's entries are not on disk, so there is nothing to hand over.
+fn listing_press(
+    item: &crate::explorer::preview_listing::ListingItem,
+    cx: &mut Context<ExplorerPane>,
+) -> Option<impl Fn(&MouseDownEvent, &mut Window, &mut App) + 'static> {
+    let path = item.path.clone()?;
+    Some(cx.listener(move |this, event: &MouseDownEvent, _window, _cx| {
+        this.press_preview_item(&path, event.position);
+    }))
 }
 
 // What a click on an item of the listing does: open it in the preview. An
@@ -1165,9 +1190,11 @@ fn render_listing_rows(
                         .as_deref()
                         .and_then(|path| page.thumbnails.icon(path, item.is_dir, icon_px, cx));
                     let click = listing_click(&item, cx);
+                    let press = listing_press(&item, cx);
                     Some(
                         div()
                             .id(("preview-listing-row", ix))
+                            .when_some(press, |row, press| row.on_mouse_down(MouseButton::Left, press))
                             .h(px(row))
                             .w_full()
                             .flex()
@@ -1240,17 +1267,32 @@ fn render_listing_grid(
                     let end = (start + columns).min(rows.items.len());
                     let cells = (start..end).filter_map(|ix| {
                         let item = rows.items.get(ix)?.clone();
-                        let image = item.path.as_deref().and_then(|path| {
+                        // Sound files with waveforms on, as in the icons view:
+                        // the type's icon until the waveform arrives.
+                        let waveform_wanted = page.audio_waveforms
+                            && !item.is_dir
+                            && item.path.as_deref().is_some_and(crate::explorer::waveforms::is_audio);
+                        let waveform = match (&item.path, waveform_wanted) {
+                            (Some(path), true) => {
+                                page.waveforms.get(path, item.size.unwrap_or(0), item.modified, cx)
+                            }
+                            _ => None,
+                        };
+                        let image = item.path.as_deref().filter(|_| waveform.is_none()).and_then(|path| {
                             if item.is_dir {
                                 page.thumbnails.icon(path, true, thumb_px, cx)
+                            } else if waveform_wanted {
+                                page.thumbnails.icon(path, false, thumb_px, cx)
                             } else {
                                 page.thumbnails.get(path, thumb_px, cx)
                             }
                         });
                         let click = listing_click(&item, cx);
+                        let press = listing_press(&item, cx);
                         Some(
                             div()
                                 .id(("preview-listing-cell", ix))
+                                .when_some(press, |cell, press| cell.on_mouse_down(MouseButton::Left, press))
                                 .w(px(cell_w))
                                 .h(px(cell_h))
                                 .flex_shrink_0()
@@ -1269,12 +1311,13 @@ fn render_listing_grid(
                                         .flex()
                                         .items_center()
                                         .justify_center()
-                                        .child(match image {
-                                            Some(image) => img(ImageSource::Render(image))
+                                        .child(match (waveform, image) {
+                                            (Some(bars), _) => crate::explorer::waveforms::canvas(bars, tile, false),
+                                            (None, Some(image)) => img(ImageSource::Render(image))
                                                 .size_full()
                                                 .object_fit(gpui::ObjectFit::Contain)
                                                 .into_any_element(),
-                                            None => listing_icon(&item, None, tile * 0.6),
+                                            (None, None) => listing_icon(&item, None, tile * 0.6),
                                         }),
                                 )
                                 .child(

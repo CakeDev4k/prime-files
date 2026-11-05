@@ -1,4 +1,4 @@
-## Prime Files 0.3.3
+## Prime Files 0.3.4
 
 Explorador de arquivos para Windows, rápido, escrito em Rust.
 
@@ -12,6 +12,10 @@ Explorador de arquivos para Windows, rápido, escrito em Rust.
 - **Rede dentro do Prime Files**: Rede mostra os computadores, as unidades mapeadas e os locais adicionados; `\\servidor` lista os compartilhamentos, e um compartilhamento que pede login abre a janela de credenciais do Windows. "Adicionar local de rede" aceita caminhos `\\servidor\pasta`, `smb://` e WebDAV.
 - **Mais formatos no visualizador**: Word, OpenDocument e RTF formatados; .doc, .ppt e .xls pelo leitor do próprio Windows; Photoshop (PSD/PSB); Illustrator; miniatura do Affinity; resumo de projetos do Premiere e do After Effects, com a mídia que está faltando; SVG.
 - **Editar Markdown**: arquivos `.md` podem ser editados no visualizador e salvos com Ctrl+S.
+
+### Correções da 0.3.4
+
+- Uma aba nova podia abrir na pasta de onde o Prime Files tinha sido iniciado. Agora abre sempre na sua pasta de usuário.
 
 ### Correções da 0.3.3
 

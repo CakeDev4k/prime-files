@@ -22,6 +22,7 @@ mod model3d;
 mod smooth_scroll;
 mod page;
 mod pdf;
+mod picture;
 mod path_edit;
 mod places;
 mod preview;

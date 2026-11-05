@@ -52,6 +52,17 @@ pub(crate) fn fitted_picture(
         f32::from(window.viewport_size().height),
         window.scale_factor(),
     );
+    // The file decoded at this size, sharp; the Shell's picture (or the grid
+    // tile) only while that is being made, or if it cannot be.
+    if let Some(sharp) = sharp_picture(page, image_path, edge, cx) {
+        page.gif_cache = None;
+        return Some(
+            img(ImageSource::Render(sharp))
+                .size_full()
+                .object_fit(gpui::ObjectFit::Contain)
+                .into_any_element(),
+        );
+    }
     let shown = match page.thumbnails.picture(image_path, edge, cx) {
         crate::explorer::thumbnails::Picture::Shown(image) => Some(image),
         crate::explorer::thumbnails::Picture::Waiting(meanwhile) => meanwhile,
@@ -69,6 +80,72 @@ pub(crate) fn fitted_picture(
         // the very memory this avoids just to be replaced a moment later.
         None => div().size_full().into_any_element(),
     })
+}
+
+/// The preview's image decoded from its file (`explorer/picture.rs`): for
+/// which file and size, and the picture once it is made (`None` while it is,
+/// or when the file could not be decoded).
+pub(crate) struct SharpPicture {
+    path: String,
+    edge: u32,
+    image: Option<std::sync::Arc<gpui::RenderImage>>,
+    // The same file's picture at the size asked before, shown until this one
+    // is made, so resizing the panel never falls back to the Shell's.
+    previous: Option<std::sync::Arc<gpui::RenderImage>>,
+    // Dropped with the request: a newer file or size cancels the wait.
+    _decode: Option<gpui::Task<()>>,
+}
+
+// The sharp picture of `path` at `edge`, asking for it the first time.
+fn sharp_picture(
+    page: &mut ExplorerPane,
+    path: &str,
+    edge: u32,
+    cx: &mut Context<ExplorerPane>,
+) -> Option<std::sync::Arc<gpui::RenderImage>> {
+    if let Some(sharp) = &page.preview_sharp
+        && sharp.path == path
+        && sharp.edge == edge
+    {
+        return sharp.image.clone().or_else(|| sharp.previous.clone());
+    }
+    let decode = cx.background_spawn({
+        let path = path.to_string();
+        async move { crate::explorer::picture::decode_fitted(&path, edge) }
+    });
+    let wanted = path.to_string();
+    let task = cx.spawn(async move |this: gpui::WeakEntity<ExplorerPane>, cx| {
+        let decoded = decode.await;
+        this.update(cx, |pane, cx| {
+            let Some(sharp) = pane.preview_sharp.as_mut().filter(|sharp| sharp.path == wanted && sharp.edge == edge) else {
+                return;
+            };
+            match decoded {
+                Ok((width, height, pixels)) => {
+                    sharp.image = crate::explorer::thumbnails::render_image(width, height, pixels).map(std::sync::Arc::new);
+                }
+                // The Shell's picture stays, as before.
+                Err(error) => tracing::debug!("could not decode {wanted} for the preview: {error}"),
+            }
+            sharp._decode = None;
+            cx.notify();
+        })
+        .ok();
+    });
+    // The previous size stays on screen until the new one is ready.
+    let previous = page
+        .preview_sharp
+        .take()
+        .filter(|sharp| sharp.path == path)
+        .and_then(|sharp| sharp.image.or(sharp.previous));
+    page.preview_sharp = Some(SharpPicture {
+        path: path.to_string(),
+        edge,
+        image: None,
+        previous: previous.clone(),
+        _decode: Some(task),
+    });
+    previous
 }
 
 /// Space's quick look: the preview panel, large, over the whole pane. A

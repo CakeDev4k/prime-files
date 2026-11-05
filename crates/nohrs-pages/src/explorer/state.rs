@@ -230,6 +230,9 @@ pub struct ExplorerPane {
     pub(crate) terminal_shown: bool,
     /// The column the PDF preview's pages fill, measured at paint.
     pub(crate) preview_pdf_bounds: std::rc::Rc<std::cell::Cell<gpui::Bounds<gpui::Pixels>>>,
+    /// The image in the preview decoded from its file at the panel's size
+    /// (`picture.rs`), replacing the Shell's lower-quality thumbnail.
+    pub(crate) preview_sharp: Option<super::view::preview::SharpPicture>,
     /// The 3D model in the preview, turned by dragging.
     pub(crate) preview_model: Option<super::model3d::ModelPreview>,
     /// What the preview showed before an item of a folder listing was
@@ -574,6 +577,7 @@ impl ExplorerPane {
             split_available: false,
             terminal_shown: false,
             preview_pdf_bounds: Default::default(),
+            preview_sharp: None,
             preview_model: None,
             preview_back: Vec::new(),
             preview_zoom: 1.0,

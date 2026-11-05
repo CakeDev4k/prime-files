@@ -402,6 +402,7 @@ impl ExplorerPane {
         self.close_model_preview(cx);
         self.preview_editor = None;
         self.preview_image_path = None;
+        self.preview_sharp = None;
         self.preview_markdown = None;
         self.preview_message = None;
         self.preview_text = None;

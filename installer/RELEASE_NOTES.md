@@ -1,8 +1,15 @@
-## Prime Files 0.3.0
+## Prime Files 0.3.1
 
 Explorador de arquivos para Windows, rápido, escrito em Rust.
 
 ### Novidades
+
+- **Atalhos configuráveis**: em Configurações › Atalhos, clique na tecla de qualquer comando e aperte a combinação nova (Esc desiste). Dá para remover um atalho, voltar um ou todos ao padrão, e um atalho que já era de outro comando sai dele com aviso. Vale na hora, e os menus mostram as teclas novas.
+- **Abrir a pasta em outro programa**: botão na barra de cima (e no menu do botão direito) para abrir a pasta no Prompt de Comando, no PowerShell, no Windows Terminal (se instalado) ou no Explorador do Windows. Cada um pode ganhar um atalho.
+- **Menu de zoom ao usar Ctrl + roda**: o menu com o controle deslizante aparece enquanto você muda o zoom e some sozinho logo depois.
+- **Progresso do som tocado pelo mouse**: a forma de onda do arquivo vai ganhando a cor de destaque conforme o som avança, como na linha do tempo do visualizador; nas vistas sem forma de onda, uma linha embaixo do item mostra o mesmo.
+
+### Novidades da 0.3.0
 
 - **Busca em todo o computador**, no estilo do Everything: clique na lupa da barra de baixo (ou Ctrl+E) e digite qualquer parte do nome. Os nomes de todas as unidades fixas ficam num índice guardado no próprio computador, então a resposta vem enquanto você digita. Vários termos filtram juntos, `*` e `?` funcionam, e um termo com `\` procura no caminho. A primeira indexação de um disco grande leva alguns minutos (dá para buscar enquanto ela anda); depois o índice abre na hora e se atualiza sozinho em segundo plano, no máximo uma vez por hora, ou em Configurações › Busca › Reindexar agora.
 - **Ouvir sons passando o mouse**: deixe o mouse parado sobre um arquivo de áudio na lista e ele toca; tirar o mouse para. Liga/desliga e o tempo de espera ficam em Configurações › Mídia.
@@ -14,7 +21,7 @@ Explorador de arquivos para Windows, rápido, escrito em Rust.
 - **Este Computador abre dentro do Prime Files**, e a barra de cima ganhou o botão de subir (↑, ou Alt+↑) ao lado de voltar, avançar e atualizar.
 - **Tocar ao abrir no visualizador** (opcional) e integração opcional com o **Listary**.
 
-### Correções
+### Correções da 0.3.0
 
 - A roda do mouse rolava a lista por baixo das barras do modo compacto (barra lateral, visualizador) em vez da própria barra, também com a tela dividida.
 
@@ -29,11 +36,11 @@ Explorador de arquivos para Windows, rápido, escrito em Rust.
 - **Ícone próprio** no programa, na barra de tarefas, nos atalhos, no instalador e na lista de aplicativos instalados.
 - O Windows mostra "Prime Files" como nome e versão do programa (Gerenciador de Tarefas, Propriedades).
 
-Quem tem a 0.2.0, 0.2.1 ou 0.2.2 recebe esta sozinho. Quem tem a 0.1.0 precisa instalar esta à mão uma vez (a 0.1.0 ainda não se atualizava); daqui para frente as versões chegam sozinhas.
+Quem tem a 0.2.0 ou mais nova recebe esta sozinho. Quem tem a 0.1.0 precisa instalar esta à mão uma vez (a 0.1.0 ainda não se atualizava); daqui para frente as versões chegam sozinhas.
 
 ### Instalar
 
-Baixe **PrimeFiles-Setup-0.3.0.exe** abaixo e execute. A instalação é só para o seu usuário e não pede administrador. O instalador baixa o que faltar:
+Baixe **PrimeFiles-Setup-0.3.1.exe** abaixo e execute. A instalação é só para o seu usuário e não pede administrador. O instalador baixa o que faltar:
 
 - o **Visual C++ Runtime** da Microsoft, se o computador não tiver;
 - o **7-Zip**, se você marcar a opção (para ver .rar, .7z e .iso no visualizador);

@@ -14,14 +14,15 @@
 //! in one place that follows the window's width.
 
 use gpui::{
-    AnyElement, Context, Div, ElementId, Entity, Render, SharedString, Stateful, Window, div, prelude::*, px,
-    rgb,
+    AnyElement, Context, Div, ElementId, Entity, FocusHandle, KeyDownEvent, Render, SharedString, Stateful, Window,
+    div, prelude::*, px, rgb,
 };
 use gpui_component::input::{Input, InputState};
 use gpui_component::{Icon, Sizable as _};
 use nohrs_core::config::{self, Config, SortOrder, SplitDirection, ThemeMode};
 use nohrs_core::i18n::{self, Lang, tr};
 use nohrs_core::telemetry::LogErr;
+use nohrs_core::shortcuts::{self, Action, Chord};
 use nohrs_core::{k, t, tf};
 use nohrs_ui::theme::theme;
 
@@ -84,7 +85,7 @@ impl SettingsSection {
             Self::Media => t!("Áudio e vídeo: ouvir passando o mouse, tocar no visualizador e ver a forma de onda."),
             Self::Search => t!("Encontrar qualquer arquivo do computador pelo nome."),
             Self::Integrations => t!("Abrir no Prime Files as pastas do Windows e de outros programas."),
-            Self::Shortcuts => t!("As teclas que o explorador entende."),
+            Self::Shortcuts => t!("Mude as teclas de cada comando do explorador."),
             Self::About => t!("Versão, atualizações e o arquivo de configuração."),
         }
     }
@@ -109,60 +110,15 @@ impl SettingsSection {
 // Portuguese names for the accents `theme::NAMED_ACCENTS` knows, same order.
 const ACCENT_LABELS: &[&str] = &[k!("Laranja"), k!("Azul"), k!("Verde-água"), k!("Verde"), k!("Roxo"), k!("Rosa"), k!("Vermelho")];
 
-// What the explorer actually answers to on Windows. Kept by hand next to the
-// page rather than read from the keymap: half of these are `on_key_down`
-// arms in `explorer/view.rs`, which no binding table knows about. A shortcut
-// changed there has to change here too.
-const SHORTCUTS: &[(&str, &[(&str, &str)])] = &[
-    (
-        k!("Arquivos"),
-        &[
-            ("Ctrl+C", k!("Copiar")),
-            ("Ctrl+X", k!("Recortar")),
-            ("Ctrl+V", k!("Colar")),
-            ("F2", k!("Renomear")),
-            ("F5", k!("Atualizar a pasta")),
-            ("Delete", k!("Mandar para a Lixeira")),
-            ("Shift+Delete", k!("Excluir para sempre")),
-            ("Ctrl+Shift+N", k!("Nova pasta")),
-            ("Enter", k!("Abrir no programa padrão")),
-            ("Alt+↑", k!("Subir para a pasta de cima")),
-        ],
-    ),
-    (
-        k!("Seleção e busca"),
-        &[
-            ("Ctrl+A", k!("Selecionar tudo")),
-            ("Esc", k!("Limpar a seleção ou o filtro")),
-            (k!("Qualquer letra"), k!("Filtrar a pasta atual")),
-            ("Ctrl+F", k!("Buscar nas subpastas")),
-            ("Ctrl+E", k!("Buscar em todo o computador")),
-            ("Ctrl+Shift+F", k!("Buscar no índice")),
-            ("Ctrl+Shift+L", k!("Barra de filtros")),
-        ],
-    ),
-    (
-        k!("Abas e painéis"),
-        &[
-            ("Ctrl+T", k!("Nova aba")),
-            ("Ctrl+W", k!("Fechar aba")),
-            ("Ctrl+\\", k!("Dividir lado a lado")),
-            ("Ctrl+Shift+\\", k!("Dividir em cima e embaixo")),
-            ("Ctrl+1 / Ctrl+2", k!("Ir para o painel 1 ou 2")),
-            ("Ctrl+] / Ctrl+[", k!("Próximo / anterior painel")),
-            ("Ctrl+B", k!("Mostrar ou esconder a barra lateral")),
-            ("Ctrl+'", k!("Mostrar ou esconder o terminal da aba")),
-        ],
-    ),
-    (
-        k!("Exibição"),
-        &[
-            ("Ctrl+= / Ctrl+-", k!("Aumentar / diminuir o zoom")),
-            ("Ctrl+0", k!("Zoom padrão")),
-            (k!("Ctrl+roda do mouse"), k!("Zoom contínuo")),
-            ("Ctrl+K", k!("Abrir o lançador")),
-        ],
-    ),
+// Keys that are not commands of the shortcut table: typing filters, Enter
+// opens, the wheel zooms. Listed beside the editable ones so the page still
+// tells everything the explorer answers to.
+const FIXED_KEYS: &[(&str, &str)] = &[
+    (k!("Qualquer letra"), k!("Filtrar a pasta atual")),
+    ("Enter", k!("Abrir no programa padrão")),
+    ("Esc", k!("Limpar a seleção ou o filtro")),
+    (k!("Ctrl+roda do mouse"), k!("Zoom contínuo")),
+    ("Ctrl+K", k!("Abrir o lançador")),
 ];
 
 // What picking an option of a control does.
@@ -174,6 +130,14 @@ enum Pick {
     DefaultExplorer(bool),
     // Makes Listary open folders here, or in Explorer again.
     Listary(bool),
+    // Waits for the next key press to become this command's shortcut.
+    RecordShortcut(Action),
+    // Leaves the command without a shortcut.
+    ClearShortcut(Action),
+    // Gives the command its built-in keys back.
+    ResetShortcut(Action),
+    // Gives every command its built-in keys back.
+    ResetAllShortcuts,
 }
 
 // One setting: its name, what it does, and the control that changes it.
@@ -244,6 +208,10 @@ pub struct SettingsPage {
     updater: Entity<crate::updater::Updater>,
     // The search field, made on the first render (it needs a `Window`).
     search: Option<Entity<InputState>>,
+    // Takes the key presses that record a shortcut.
+    focus_handle: FocusHandle,
+    // The command whose new keys are being waited for.
+    recording: Option<Action>,
 }
 
 impl SettingsPage {
@@ -262,6 +230,8 @@ impl SettingsPage {
             listary: None,
             updater,
             search: None,
+            focus_handle: cx.focus_handle(),
+            recording: None,
         };
         page.refresh_default_explorer(cx);
         page.refresh_listary(cx);
@@ -366,7 +336,114 @@ impl SettingsPage {
             Pick::Config(section, key, value) => self.write(section, key, value.to_string(), cx),
             Pick::DefaultExplorer(enable) => self.set_default_explorer(enable, cx),
             Pick::Listary(enable) => self.set_listary(enable, cx),
+            Pick::RecordShortcut(action) => {
+                self.recording = if self.recording == Some(action) { None } else { Some(action) };
+                cx.notify();
+            }
+            Pick::ClearShortcut(action) => {
+                self.recording = None;
+                self.edit_keybindings(vec![(shortcuts::info_of(action).id, Some(String::new()))], None, cx);
+            }
+            Pick::ResetShortcut(action) => {
+                self.recording = None;
+                self.edit_keybindings(vec![(shortcuts::info_of(action).id, None)], None, cx);
+            }
+            Pick::ResetAllShortcuts => {
+                self.recording = None;
+                let edits = shortcuts::ACTIONS.iter().map(|info| (info.id, None)).collect();
+                self.edit_keybindings(edits, Some(t!("Todos os atalhos voltaram ao padrão.").to_string()), cx);
+            }
         }
+    }
+
+    // Writes `[keybindings]` changes one after the other in a single task:
+    // each is a read and rewrite of the file, and two at once would lose one.
+    // `None` removes the line, so the built-in keys apply again.
+    fn edit_keybindings(
+        &mut self,
+        edits: Vec<(&'static str, Option<String>)>,
+        done: Option<String>,
+        cx: &mut Context<Self>,
+    ) {
+        let path = config::paths::config_file();
+        let write = cx.background_spawn(async move {
+            for (id, value) in edits {
+                match value {
+                    // A TOML string: `ctrl-\` needs its backslash escaped.
+                    Some(keys) => {
+                        let quoted = format!("\"{}\"", keys.replace('\\', "\\\\").replace('"', "\\\""));
+                        config::set_value(&path, "keybindings", id, &quoted)?
+                    }
+                    None => config::remove_value(&path, "keybindings", id)?,
+                }
+            }
+            std::io::Result::Ok(())
+        });
+        cx.spawn(async move |this: gpui::WeakEntity<Self>, cx| {
+            let outcome = write.await;
+            this.update(cx, |page, cx| {
+                match outcome {
+                    Ok(()) => {
+                        if let Some(done) = done {
+                            page.status = Some((done, false));
+                        }
+                    }
+                    Err(error) => {
+                        page.status = Some((tf!("Não foi possível salvar os atalhos: {error}", error = error), true));
+                    }
+                }
+                cx.notify();
+            })
+            .log_err();
+        })
+        .detach();
+    }
+
+    // A key pressed while a command waits for its shortcut. Modifiers alone
+    // wait for the rest; Esc gives up.
+    fn record_key(&mut self, event: &KeyDownEvent, cx: &mut Context<Self>) {
+        let Some(action) = self.recording else {
+            return;
+        };
+        cx.stop_propagation();
+        let keystroke = &event.keystroke;
+        let key = keystroke.key.to_lowercase();
+        if shortcuts::MODIFIER_KEYS.contains(&key.as_str()) {
+            return;
+        }
+        let modifiers = keystroke.modifiers;
+        if key == "escape" && !(modifiers.control || modifiers.alt || modifiers.shift) {
+            self.recording = None;
+            cx.notify();
+            return;
+        }
+        let chord = Chord {
+            ctrl: modifiers.control || modifiers.platform,
+            alt: modifiers.alt,
+            shift: modifiers.shift,
+            key,
+        };
+        if chord.is_typing_key() {
+            self.status = Some((t!("Letras, números e símbolos precisam de Ctrl ou Alt: sozinhos, eles digitam no filtro.").to_string(), true));
+            cx.notify();
+            return;
+        }
+        self.recording = None;
+        let taken = shortcuts::conflicts(&self.config.keybindings.bindings, &chord, action);
+        let mut edits: Vec<(&'static str, Option<String>)> =
+            taken.iter().map(|other| (shortcuts::info_of(*other).id, Some(String::new()))).collect();
+        edits.push((shortcuts::info_of(action).id, Some(chord.to_config())));
+        let mut message = tf!(
+            "{keys} agora: {command}.",
+            keys = chord.display(),
+            command = tr(shortcuts::info_of(action).label)
+        );
+        if !taken.is_empty() {
+            let others: Vec<&str> = taken.iter().map(|other| tr(shortcuts::info_of(*other).label)).collect();
+            message.push(' ');
+            message.push_str(&tf!("Tirado de: {commands}.", commands = others.join(", ")));
+        }
+        self.edit_keybindings(edits, Some(message), cx);
     }
 
     /// Shows `section`, for the menu entries that lead to one directly.
@@ -468,7 +545,7 @@ impl SettingsPage {
             SettingsSection::Media => self.media(cx),
             SettingsSection::Search => self.search_section(cx),
             SettingsSection::Integrations => self.integrations(cx),
-            SettingsSection::Shortcuts => self.shortcuts(),
+            SettingsSection::Shortcuts => self.shortcuts(cx),
             SettingsSection::About => self.about(cx),
         }
     }
@@ -932,7 +1009,7 @@ impl SettingsPage {
                     Row::hint(
                         t!("Buscar nas subpastas"),
                         t!("Procura a partir da pasta aberta, lendo o disco na hora."),
-                        key_cap("Ctrl+F"),
+                        key_cap_owned(shortcuts::display(Action::SearchSubfolders).unwrap_or_else(|| t!("Nenhum").to_string())),
                     ),
                 ],
             ),
@@ -970,14 +1047,111 @@ impl SettingsPage {
         ])]
     }
 
-    fn shortcuts(&self) -> Vec<Group> {
-        SHORTCUTS
-            .iter()
-            .map(|(group, keys)| Group {
-                title: Some(tr(group)),
-                rows: keys.iter().map(|(keys, what)| Row::new(tr(what), None, key_cap(tr(keys)))).collect(),
-            })
-            .collect()
+    fn shortcuts(&self, cx: &mut Context<Self>) -> Vec<Group> {
+        let bindings = &self.config.keybindings.bindings;
+        let customized = shortcuts::ACTIONS.iter().any(|info| bindings.contains_key(info.id));
+        let mut groups = vec![Group::new(vec![Row::hint(
+            t!("Como mudar"),
+            t!("Clique na tecla de um comando e aperte a combinação nova; Esc desiste. Um atalho que já era de outro comando sai dele. Vale na hora."),
+            div().when(customized, |this| {
+                this.child(button("shortcuts-reset-all", t!("Restaurar todos"), false).on_click(cx.listener(
+                    |page, _event, _window, cx| page.pick(Pick::ResetAllShortcuts, cx),
+                )))
+            }),
+        )])];
+        let mut current: Option<(&'static str, Vec<Row>)> = None;
+        for info in shortcuts::ACTIONS {
+            if current.as_ref().is_some_and(|(group, _)| *group != info.group) {
+                if let Some((group, rows)) = current.take() {
+                    groups.push(Group::titled(tr(group), rows));
+                }
+            }
+            let row = self.shortcut_row(info, bindings.contains_key(info.id), cx);
+            current.get_or_insert_with(|| (info.group, Vec::new())).1.push(row);
+        }
+        if let Some((group, rows)) = current {
+            groups.push(Group::titled(tr(group), rows));
+        }
+        groups.push(Group::titled(
+            t!("Fixos"),
+            FIXED_KEYS.iter().map(|(keys, what)| Row::new(tr(what), None, key_cap(tr(keys)))).collect(),
+        ));
+        groups
+    }
+
+    // A command, its keys as a button that records new ones, and a button to
+    // leave it with none.
+    fn shortcut_row(&self, info: &'static shortcuts::ActionInfo, customized: bool, cx: &mut Context<Self>) -> Row {
+        let action = info.action;
+        let recording = self.recording == Some(action);
+        let keys: Vec<String> = shortcuts::chords(action).iter().map(Chord::display).collect();
+        let has_keys = !keys.is_empty();
+        let shown = if recording {
+            t!("Aperte as teclas…").to_string()
+        } else if has_keys {
+            // Spellings of one key on other layouts are not worth a line.
+            keys.into_iter().next().unwrap_or_default()
+        } else {
+            t!("Nenhum").to_string()
+        };
+        let control = div()
+            .flex()
+            .items_center()
+            .gap_1()
+            .child(
+                div()
+                    .id(ElementId::Name(SharedString::from(format!("shortcut-{}", info.id))))
+                    .min_w(px(110.0))
+                    .h(px(28.0))
+                    .px(px(10.0))
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .rounded(px(6.0))
+                    .border_1()
+                    .cursor_pointer()
+                    .text_sm()
+                    .whitespace_nowrap()
+                    .map(|this| {
+                        if recording {
+                            this.border_color(rgb(theme::accent()))
+                                .bg(rgb(theme::accent_subtle()))
+                                .text_color(rgb(theme::accent()))
+                        } else {
+                            this.border_color(rgb(theme::border_hover()))
+                                .bg(rgb(theme::bg()))
+                                .text_color(rgb(if has_keys { theme::fg() } else { theme::muted() }))
+                                .hover(|style| style.bg(rgb(theme::bg_hover())))
+                        }
+                    })
+                    .on_click(cx.listener(move |page, _event, window, cx| {
+                        window.focus(&page.focus_handle);
+                        page.pick(Pick::RecordShortcut(action), cx);
+                    }))
+                    .child(shown),
+            )
+            .when(has_keys && !recording, |this| {
+                this.child(
+                    div()
+                        .id(ElementId::Name(SharedString::from(format!("shortcut-clear-{}", info.id))))
+                        .size(px(24.0))
+                        .flex()
+                        .items_center()
+                        .justify_center()
+                        .rounded(px(5.0))
+                        .cursor_pointer()
+                        .text_color(rgb(theme::muted()))
+                        .hover(|style| style.bg(rgb(theme::bg_hover())).text_color(rgb(theme::fg())))
+                        .tooltip(|window, cx| gpui_component::tooltip::Tooltip::new(t!("Remover o atalho")).build(window, cx))
+                        .on_click(cx.listener(move |page, _event, _window, cx| page.pick(Pick::ClearShortcut(action), cx)))
+                        .child(Icon::new(Icon::empty()).path("icons/close.svg").size_3()),
+                )
+            });
+        let mut row = Row::new(tr(info.label), None, control);
+        if customized {
+            row.reset = Some(Pick::ResetShortcut(action));
+        }
+        row
     }
 
     fn about(&self, cx: &mut Context<Self>) -> Vec<Group> {
@@ -1560,6 +1734,21 @@ fn fold(text: &str) -> String {
         .collect()
 }
 
+// A keycap for text built at run time.
+fn key_cap_owned(keys: String) -> Div {
+    div()
+        .px(px(8.0))
+        .py(px(2.0))
+        .rounded(px(5.0))
+        .bg(rgb(theme::bg()))
+        .border_1()
+        .border_color(rgb(theme::border_hover()))
+        .text_xs()
+        .text_color(rgb(theme::fg()))
+        .whitespace_nowrap()
+        .child(keys)
+}
+
 // A key or key combination drawn as a keycap.
 fn key_cap(keys: &'static str) -> Div {
     div()
@@ -1686,6 +1875,8 @@ impl Render for SettingsPage {
             .flex()
             .map(|this| if narrow { this.flex_col() } else { this.flex_row() })
             .bg(rgb(theme::bg()))
+            .track_focus(&self.focus_handle)
+            .on_key_down(cx.listener(|page, event: &KeyDownEvent, _window, cx| page.record_key(event, cx)))
             .child(nav)
             .child(
                 div()

@@ -271,6 +271,7 @@ fn render_grid_item(
         (true, None) => page.thumbnails.icon(&item.path, false, tile.thumbnail, cx),
         (false, None) => page.thumbnails.get(&item.path, tile.thumbnail, cx),
     };
+    let waveform_shown = waveform.is_some();
     let activation_item = item.clone();
     let preview_item = item.clone();
 
@@ -349,7 +350,12 @@ fn render_grid_item(
                 .items_center()
                 .justify_center()
                 .child(match (waveform, thumbnail) {
-                    (Some(bars), _) => crate::explorer::waveforms::canvas(bars, tile.icon, selected),
+                    (Some(bars), _) => crate::explorer::waveforms::canvas(
+                        bars,
+                        tile.icon,
+                        selected,
+                        crate::explorer::hover_audio::progress_of(&item.path),
+                    ),
                     (None, Some(image)) => img(ImageSource::Render(image))
                         .size_full()
                         .object_fit(ObjectFit::Contain)
@@ -403,6 +409,9 @@ fn render_grid_item(
                 }))
                 .into_any_element(),
         })
+        // Without a waveform to colour, a line along the tile's foot follows
+        // the sound playing under the mouse.
+        .when(!waveform_shown, |this| this.children(crate::explorer::hover_audio::progress_strip(&item.path)))
         .map(|this| page.track_hit(this, ix))
         .when(is_dir, |this| crate::explorer::drag::drop_into(this, &item.path, cx))
         .into_any_element()

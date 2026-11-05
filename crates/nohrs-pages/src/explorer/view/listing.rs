@@ -357,6 +357,7 @@ fn with_wheel_zoom(
                             entity.update(cx, |page, cx| {
                                 let next = zoom::step(page.zoom_target, notches * zoom::STEP);
                                 page.zoom_to(next, cx);
+                                page.flash_zoom_menu(cx);
                             });
                         }
                         cx.stop_propagation();

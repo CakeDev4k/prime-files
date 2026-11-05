@@ -441,6 +441,7 @@ pub fn render(
                 })
                 .collect::<Vec<_>>(),
         );
+    let row = row.children(crate::explorer::hover_audio::progress_strip(&item.path));
     let row = page.track_hit(row, ix);
     match folder {
         Some(folder) => crate::explorer::drag::drop_into(row, &folder, cx),

@@ -92,43 +92,70 @@ static BIND_PANE_KEYS: Once = Once::new();
 fn bind_pane_keys(cx: &mut App) {
     BIND_PANE_KEYS.call_once(|| {
         cx.bind_keys(vec![
-            KeyBinding::new("cmd-\\", SplitVertical, Some(PANES_CONTEXT)),
-            KeyBinding::new("ctrl-\\", SplitVertical, Some(PANES_CONTEXT)),
-            // `Shift+\` resolves to the `|` keysym; gpui's Linux layer then drops
-            // the shift modifier for symbols, so the shortcut arrives as `cmd-|`
-            // / `ctrl-|` rather than `*-shift-\`. Bind every spelling so the
-            // documented `Cmd/Ctrl+Shift+\` works across platforms and layouts.
-            KeyBinding::new("cmd-shift-\\", SplitHorizontal, Some(PANES_CONTEXT)),
-            KeyBinding::new("ctrl-shift-\\", SplitHorizontal, Some(PANES_CONTEXT)),
-            KeyBinding::new("cmd-|", SplitHorizontal, Some(PANES_CONTEXT)),
-            KeyBinding::new("ctrl-|", SplitHorizontal, Some(PANES_CONTEXT)),
-            KeyBinding::new("cmd-shift-|", SplitHorizontal, Some(PANES_CONTEXT)),
-            KeyBinding::new("ctrl-shift-|", SplitHorizontal, Some(PANES_CONTEXT)),
-            KeyBinding::new("cmd-1", FocusPane1, Some(PANES_CONTEXT)),
-            KeyBinding::new("ctrl-1", FocusPane1, Some(PANES_CONTEXT)),
-            KeyBinding::new("cmd-2", FocusPane2, Some(PANES_CONTEXT)),
-            KeyBinding::new("ctrl-2", FocusPane2, Some(PANES_CONTEXT)),
-            KeyBinding::new("cmd-]", FocusNextPane, Some(PANES_CONTEXT)),
-            KeyBinding::new("ctrl-]", FocusNextPane, Some(PANES_CONTEXT)),
-            KeyBinding::new("cmd-[", FocusPrevPane, Some(PANES_CONTEXT)),
-            KeyBinding::new("ctrl-[", FocusPrevPane, Some(PANES_CONTEXT)),
-            KeyBinding::new("cmd-t", NewTab, Some(PANES_CONTEXT)),
-            KeyBinding::new("ctrl-t", NewTab, Some(PANES_CONTEXT)),
-            KeyBinding::new("cmd-w", CloseTab, Some(PANES_CONTEXT)),
-            KeyBinding::new("ctrl-w", CloseTab, Some(PANES_CONTEXT)),
-            KeyBinding::new("cmd-b", ToggleSidebar, Some(PANES_CONTEXT)),
-            KeyBinding::new("ctrl-b", ToggleSidebar, Some(PANES_CONTEXT)),
-            // Ctrl+' is VS Code's spelling on ABNT2, where ` is a dead key.
-            KeyBinding::new("ctrl-`", ToggleTerminal, Some(PANES_CONTEXT)),
-            KeyBinding::new("ctrl-'", ToggleTerminal, Some(PANES_CONTEXT)),
             // Keys the shell needs more than the explorer does, while typing in
             // the terminal: Ctrl+B and Ctrl+[ ] \ are readline and escape keys.
+            // A deeper context wins over the explorer's bindings whatever their
+            // order, so these hold even after the shortcuts are rebound.
             KeyBinding::new("ctrl-b", NoAction, Some(TERMINAL_CONTEXT)),
             KeyBinding::new("ctrl-[", NoAction, Some(TERMINAL_CONTEXT)),
             KeyBinding::new("ctrl-]", NoAction, Some(TERMINAL_CONTEXT)),
             KeyBinding::new("ctrl-\\", NoAction, Some(TERMINAL_CONTEXT)),
         ]);
     });
+    rebind_shortcuts(cx);
+}
+
+// The keys `rebind_shortcuts` last bound to the page's actions.
+static BOUND_SHORTCUTS: std::sync::Mutex<Vec<String>> = std::sync::Mutex::new(Vec::new());
+
+/// Binds the page's actions (tabs, panes, sidebar, terminal) to the keys the
+/// shortcut table now gives them. gpui cannot take a binding back, so a key
+/// that no longer belongs to any of them is bound to `NoAction`, which a
+/// later binding overrides: the newest binding of a key wins.
+pub fn rebind_shortcuts(cx: &mut App) {
+    use nohrs_core::shortcuts::{Action, chords};
+    let page_actions = [
+        Action::NewTab,
+        Action::CloseTab,
+        Action::SplitVertical,
+        Action::SplitHorizontal,
+        Action::FocusPane1,
+        Action::FocusPane2,
+        Action::NextPane,
+        Action::PreviousPane,
+        Action::ToggleSidebar,
+        Action::ToggleTerminal,
+    ];
+    let wanted: Vec<(String, Action)> = page_actions
+        .into_iter()
+        .flat_map(|action| chords(action).into_iter().map(move |chord| (chord.to_config(), action)))
+        // A key gpui cannot read would panic in `KeyBinding::new`.
+        .filter(|(keys, _)| Keystroke::parse(keys).is_ok())
+        .collect();
+    let mut bound = BOUND_SHORTCUTS.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+    let context = Some(PANES_CONTEXT);
+    let mut bindings: Vec<KeyBinding> = bound
+        .iter()
+        .filter(|keys| !wanted.iter().any(|(wanted_keys, _)| wanted_keys == *keys))
+        .filter(|keys| Keystroke::parse(keys).is_ok())
+        .map(|keys| KeyBinding::new(keys, NoAction, context))
+        .collect();
+    for (keys, action) in &wanted {
+        bindings.push(match action {
+            Action::NewTab => KeyBinding::new(keys, NewTab, context),
+            Action::CloseTab => KeyBinding::new(keys, CloseTab, context),
+            Action::SplitVertical => KeyBinding::new(keys, SplitVertical, context),
+            Action::SplitHorizontal => KeyBinding::new(keys, SplitHorizontal, context),
+            Action::FocusPane1 => KeyBinding::new(keys, FocusPane1, context),
+            Action::FocusPane2 => KeyBinding::new(keys, FocusPane2, context),
+            Action::NextPane => KeyBinding::new(keys, FocusNextPane, context),
+            Action::PreviousPane => KeyBinding::new(keys, FocusPrevPane, context),
+            Action::ToggleSidebar => KeyBinding::new(keys, ToggleSidebar, context),
+            _ => KeyBinding::new(keys, ToggleTerminal, context),
+        });
+    }
+    cx.bind_keys(bindings);
+    *bound = wanted.into_iter().map(|(keys, _)| keys).collect();
 }
 
 /// Home directory used as the root of a freshly opened tab (§4). Mirrors the

@@ -39,6 +39,10 @@ pub fn render(
     page.tick_zoom(window, cx);
     page.tick_scroll(window, cx);
     page.tick_marquee(window, cx);
+    // The played part of a sound under the mouse moves while it plays.
+    if page.hover_audio.is_some() && super::hover_audio::playing() {
+        window.request_animation_frame();
+    }
     if std::mem::take(&mut page.preview_selection_pending)
         && let Some(path) = page.active_path.clone()
     {
@@ -61,7 +65,6 @@ pub fn render(
             let key_lc = event.keystroke.key.to_lowercase();
             let modifiers = event.keystroke.modifiers;
             let with_modifier = modifiers.platform || modifiers.control;
-            let is_f = key_lc == "f" || event.keystroke.key == "KeyF";
             // Escape closes an open menu before anything else hears it.
             if key_lc == "escape" && this.context_menu.is_some() {
                 this.close_menu(cx);
@@ -92,21 +95,16 @@ pub fn render(
                 cx.stop_propagation();
                 return;
             }
-            let close_with_escape = key_lc == "escape" && this.search_visible;
-            if (is_f && with_modifier && modifiers.shift) || close_with_escape {
+            if key_lc == "escape" && this.search_visible {
                 this.toggle_search(window, cx);
                 cx.stop_propagation();
                 return;
             }
-            if is_f && with_modifier {
-                this.set_quick_recursive(true, window, cx);
-                cx.stop_propagation();
-                return;
-            }
-            if key_lc == "e" && with_modifier && !modifiers.shift {
-                let on = !this.everything_on();
-                this.set_everything(on, cx);
-                this.focus_quick_input(None, window, cx);
+            // The configurable shortcuts (Settings › Shortcuts). A bare letter
+            // never resolves to one here: typed on the listing it filters.
+            if let Some(action) = nohrs_core::shortcuts::resolve(with_modifier, modifiers.alt, modifiers.shift, &key_lc)
+                && this.run_shortcut(action, window, cx)
+            {
                 cx.stop_propagation();
                 return;
             }
@@ -140,66 +138,9 @@ pub fn render(
             // event; anything unmatched falls through to the selection model below.
             let shift = modifiers.shift;
             match key_lc.as_str() {
-                "up" if modifiers.alt => {
-                    this.go_up(window, cx);
-                    cx.stop_propagation();
-                    return;
-                }
-                "delete" if shift => {
-                    this.request_permanent_delete(window, cx);
-                    cx.stop_propagation();
-                    return;
-                }
-                "delete" => {
-                    this.trash_selection(cx);
-                    cx.stop_propagation();
-                    return;
-                }
                 // macOS also trashes on Backspace (§6); on Linux only Delete does.
                 "backspace" if cfg!(target_os = "macos") && !shift => {
                     this.trash_selection(cx);
-                    cx.stop_propagation();
-                    return;
-                }
-                "c" if with_modifier && !shift => {
-                    this.copy_selection(cx);
-                    cx.stop_propagation();
-                    return;
-                }
-                "x" if with_modifier && !shift => {
-                    this.cut_selection(cx);
-                    cx.stop_propagation();
-                    return;
-                }
-                "v" if with_modifier && !shift => {
-                    this.paste_into_cwd(window, cx);
-                    cx.stop_propagation();
-                    return;
-                }
-                // Ctrl+Shift+L, as the filter toggle in spreadsheets and
-                // VS Code's file filters; Ctrl+F already opens the search.
-                "l" if with_modifier && shift => {
-                    this.toggle_filter_bar(cx);
-                    cx.stop_propagation();
-                    return;
-                }
-                "n" if with_modifier && shift => {
-                    this.create_new_folder(window, cx);
-                    cx.stop_propagation();
-                    return;
-                }
-                // F5 rereads the folder, as in Explorer. The right-click menu
-                // already showed "Atualizar  F5" with nothing behind the key.
-                "f5" if !with_modifier => {
-                    this.reload(cx);
-                    cx.stop_propagation();
-                    return;
-                }
-                // Rename: F2 everywhere, plus Enter on macOS (§6).
-                "f2" => {
-                    if let Some(index) = this.active_row() {
-                        this.begin_rename(index, window, cx);
-                    }
                     cx.stop_propagation();
                     return;
                 }
@@ -229,33 +170,11 @@ pub fn render(
                     cx.stop_propagation();
                     return;
                 }
-                // Zoom, as in browsers and Explorer. `+` because on most layouts
-                // it is Shift+= and some report it under that name.
-                "=" | "+" if with_modifier => {
-                    this.zoom_to(super::zoom::step(this.zoom_target, super::zoom::STEP), cx);
-                    cx.stop_propagation();
-                    return;
-                }
-                "-" if with_modifier => {
-                    this.zoom_to(super::zoom::step(this.zoom_target, -super::zoom::STEP), cx);
-                    cx.stop_propagation();
-                    return;
-                }
-                "0" if with_modifier => {
-                    this.zoom_to(super::zoom::DEFAULT_GRID, cx);
-                    cx.stop_propagation();
-                    return;
-                }
                 _ => {}
             }
             // Selection model (§5). Escape while searching is handled above, so
             // here it only clears the selection.
             match key_lc.as_str() {
-                "a" if with_modifier => {
-                    this.select_all();
-                    cx.stop_propagation();
-                    cx.notify();
-                }
                 // Search-close Escape is handled by the branch above (which
                 // returns early), so here Escape only clears a selection — and
                 // only consumes the event when there was one to clear, leaving

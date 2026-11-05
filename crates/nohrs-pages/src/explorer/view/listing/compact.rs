@@ -225,6 +225,7 @@ fn render_item(
                 })
                 .into_any_element(),
         })
+        .children(crate::explorer::hover_audio::progress_strip(&item.path))
         .map(|this| page.track_hit(this, ix))
         .when(is_dir, |this| crate::explorer::drag::drop_into(this, &item.path, cx))
         .into_any_element()

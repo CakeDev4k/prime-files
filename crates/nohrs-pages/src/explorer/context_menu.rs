@@ -5,6 +5,8 @@ use gpui::{AppContext as _, AsyncWindowContext, Context, Pixels, Point, WeakEnti
 use nohrs_core::config::{self, ThemeMode};
 use nohrs_core::telemetry::LogErr;
 
+use crate::explorer::commands::{OpenIn, interned, keys_of};
+use nohrs_core::shortcuts::Action;
 use super::ExplorerPane;
 use super::grouping::GroupBy;
 use super::types::{SortKey, StatusLevel, ViewMode};
@@ -47,10 +49,14 @@ enum Command {
     Rename,
     Delete,
     MoreOptions,
+    OpenCommandPrompt,
+    OpenPowerShell,
+    OpenWindowsTerminal,
+    OpenFileExplorer,
 }
 
 impl Command {
-    const ALL: [Command; 32] = [
+    const ALL: [Command; 36] = [
         Command::ViewList,
         Command::ViewGrid,
         Command::ViewTree,
@@ -83,6 +89,10 @@ impl Command {
         Command::Rename,
         Command::Delete,
         Command::MoreOptions,
+        Command::OpenCommandPrompt,
+        Command::OpenPowerShell,
+        Command::OpenWindowsTerminal,
+        Command::OpenFileExplorer,
     ];
 
     fn from_id(id: u32) -> Option<Self> {
@@ -570,15 +580,39 @@ impl ExplorerPane {
             .with_icon("icons/layers.svg"),
             Entry::command(Command::Refresh as u32, t!("Atualizar"))
                 .with_icon("icons/refresh-cw.svg")
-                .with_shortcut("F5"),
+                .with_shortcut(keys_of(Action::Refresh)),
             Entry::Separator,
             Entry::command(Command::Paste as u32, t!("Colar"))
                 .with_icon("icons/clipboard.svg")
-                .with_shortcut("Ctrl+V")
+                .with_shortcut(keys_of(Action::Paste))
                 .enabled(self.can_paste(cx)),
             Entry::command(Command::NewFolder as u32, t!("Nova pasta"))
                 .with_icon("icons/folder-plus.svg")
-                .with_shortcut("Ctrl+Shift+N"),
+                .with_shortcut(keys_of(Action::NewFolder)),
+            Entry::Separator,
+            Entry::submenu(t!("Abrir esta pasta no"), {
+                let mut programs = vec![
+                    Entry::command(Command::OpenCommandPrompt as u32, t!("Prompt de Comando"))
+                        .with_icon("icons/square-terminal.svg")
+                        .with_shortcut(keys_of(Action::OpenCommandPrompt)),
+                    Entry::command(Command::OpenPowerShell as u32, "PowerShell")
+                        .with_icon("icons/square-terminal.svg")
+                        .with_shortcut(keys_of(Action::OpenPowerShell)),
+                ];
+                if crate::explorer::commands::has_windows_terminal() {
+                    programs.push(
+                        Entry::command(Command::OpenWindowsTerminal as u32, "Windows Terminal")
+                            .with_icon("icons/app-terminal.svg"),
+                    );
+                }
+                programs.push(
+                    Entry::command(Command::OpenFileExplorer as u32, t!("Explorador do Windows"))
+                        .with_icon("icons/folder-open.svg")
+                        .with_shortcut(keys_of(Action::OpenFileExplorer)),
+                );
+                programs
+            })
+            .with_icon("icons/external-link.svg"),
         ]
     }
 
@@ -663,6 +697,10 @@ impl ExplorerPane {
             | Command::ColumnSize
             | Command::ColumnModified
             | Command::MoreOptions => {}
+            Command::OpenCommandPrompt => self.open_in(OpenIn::CommandPrompt, cx),
+            Command::OpenPowerShell => self.open_in(OpenIn::PowerShell, cx),
+            Command::OpenWindowsTerminal => self.open_in(OpenIn::WindowsTerminal, cx),
+            Command::OpenFileExplorer => self.open_in(OpenIn::FileExplorer, cx),
         }
     }
 
@@ -685,12 +723,17 @@ impl ExplorerPane {
     }
 }
 
+// "Copiar (Ctrl+C)", with whatever keys the command has now.
+fn labelled(label: &str, action: Action) -> &'static str {
+    interned(nohrs_core::shortcuts::with_keys(label, action))
+}
+
 fn quick_actions() -> Vec<QuickAction> {
     vec![
-        QuickAction { id: Command::Cut as u32, icon: "icons/scissors.svg", label: t!("Recortar (Ctrl+X)") },
-        QuickAction { id: Command::Copy as u32, icon: "icons/copy.svg", label: t!("Copiar (Ctrl+C)") },
-        QuickAction { id: Command::Rename as u32, icon: "icons/pencil.svg", label: t!("Renomear (F2)") },
-        QuickAction { id: Command::Delete as u32, icon: "icons/trash-2.svg", label: t!("Excluir (Delete)") },
+        QuickAction { id: Command::Cut as u32, icon: "icons/scissors.svg", label: labelled(t!("Recortar"), Action::Cut) },
+        QuickAction { id: Command::Copy as u32, icon: "icons/copy.svg", label: labelled(t!("Copiar"), Action::Copy) },
+        QuickAction { id: Command::Rename as u32, icon: "icons/pencil.svg", label: labelled(t!("Renomear"), Action::Rename) },
+        QuickAction { id: Command::Delete as u32, icon: "icons/trash-2.svg", label: labelled(t!("Excluir"), Action::Trash) },
     ]
 }
 

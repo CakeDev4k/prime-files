@@ -474,10 +474,19 @@ const WAVEFORM_GAP: f32 = 1.0;
 /// A sound file's waveform in an icon's square, for the icons view and the
 /// preview's folder grid: the bars are quads painted on one canvas, so a
 /// screen of tiles adds no element per bar to the layout.
-pub(crate) fn canvas(bars: Arc<[u8]>, icon: f32, selected: bool) -> gpui::AnyElement {
+/// `played` (0..=1), when the sound is playing under the mouse, paints the
+/// bars already heard in the accent colour, as the preview's timeline does.
+pub(crate) fn canvas(bars: Arc<[u8]>, icon: f32, selected: bool, played: Option<f32>) -> gpui::AnyElement {
     use gpui::{Bounds, Hsla, IntoElement as _, Styled as _, fill, point, px, rgb, size};
     use nohrs_ui::theme::theme;
-    let color: Hsla = rgb(if selected { theme::accent() } else { theme::fg_secondary() }).into();
+    let (color, heard): (Hsla, Hsla) = match played {
+        Some(_) => (rgb(theme::muted()).into(), rgb(theme::accent()).into()),
+        None => {
+            let color: Hsla = rgb(if selected { theme::accent() } else { theme::fg_secondary() }).into();
+            (color, color)
+        }
+    };
+    let played = played.unwrap_or(0.0);
     gpui::canvas(
         |_bounds, _window, _cx| {},
         move |bounds, (), window, _cx| {
@@ -492,9 +501,10 @@ pub(crate) fn canvas(bars: Arc<[u8]>, icon: f32, selected: bool) -> gpui::AnyEle
                 // Silence still draws a line, so the tile never looks empty.
                 let bar_height = (f32::from(bar) / 255.0 * height).max(1.0);
                 let x = left + index as f32 * (WAVEFORM_BAR + WAVEFORM_GAP);
+                let done = (index as f32 + 0.5) / count as f32 <= played;
                 window.paint_quad(fill(
                     Bounds::new(point(px(x), px(middle - bar_height / 2.0)), size(px(WAVEFORM_BAR), px(bar_height))),
-                    color,
+                    if done { heard } else { color },
                 ));
             }
         },

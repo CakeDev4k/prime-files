@@ -141,7 +141,11 @@ pub fn render(
                                 .hover(|button| button.bg(rgb(theme::bg_hover())).text_color(rgb(theme::fg())))
                         })
                         .tooltip(|window, cx| {
-                            Tooltip::new(t!("Buscar em todo o computador (Ctrl+E)")).build(window, cx)
+                            Tooltip::new(nohrs_core::shortcuts::with_keys(
+                                t!("Buscar em todo o computador"),
+                                nohrs_core::shortcuts::Action::SearchEverything,
+                            ))
+                            .build(window, cx)
                         })
                         .on_click(cx.listener(|page, _, window, cx| {
                             let on = !page.everything_on();
@@ -217,7 +221,10 @@ pub fn render(
                 String::new(),
                 false,
             )
-            .tooltip(|window, cx| Tooltip::new("Terminal (Ctrl+')").build(window, cx))
+            .tooltip(|window, cx| {
+                Tooltip::new(nohrs_core::shortcuts::with_keys("Terminal", nohrs_core::shortcuts::Action::ToggleTerminal))
+                    .build(window, cx)
+            })
             .on_click(cx.listener(|_page, _, window, cx| {
                 window.dispatch_action(Box::new(crate::explorer::page::ToggleTerminal), cx);
             })),
@@ -345,7 +352,8 @@ fn render_zoom_switch(
                 .hover(|style| style.bg(rgb(theme::bg_hover())))
                 .when(open, |style| style.bg(rgb(theme::bg_hover())))
                 .on_click(cx.listener(|page, _, _, cx| {
-                    page.zoom_menu_open = !page.zoom_menu_open;
+                    // A shown-for-a-moment menu clicked stays, as a clicked one.
+                    page.zoom_menu_open = page.zoom_menu_flash.take().is_some() || !page.zoom_menu_open;
                     cx.notify();
                 }))
                 .child(view_icon(current).size_3p5().text_color(rgb(theme::muted())))
@@ -409,7 +417,12 @@ fn render_zoom_menu(
         .shadow_xl()
         .on_mouse_down_out(cx.listener(|page, _, _, cx| {
             page.zoom_menu_open = false;
+            page.zoom_menu_flash = None;
+            page.zoom_menu_hovered = false;
             cx.notify();
+        }))
+        .on_hover(cx.listener(|page, hovered: &bool, _, _cx| {
+            page.zoom_menu_hovered = *hovered;
         }))
         .child(
             div()

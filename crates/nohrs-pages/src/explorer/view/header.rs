@@ -213,6 +213,7 @@ pub fn render(
                         .mr(px(4.0))
                         .child(i18n::plural(entry_count, k!("{n} item"), k!("{n} itens"))),
                 )
+                .child(render_open_in(page, cx))
                 .child(render_view_mode_toggle(page, cx))
                 .child(
                     // The preview switch sits up here, beside the view modes,
@@ -238,6 +239,100 @@ pub fn render(
                         ),
                 ),
         )
+}
+
+// "Open in": the folder on screen in the Command Prompt, PowerShell,
+// Windows Terminal (when installed) or Windows' own Explorer, each with the
+// shortcut it was given in Settings › Shortcuts.
+fn render_open_in(page: &mut ExplorerPane, cx: &mut Context<ExplorerPane>) -> impl IntoElement + use<> {
+    use crate::explorer::commands::{OpenIn, has_windows_terminal};
+    use nohrs_core::shortcuts::{Action, display};
+    let open = page.open_in_menu;
+    let mut items: Vec<(OpenIn, &'static str, &'static str, Option<String>)> = vec![
+        (OpenIn::CommandPrompt, "icons/square-terminal.svg", t!("Prompt de Comando"), display(Action::OpenCommandPrompt)),
+        (OpenIn::PowerShell, "icons/square-terminal.svg", "PowerShell", display(Action::OpenPowerShell)),
+    ];
+    if has_windows_terminal() {
+        items.push((OpenIn::WindowsTerminal, "icons/app-terminal.svg", "Windows Terminal", None));
+    }
+    items.push((OpenIn::FileExplorer, "icons/folder-open.svg", t!("Explorador do Windows"), display(Action::OpenFileExplorer)));
+    div()
+        .relative()
+        .flex_shrink_0()
+        .child(
+            div()
+                .id("open-in")
+                .px(px(8.0))
+                .py(px(6.0))
+                .rounded(px(6.0))
+                .cursor_pointer()
+                .hover(|style| style.bg(rgb(theme::bg_hover())))
+                .when(open, |style| style.bg(rgb(theme::bg_hover())))
+                .tooltip(|window, cx| {
+                    gpui_component::tooltip::Tooltip::new(t!("Abrir a pasta em outro programa")).build(window, cx)
+                })
+                .on_click(cx.listener(|page, _, _, cx| {
+                    page.open_in_menu = !page.open_in_menu;
+                    cx.notify();
+                }))
+                .child(
+                    Icon::new(Icon::empty())
+                        .path("icons/external-link.svg")
+                        .size_4()
+                        .text_color(rgb(if open { theme::accent() } else { theme::gray_600() })),
+                ),
+        )
+        .when(open, |this| {
+            this.child(deferred(
+                div()
+                    .id("open-in-menu")
+                    .absolute()
+                    .top(px(34.0))
+                    .right_0()
+                    .min_w(px(240.0))
+                    .p(px(4.0))
+                    .flex()
+                    .flex_col()
+                    .gap(px(2.0))
+                    .rounded(px(8.0))
+                    .border_1()
+                    .border_color(rgb(theme::border()))
+                    .bg(rgb(theme::bg_secondary()))
+                    .shadow_xl()
+                    .occlude()
+                    .on_mouse_down_out(cx.listener(|page, _, _, cx| {
+                        page.open_in_menu = false;
+                        cx.notify();
+                    }))
+                    .child(
+                        div()
+                            .px(px(8.0))
+                            .pt(px(4.0))
+                            .pb(px(2.0))
+                            .text_xs()
+                            .text_color(rgb(theme::muted()))
+                            .child(t!("Abrir esta pasta no")),
+                    )
+                    .children(items.into_iter().map(|(program, icon, label, keys)| {
+                        div()
+                            .id(SharedString::from(format!("open-in-{program:?}")))
+                            .h(px(30.0))
+                            .px(px(8.0))
+                            .flex()
+                            .items_center()
+                            .gap_2()
+                            .rounded(px(5.0))
+                            .cursor_pointer()
+                            .text_sm()
+                            .text_color(rgb(theme::fg()))
+                            .hover(|style| style.bg(rgb(theme::bg_hover())))
+                            .on_click(cx.listener(move |page, _, _, cx| page.open_in(program, cx)))
+                            .child(Icon::new(Icon::empty()).path(icon).size_4().text_color(rgb(theme::fg_secondary())))
+                            .child(div().flex_1().child(label))
+                            .children(keys.map(|keys| div().text_xs().text_color(rgb(theme::muted())).child(keys)))
+                    })),
+            ))
+        })
 }
 
 fn render_view_mode_toggle(

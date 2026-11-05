@@ -197,6 +197,12 @@ impl RootView {
         if nohrs_core::i18n::apply_preference(&config.ui.language) {
             cx.refresh_windows();
         }
+        // The explorer reads the keymap on every key press and the menus show
+        // its keys; only the page's own actions need binding again.
+        if nohrs_core::shortcuts::apply(&config.keybindings.bindings) {
+            crate::explorer::rebind_shortcuts(cx);
+            cx.refresh_windows();
+        }
         // Before `restyle_components`, which reads these tokens.
         theme::set_dark(mode.is_dark());
         theme::set_accent(theme::parse_accent(&config.theme.accent));

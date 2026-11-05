@@ -16,7 +16,7 @@ pub mod paths;
 pub mod settings;
 pub mod watcher;
 
-pub use loader::{backup, ensure_exists, needs_migration, reset, set_value, write_default};
+pub use loader::{backup, ensure_exists, needs_migration, remove_value, reset, set_value, write_default};
 pub use settings::{
     CURRENT_SCHEMA_VERSION, Compact, Config, ConfigOverride, Diagnostic, DiagnosticLevel, Diagnostics,
     DiagnosticsStore, Explorer, Indexing, IndexingExclude, IndexingMode, Keybindings, Launcher,

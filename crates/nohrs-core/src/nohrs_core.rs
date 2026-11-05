@@ -7,5 +7,7 @@ pub mod config;
 pub mod errors;
 /// Interface language: `t!`/`tf!` and the translation table.
 pub mod i18n;
+/// Keyboard shortcuts: the commands, their default keys and `[keybindings]`.
+pub mod shortcuts;
 /// Logging and other telemetry setup.
 pub mod telemetry;

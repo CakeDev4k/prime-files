@@ -137,6 +137,50 @@ pub(super) static EXTRA: &[(&str, [&str; 6])] = &[
         ],
     ),
     (
+        "Abrir a pasta em outro programa",
+        [
+            "Ouvrir le dossier dans un autre programme",
+            "Ordner in einem anderen Programm öffnen",
+            "Apri la cartella in un altro programma",
+            "Открыть папку в другой программе",
+            "フォルダーを別のアプリで開く",
+            "在其他程序中打开文件夹",
+        ],
+    ),
+    (
+        "Abrir a pasta no Explorador do Windows",
+        [
+            "Ouvrir le dossier dans l'Explorateur Windows",
+            "Ordner im Windows-Explorer öffnen",
+            "Apri la cartella in Esplora file di Windows",
+            "Открыть папку в Проводнике Windows",
+            "フォルダーを Windows エクスプローラーで開く",
+            "在 Windows 资源管理器中打开文件夹",
+        ],
+    ),
+    (
+        "Abrir a pasta no PowerShell",
+        [
+            "Ouvrir le dossier dans PowerShell",
+            "Ordner in PowerShell öffnen",
+            "Apri la cartella in PowerShell",
+            "Открыть папку в PowerShell",
+            "フォルダーを PowerShell で開く",
+            "在 PowerShell 中打开文件夹",
+        ],
+    ),
+    (
+        "Abrir a pasta no Prompt de Comando",
+        [
+            "Ouvrir le dossier dans l'invite de commandes",
+            "Ordner in der Eingabeaufforderung öffnen",
+            "Apri la cartella nel Prompt dei comandi",
+            "Открыть папку в командной строке",
+            "フォルダーをコマンド プロンプトで開く",
+            "在命令提示符中打开文件夹",
+        ],
+    ),
+    (
         "Abrir config.toml",
         [
             "Ouvrir config.toml",
@@ -145,6 +189,28 @@ pub(super) static EXTRA: &[(&str, [&str; 6])] = &[
             "Открыть config.toml",
             "config.toml を開く",
             "打开 config.toml",
+        ],
+    ),
+    (
+        "Abrir em outro programa",
+        [
+            "Ouvrir dans un autre programme",
+            "In anderem Programm öffnen",
+            "Apri in un altro programma",
+            "Открыть в другой программе",
+            "別のアプリで開く",
+            "在其他程序中打开",
+        ],
+    ),
+    (
+        "Abrir esta pasta no",
+        [
+            "Ouvrir ce dossier dans",
+            "Diesen Ordner öffnen in",
+            "Apri questa cartella in",
+            "Открыть эту папку в",
+            "このフォルダーを開くアプリ",
+            "在以下程序中打开此文件夹",
         ],
     ),
     (
@@ -269,6 +335,17 @@ pub(super) static EXTRA: &[(&str, [&str; 6])] = &[
         ],
     ),
     (
+        "Aperte as teclas…",
+        [
+            "Appuyez sur les touches…",
+            "Tasten drücken…",
+            "Premi i tasti…",
+            "Нажмите клавиши…",
+            "キーを押してください…",
+            "请按下按键…",
+        ],
+    ),
+    (
         "Aplicar a todos os conflitos restantes (mais {remaining})",
         [
             "Appliquer à tous les conflits restants ({remaining} de plus)",
@@ -343,17 +420,6 @@ pub(super) static EXTRA: &[(&str, [&str; 6])] = &[
             "Сначала файлы, потом папки",
             "ファイルを先に、次にフォルダー",
             "先文件，后文件夹",
-        ],
-    ),
-    (
-        "As teclas que o explorador entende.",
-        [
-            "Les touches que l'explorateur comprend.",
-            "Die Tasten, die der Explorer versteht.",
-            "I tasti che l'esploratore capisce.",
-            "Клавиши, которые понимает проводник.",
-            "エクスプローラーが使えるキー。",
-            "资源管理器能识别的按键。",
         ],
     ),
     (
@@ -445,14 +511,14 @@ pub(super) static EXTRA: &[(&str, [&str; 6])] = &[
         ],
     ),
     (
-        "Aumentar / diminuir o zoom",
+        "Aumentar o zoom",
         [
-            "Zoom avant / arrière",
-            "Vergrößern / verkleinern",
-            "Aumenta / riduci lo zoom",
-            "Увеличить / уменьшить масштаб",
-            "拡大 / 縮小",
-            "放大 / 缩小",
+            "Zoom avant",
+            "Vergrößern",
+            "Aumenta lo zoom",
+            "Увеличить масштаб",
+            "拡大",
+            "放大",
         ],
     ),
     (
@@ -599,17 +665,6 @@ pub(super) static EXTRA: &[(&str, [&str; 6])] = &[
         ],
     ),
     (
-        "Buscar em todo o computador (Ctrl+E)",
-        [
-            "Rechercher dans tout l'ordinateur (Ctrl+E)",
-            "Den ganzen Computer durchsuchen (Strg+E)",
-            "Cerca in tutto il computer (Ctrl+E)",
-            "Искать по всему компьютеру (Ctrl+E)",
-            "コンピューター全体を検索 (Ctrl+E)",
-            "搜索整台电脑 (Ctrl+E)",
-        ],
-    ),
-    (
         "Buscar em todo o computador…",
         [
             "Rechercher dans tout l'ordinateur…",
@@ -731,6 +786,17 @@ pub(super) static EXTRA: &[(&str, [&str; 6])] = &[
         ],
     ),
     (
+        "Clique na tecla de um comando e aperte a combinação nova; Esc desiste. Um atalho que já era de outro comando sai dele. Vale na hora.",
+        [
+            "Cliquez sur la touche d'une commande et appuyez sur la nouvelle combinaison ; Échap annule. Un raccourci qui appartenait à une autre commande lui est retiré. S'applique tout de suite.",
+            "Klicken Sie auf die Taste eines Befehls und drücken Sie die neue Kombination; Esc bricht ab. Ein Kürzel, das einem anderen Befehl gehörte, wird ihm entzogen. Gilt sofort.",
+            "Fai clic sul tasto di un comando e premi la nuova combinazione; Esc annulla. Una scorciatoia che era di un altro comando gli viene tolta. Vale subito.",
+            "Нажмите на клавишу команды и введите новое сочетание; Esc — отмена. Сочетание, которое было у другой команды, у неё отнимается. Применяется сразу.",
+            "コマンドのキーをクリックして新しい組み合わせを押します。Esc で中止。ほかのコマンドが使っていたショートカットはそちらから外れます。すぐに反映されます。",
+            "单击某个命令的按键，然后按下新的组合；按 Esc 放弃。已属于其他命令的快捷键会从该命令移除。立即生效。",
+        ],
+    ),
+    (
         "Colar",
         [
             "Coller",
@@ -772,6 +838,17 @@ pub(super) static EXTRA: &[(&str, [&str; 6])] = &[
             "Как сортируется каждая папка при открытии.",
             "各フォルダーを開いたときの並び順。",
             "每个文件夹打开时的排序方式。",
+        ],
+    ),
+    (
+        "Como mudar",
+        [
+            "Comment modifier",
+            "So ändern",
+            "Come cambiare",
+            "Как изменить",
+            "変更のしかた",
+            "如何更改",
         ],
     ),
     (
@@ -849,17 +926,6 @@ pub(super) static EXTRA: &[(&str, [&str; 6])] = &[
             "Копировать",
             "コピー",
             "复制",
-        ],
-    ),
-    (
-        "Copiar (Ctrl+C)",
-        [
-            "Copier (Ctrl+C)",
-            "Kopieren (Strg+C)",
-            "Copia (Ctrl+C)",
-            "Копировать (Ctrl+C)",
-            "コピー (Ctrl+C)",
-            "复制 (Ctrl+C)",
         ],
     ),
     (
@@ -1003,6 +1069,17 @@ pub(super) static EXTRA: &[(&str, [&str; 6])] = &[
             "Таблица",
             "詳細",
             "详细信息",
+        ],
+    ),
+    (
+        "Diminuir o zoom",
+        [
+            "Zoom arrière",
+            "Verkleinern",
+            "Riduci lo zoom",
+            "Уменьшить масштаб",
+            "縮小",
+            "缩小",
         ],
     ),
     (
@@ -1281,17 +1358,6 @@ pub(super) static EXTRA: &[(&str, [&str; 6])] = &[
         ],
     ),
     (
-        "Excluir (Delete)",
-        [
-            "Supprimer (Suppr)",
-            "Löschen (Entf)",
-            "Elimina (Canc)",
-            "Удалить (Delete)",
-            "削除 (Delete)",
-            "删除 (Delete)",
-        ],
-    ),
-    (
         "Excluir para sempre",
         [
             "Supprimer définitivement",
@@ -1344,6 +1410,17 @@ pub(super) static EXTRA: &[(&str, [&str; 6])] = &[
             "Вид",
             "表示",
             "显示",
+        ],
+    ),
+    (
+        "Explorador do Windows",
+        [
+            "Explorateur Windows",
+            "Windows-Explorer",
+            "Esplora file di Windows",
+            "Проводник Windows",
+            "Windows エクスプローラー",
+            "Windows 资源管理器",
         ],
     ),
     (
@@ -1410,6 +1487,17 @@ pub(super) static EXTRA: &[(&str, [&str; 6])] = &[
             "Тонкая",
             "細い",
             "细",
+        ],
+    ),
+    (
+        "Fixos",
+        [
+            "Fixes",
+            "Fest",
+            "Fissi",
+            "Неизменяемые",
+            "固定",
+            "固定",
         ],
     ),
     (
@@ -1567,14 +1655,25 @@ pub(super) static EXTRA: &[(&str, [&str; 6])] = &[
         ],
     ),
     (
-        "Ir para o painel 1 ou 2",
+        "Ir para o painel 1",
         [
-            "Aller au volet 1 ou 2",
-            "Zu Bereich 1 oder 2 wechseln",
-            "Vai al riquadro 1 o 2",
-            "Перейти к панели 1 или 2",
-            "ペイン 1 または 2 へ移動",
-            "转到窗格 1 或 2",
+            "Aller au volet 1",
+            "Zu Bereich 1 wechseln",
+            "Vai al riquadro 1",
+            "Перейти к панели 1",
+            "ペイン 1 へ移動",
+            "转到窗格 1",
+        ],
+    ),
+    (
+        "Ir para o painel 2",
+        [
+            "Aller au volet 2",
+            "Zu Bereich 2 wechseln",
+            "Vai al riquadro 2",
+            "Перейти к панели 2",
+            "ペイン 2 へ移動",
+            "转到窗格 2",
         ],
     ),
     (
@@ -1663,6 +1762,17 @@ pub(super) static EXTRA: &[(&str, [&str; 6])] = &[
             "Медленная",
             "遅い",
             "慢",
+        ],
+    ),
+    (
+        "Letras, números e símbolos precisam de Ctrl ou Alt: sozinhos, eles digitam no filtro.",
+        [
+            "Les lettres, chiffres et symboles ont besoin de Ctrl ou Alt : seuls, ils s'écrivent dans le filtre.",
+            "Buchstaben, Ziffern und Symbole brauchen Strg oder Alt: allein schreiben sie in den Filter.",
+            "Lettere, numeri e simboli richiedono Ctrl o Alt: da soli scrivono nel filtro.",
+            "Буквам, цифрам и символам нужен Ctrl или Alt: без них они вводятся в фильтр.",
+            "文字・数字・記号には Ctrl か Alt が必要です。単独ではフィルターに入力されます。",
+            "字母、数字和符号需要配合 Ctrl 或 Alt：单独按下会输入到筛选框。",
         ],
     ),
     (
@@ -1850,6 +1960,17 @@ pub(super) static EXTRA: &[(&str, [&str; 6])] = &[
             "Изменение Listary…",
             "Listary を変更中…",
             "正在更改 Listary…",
+        ],
+    ),
+    (
+        "Mude as teclas de cada comando do explorador.",
+        [
+            "Modifiez les touches de chaque commande de l'explorateur.",
+            "Ändern Sie die Tasten jedes Explorer-Befehls.",
+            "Cambia i tasti di ogni comando dell'esploratore.",
+            "Измените клавиши для каждой команды проводника.",
+            "エクスプローラーの各コマンドのキーを変更します。",
+            "更改资源管理器每个命令的按键。",
         ],
     ),
     (
@@ -2062,6 +2183,17 @@ pub(super) static EXTRA: &[(&str, [&str; 6])] = &[
         ],
     ),
     (
+        "Não foi possível abrir o programa: {error}",
+        [
+            "Impossible d'ouvrir le programme : {error}",
+            "Programm konnte nicht geöffnet werden: {error}",
+            "Impossibile aprire il programma: {error}",
+            "Не удалось открыть программу: {error}",
+            "アプリを開けませんでした: {error}",
+            "无法打开程序：{error}",
+        ],
+    ),
+    (
         "Não foi possível abrir o terminal: {error}",
         [
             "Impossible d'ouvrir le terminal : {error}",
@@ -2169,6 +2301,17 @@ pub(super) static EXTRA: &[(&str, [&str; 6])] = &[
             "Не удалось восстановить: {error}",
             "元に戻せませんでした: {error}",
             "无法恢复：{error}",
+        ],
+    ),
+    (
+        "Não foi possível salvar os atalhos: {error}",
+        [
+            "Impossible d'enregistrer les raccourcis : {error}",
+            "Tastenkürzel konnten nicht gespeichert werden: {error}",
+            "Impossibile salvare le scorciatoie: {error}",
+            "Не удалось сохранить сочетания клавиш: {error}",
+            "ショートカットを保存できませんでした: {error}",
+            "无法保存快捷键：{error}",
         ],
     ),
     (
@@ -2345,6 +2488,17 @@ pub(super) static EXTRA: &[(&str, [&str; 6])] = &[
             "Прослушивание при наведении",
             "マウスを置いて試聴",
             "悬停试听",
+        ],
+    ),
+    (
+        "Painel anterior",
+        [
+            "Volet précédent",
+            "Vorheriger Bereich",
+            "Riquadro precedente",
+            "Предыдущая панель",
+            "前のペイン",
+            "上一个窗格",
         ],
     ),
     (
@@ -2612,14 +2766,25 @@ pub(super) static EXTRA: &[(&str, [&str; 6])] = &[
         ],
     ),
     (
-        "Próximo / anterior painel",
+        "Prompt de Comando",
         [
-            "Volet suivant / précédent",
-            "Nächster / vorheriger Bereich",
-            "Riquadro successivo / precedente",
-            "Следующая / предыдущая панель",
-            "次 / 前のペイン",
-            "下一个 / 上一个窗格",
+            "Invite de commandes",
+            "Eingabeaufforderung",
+            "Prompt dei comandi",
+            "Командная строка",
+            "コマンド プロンプト",
+            "命令提示符",
+        ],
+    ),
+    (
+        "Próximo painel",
+        [
+            "Volet suivant",
+            "Nächster Bereich",
+            "Riquadro successivo",
+            "Следующая панель",
+            "次のペイン",
+            "下一个窗格",
         ],
     ),
     (
@@ -2722,17 +2887,6 @@ pub(super) static EXTRA: &[(&str, [&str; 6])] = &[
         ],
     ),
     (
-        "Recortar (Ctrl+X)",
-        [
-            "Couper (Ctrl+X)",
-            "Ausschneiden (Strg+X)",
-            "Taglia (Ctrl+X)",
-            "Вырезать (Ctrl+X)",
-            "切り取り (Ctrl+X)",
-            "剪切 (Ctrl+X)",
-        ],
-    ),
-    (
         "Reindexar agora",
         [
             "Réindexer maintenant",
@@ -2741,6 +2895,17 @@ pub(super) static EXTRA: &[(&str, [&str; 6])] = &[
             "Переиндексировать сейчас",
             "今すぐ再インデックス",
             "立即重建索引",
+        ],
+    ),
+    (
+        "Remover o atalho",
+        [
+            "Supprimer le raccourci",
+            "Kürzel entfernen",
+            "Rimuovi la scorciatoia",
+            "Удалить сочетание",
+            "ショートカットを削除",
+            "删除快捷键",
         ],
     ),
     (
@@ -2766,17 +2931,6 @@ pub(super) static EXTRA: &[(&str, [&str; 6])] = &[
         ],
     ),
     (
-        "Renomear (F2)",
-        [
-            "Renommer (F2)",
-            "Umbenennen (F2)",
-            "Rinomina (F2)",
-            "Переименовать (F2)",
-            "名前の変更 (F2)",
-            "重命名 (F2)",
-        ],
-    ),
-    (
         "Restaurar padrão",
         [
             "Restaurer les valeurs par défaut",
@@ -2785,6 +2939,17 @@ pub(super) static EXTRA: &[(&str, [&str; 6])] = &[
             "Восстановить по умолчанию",
             "既定に戻す",
             "恢复默认设置",
+        ],
+    ),
+    (
+        "Restaurar todos",
+        [
+            "Tout restaurer",
+            "Alle wiederherstellen",
+            "Ripristina tutti",
+            "Восстановить все",
+            "すべて元に戻す",
+            "全部恢复",
         ],
     ),
     (
@@ -3052,6 +3217,17 @@ pub(super) static EXTRA: &[(&str, [&str; 6])] = &[
         ],
     ),
     (
+        "Tirado de: {commands}.",
+        [
+            "Retiré de : {commands}.",
+            "Entfernt von: {commands}.",
+            "Tolto da: {commands}.",
+            "Снято с: {commands}.",
+            "削除元: {commands}。",
+            "已从以下命令移除：{commands}。",
+        ],
+    ),
+    (
         "Tocar ao abrir no visualizador",
         [
             "Lire à l'ouverture dans l'aperçu",
@@ -3071,6 +3247,17 @@ pub(super) static EXTRA: &[(&str, [&str; 6])] = &[
             "Воспроизводить при наведении",
             "マウスを置いたら再生",
             "悬停时播放",
+        ],
+    ),
+    (
+        "Todos os atalhos voltaram ao padrão.",
+        [
+            "Tous les raccourcis sont revenus par défaut.",
+            "Alle Tastenkürzel sind wieder auf Standard.",
+            "Tutte le scorciatoie sono tornate predefinite.",
+            "Все сочетания клавиш возвращены к стандартным.",
+            "すべてのショートカットを既定に戻しました。",
+            "所有快捷键都已恢复默认。",
         ],
     ),
     (
@@ -3544,6 +3731,17 @@ pub(super) static EXTRA: &[(&str, [&str; 6])] = &[
             "{installer} нет в {sums}",
             "{installer} は {sums} にありません",
             "{installer} 不在 {sums} 中",
+        ],
+    ),
+    (
+        "{keys} agora: {command}.",
+        [
+            "{keys} maintenant : {command}.",
+            "{keys} jetzt: {command}.",
+            "{keys} ora: {command}.",
+            "{keys} теперь: {command}.",
+            "{keys} は今後: {command}。",
+            "{keys} 现在用于：{command}。",
         ],
     ),
     (

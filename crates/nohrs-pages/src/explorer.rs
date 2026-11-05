@@ -1,3 +1,4 @@
+pub(crate) mod commands;
 pub(crate) mod context_menu;
 mod drag;
 pub(crate) mod drives;
@@ -7,7 +8,7 @@ pub(crate) mod file_ops;
 mod filter;
 mod folder_views;
 mod grouping;
-mod hover_audio;
+pub(crate) mod hover_audio;
 mod list_setup;
 mod marquee;
 mod navigation;
@@ -36,7 +37,7 @@ mod zoom;
 mod tests;
 
 pub(crate) use context_menu::note_theme_mode;
-pub use page::ExplorerPage;
+pub use page::{ExplorerPage, rebind_shortcuts};
 pub use state::ExplorerPane;
 // Part of `status_for_footer`'s signature, so it has to travel with it. The rest
 // of `types` stays internal.

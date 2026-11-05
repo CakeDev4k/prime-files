@@ -72,6 +72,46 @@ pub(crate) fn stop() {
 
 static PLAYED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
+// The file playing and how far along, 0..=1, written by the player thread
+// while it plays: the listing colours the played part of the waveform from it.
+static PROGRESS: Mutex<Option<(String, f32)>> = Mutex::new(None);
+
+fn set_progress(progress: Option<(String, f32)>) {
+    match PROGRESS.lock() {
+        Ok(mut current) => *current = progress,
+        Err(poisoned) => *poisoned.into_inner() = progress,
+    }
+}
+
+/// How far the sound playing under the mouse is, 0..=1, if `path` is it.
+pub(crate) fn progress_of(path: &str) -> Option<f32> {
+    let current = PROGRESS.lock().ok()?;
+    current.as_ref().filter(|(playing, _)| playing == path).map(|(_, fraction)| *fraction)
+}
+
+/// Whether a sound started by the mouse is playing, so the listing keeps
+/// drawing frames to move its progress.
+pub(crate) fn playing() -> bool {
+    PROGRESS.lock().is_ok_and(|current| current.is_some())
+}
+
+/// A line along the bottom of an entry, as long as the part of its sound
+/// already played; for entries whose icon is not a waveform to colour.
+pub(crate) fn progress_strip(path: &str) -> Option<gpui::AnyElement> {
+    use gpui::{IntoElement as _, ParentElement as _, Styled as _, div, px, relative, rgb};
+    let fraction = progress_of(path)?;
+    Some(
+        div()
+            .absolute()
+            .left_0()
+            .right_0()
+            .bottom_0()
+            .h(px(2.0))
+            .child(div().h_full().w(relative(fraction.clamp(0.0, 1.0))).bg(rgb(nohrs_ui::theme::theme::accent())))
+            .into_any_element(),
+    )
+}
+
 impl ExplorerPane {
     /// The mouse entered (`hovered`) or left the entry for `path`.
     pub(crate) fn hover_audio_changed(&mut self, path: String, hovered: bool, cx: &mut Context<Self>) {
@@ -139,8 +179,9 @@ impl ExplorerPane {
 mod platform {
     //! The engine; `unsafe` stays here, as in `media.rs`.
 
-    use super::Command;
+    use super::{Command, set_progress};
     use std::sync::mpsc;
+    use std::time::Duration;
     use windows::Win32::Media::MediaFoundation::{
         CLSID_MFMediaEngineClassFactory, IMFAttributes, IMFMediaEngine, IMFMediaEngineClassFactory,
         IMFMediaEngineNotify, IMFMediaEngineNotify_Impl, MF_MEDIA_ENGINE_AUDIOONLY, MF_MEDIA_ENGINE_CALLBACK,
@@ -173,9 +214,36 @@ mod platform {
                 return;
             }
         };
-        // Blocks between commands: the thread costs nothing while nobody
-        // hovers. The app's end drops the sender and ends the loop.
-        while let Ok(mut command) = commands.recv() {
+        // Blocks between commands while nothing plays: the thread costs
+        // nothing while nobody hovers. While a sound plays it wakes every
+        // 40 ms to publish where it is. The app's end drops the sender.
+        let mut current: Option<String> = None;
+        loop {
+            let received = if current.is_some() {
+                match commands.recv_timeout(Duration::from_millis(40)) {
+                    Ok(command) => Some(command),
+                    Err(mpsc::RecvTimeoutError::Timeout) => None,
+                    Err(mpsc::RecvTimeoutError::Disconnected) => break,
+                }
+            } else {
+                match commands.recv() {
+                    Ok(command) => Some(command),
+                    Err(_) => break,
+                }
+            };
+            let Some(mut command) = received else {
+                if let Some(path) = &current {
+                    let (position, duration, ended) =
+                        unsafe { (engine.GetCurrentTime(), engine.GetDuration(), engine.IsEnded().as_bool()) };
+                    if ended {
+                        set_progress(None);
+                        current = None;
+                    } else if duration.is_finite() && duration > 0.0 {
+                        set_progress(Some((path.clone(), (position / duration).clamp(0.0, 1.0) as f32)));
+                    }
+                }
+                continue;
+            };
             // Sweeping the mouse over a column of sounds queues a play and a
             // stop per file; only the last one still means anything.
             while let Ok(next) = commands.try_recv() {
@@ -187,11 +255,17 @@ mod platform {
                     engine.SetVolume(volume).ok();
                     if let Err(error) = engine.SetSource(&BSTR::from(path.as_str())) {
                         tracing::warn!("hover player could not open {path}: {error}");
+                        set_progress(None);
+                        current = None;
                         continue;
                     }
                     engine.Play().ok();
+                    set_progress(Some((path.clone(), 0.0)));
+                    current = Some(path);
                 },
                 Command::Stop => unsafe {
+                    set_progress(None);
+                    current = None;
                     engine.Pause().ok();
                     // Releases the file, so it can be renamed or deleted while
                     // the mouse is elsewhere.

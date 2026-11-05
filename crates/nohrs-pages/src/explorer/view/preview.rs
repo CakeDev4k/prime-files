@@ -1312,7 +1312,7 @@ fn render_listing_grid(
                                         .items_center()
                                         .justify_center()
                                         .child(match (waveform, image) {
-                                            (Some(bars), _) => crate::explorer::waveforms::canvas(bars, tile, false),
+                                            (Some(bars), _) => crate::explorer::waveforms::canvas(bars, tile, false, None),
                                             (None, Some(image)) => img(ImageSource::Render(image))
                                                 .size_full()
                                                 .object_fit(gpui::ObjectFit::Contain)

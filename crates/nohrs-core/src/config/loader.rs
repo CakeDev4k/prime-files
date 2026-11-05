@@ -92,6 +92,47 @@ pub fn set_value(path: &Path, section: &str, key: &str, value: &str) -> io::Resu
     std::fs::write(path, with_value(&text, section, key, value))
 }
 
+/// Removes `key` from `[section]` of the file at `path`, so the built-in
+/// default applies again; every other line stays as it was. A missing file,
+/// section or key is not an error: the default already applies.
+#[allow(clippy::disallowed_methods)]
+pub fn remove_value(path: &Path, section: &str, key: &str) -> io::Result<()> {
+    let text = match std::fs::read_to_string(path) {
+        Ok(text) => text,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(()),
+        Err(error) => return Err(error),
+    };
+    let without = without_value(&text, section, key);
+    if without != text {
+        std::fs::write(path, without)?;
+    }
+    Ok(())
+}
+
+/// The text of [`remove_value`], without the file.
+fn without_value(text: &str, section: &str, key: &str) -> String {
+    let header = format!("[{section}]");
+    let mut in_section = false;
+    let mut kept = Vec::new();
+    for line in text.lines() {
+        let trimmed = line.trim_start();
+        if trimmed.starts_with('[') {
+            in_section = line.trim() == header;
+        } else if in_section
+            && trimmed.strip_prefix(key).is_some_and(|rest| rest.trim_start().starts_with('='))
+        {
+            continue;
+        }
+        kept.push(line);
+    }
+    let mut out = kept.join("
+");
+    if text.ends_with('\n') {
+        out.push('\n');
+    }
+    out
+}
+
 /// The text of [`set_value`], without the file.
 fn with_value(text: &str, section: &str, key: &str, value: &str) -> String {
     let header = format!("[{section}]");
@@ -170,6 +211,14 @@ pub fn needs_migration(version: u64) -> bool {
 #[allow(clippy::unwrap_used, clippy::disallowed_methods)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn without_value_drops_only_that_key_in_that_section() {
+        let text = "[keybindings]\ncopy = \"ctrl-shift-c\"\ncopy_path = \"ctrl-p\"\n\n[ui]\ncopy = 1\n";
+        let out = without_value(text, "keybindings", "copy");
+        assert_eq!(out, "[keybindings]\ncopy_path = \"ctrl-p\"\n\n[ui]\ncopy = 1\n");
+        assert_eq!(without_value(&out, "keybindings", "copy"), out);
+    }
 
     #[test]
     fn with_value_replaces_in_its_section_and_keeps_the_comment() {

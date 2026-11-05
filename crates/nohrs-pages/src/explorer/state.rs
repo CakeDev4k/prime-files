@@ -323,6 +323,13 @@ pub struct ExplorerPane {
     pub(crate) preview_visible: bool,
     /// The bottom bar's zoom menu is open.
     pub(crate) zoom_menu_open: bool,
+    /// Closes the zoom menu shown by a wheel or key zoom (`flash_zoom_menu`);
+    /// `None` while the menu was opened by a click, or is shut.
+    pub(crate) zoom_menu_flash: Option<gpui::Task<()>>,
+    /// The mouse is on the zoom menu.
+    pub(crate) zoom_menu_hovered: bool,
+    /// The header's "open in another program" menu is open.
+    pub(crate) open_in_menu: bool,
     /// The zoom menu's slider knob is being dragged.
     pub(crate) zoom_dragging: bool,
     /// Whether the bar under the listing searches subfolders (Ctrl+F) rather
@@ -561,6 +568,9 @@ impl ExplorerPane {
             context_menu: None,
             preview_visible: true,
             zoom_menu_open: false,
+            zoom_menu_flash: None,
+            zoom_menu_hovered: false,
+            open_in_menu: false,
             zoom_dragging: false,
             quick_recursive: false,
             deep_search: None,

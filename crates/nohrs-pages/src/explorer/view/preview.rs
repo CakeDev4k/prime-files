@@ -744,12 +744,21 @@ fn render_media(page: &ExplorerPane, cx: &mut Context<ExplorerPane>) -> AnyEleme
                 false,
                 cx,
             )),
-            (None, None) if !media.peaks.is_empty() => screen.child(
+            (None, None) if !media.peaks.is_empty() => {
+                // Stretched across the screen rather than `w_full`: under the
+                // screen's `items_center` a percentage width came out 0 and the
+                // wave was not drawn at all.
+                let mut screen = screen;
+                screen.style().align_items = Some(gpui::AlignItems::Stretch);
+                screen.child(
                 // Zoomed, the wave grows sideways and scrolls.
                 div()
                     .id("preview-media-wave-scroll")
-                    .w_full()
                     .h(relative(0.5))
+                    // Flex, here and in the zoomed strip: in a plain block
+                    // the percentage widths below came out as wide as the
+                    // wave's own contents, which is nothing (a canvas).
+                    .flex()
                     .overflow_x_scroll()
                     .track_scroll(&page.preview_scroll)
                     // The left button seeks; the wheel button drags along
@@ -772,8 +781,16 @@ fn render_media(page: &ExplorerPane, cx: &mut Context<ExplorerPane>) -> AnyEleme
                             this.preview_pan = None;
                         }
                     }))
-                    .child(div().h_full().w(relative(page.preview_zoom.max(1.0))).child(render_waveform(media, cx))),
-            ),
+                    .child(
+                        div()
+                            .h_full()
+                            .w(relative(page.preview_zoom.max(1.0)))
+                            .flex_shrink_0()
+                            .flex()
+                            .child(render_waveform(media, cx)),
+                    ),
+                )
+            }
             (None, None) if !media.has_video && media.duration > 0.0 => screen.child(
                 Icon::new(Icon::empty())
                     .path("icons/music.svg")

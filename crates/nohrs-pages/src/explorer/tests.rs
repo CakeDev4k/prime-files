@@ -1021,6 +1021,44 @@ async fn close_pane_keeps_subscriptions_aligned(cx: &mut TestAppContext) {
         .unwrap();
 }
 
+// The configured folder is where the tab lands, trimmed, and a folder that is
+// gone falls back to home rather than erroring.
+#[gpui::test]
+async fn new_tab_opens_the_configured_folder(cx: &mut TestAppContext) {
+    use nohrs_core::config::NewTabMode;
+    let root = tempfile::tempdir().unwrap();
+    let inner = root.path().join("inner");
+    std::fs::create_dir_all(&inner).unwrap();
+    let inner = inner.to_string_lossy().into_owned();
+    // Quoted with spaces, as a hand-edited config.toml can be.
+    let configured = format!("  {inner}  ");
+    let gone = format!("{inner}\\gone");
+    let window = new_explorer_page(cx);
+    window
+        .update(cx, |page, window, cx| {
+            page.test_set_new_tab_mode(NewTabMode::Folder);
+            page.test_set_new_tab_path(&configured);
+            page.new_tab_request(0, false, window, cx);
+            assert_eq!(page.tab_count(0), 2);
+            assert_eq!(
+                page.tab_cwd(0, 1, cx).as_deref(),
+                Some(inner.as_str()),
+                "the tab opens the configured folder, trimmed"
+            );
+
+            page.test_set_new_tab_path(&gone);
+            page.new_tab_request(0, false, window, cx);
+            assert_eq!(page.tab_count(0), 3);
+            let home = super::page::home_dir();
+            assert_eq!(
+                page.tab_cwd(0, 2, cx).as_deref(),
+                Some(home.as_str()),
+                "a folder that no longer exists falls back to home"
+            );
+        })
+        .unwrap();
+}
+
 #[gpui::test]
 async fn new_tab_appends_and_activates(cx: &mut TestAppContext) {
     let window = new_explorer_page(cx);

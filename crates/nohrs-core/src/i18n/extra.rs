@@ -93,6 +93,61 @@ pub(super) static EXTRA: &[(&str, [&str; 6])] = &[
         ],
     ),
     (
+        "Ir para uma pasta, ou buscar no computador",
+        [
+            "Aller à un dossier, ou chercher sur l'ordinateur",
+            "Zu einem Ordner gehen oder den Computer durchsuchen",
+            "Vai a una cartella, o cerca nel computer",
+            "Перейти к папке или искать по компьютеру",
+            "フォルダーへ移動、またはコンピューターを検索",
+            "转到文件夹，或搜索此计算机",
+        ],
+    ),
+    (
+        "Ctrl+T e o + abrem",
+        [
+            "Ce que Ctrl+T et + ouvrent",
+            "Was Ctrl+T und + öffnen",
+            "Cosa aprono Ctrl+T e +",
+            "Что открывают Ctrl+T и +",
+            "Ctrl+T と + で開くもの",
+            "Ctrl+T 和 + 打开什么",
+        ],
+    ),
+    (
+        "Uma pasta de uma vez, ou a caixa que pergunta o caminho e busca no computador. Shift+clique no + e Ctrl+Shift+T abrem sempre a caixa.",
+        [
+            "Un dossier tout de suite, ou la boîte qui demande le chemin et cherche sur l'ordinateur. Maj+clic sur + et Ctrl+Maj+T ouvrent toujours la boîte.",
+            "Sofort einen Ordner, oder das Feld, das nach dem Pfad fragt und den Computer durchsucht. Umschalt+Klick auf + und Strg+Umschalt+T öffnen immer das Feld.",
+            "Subito una cartella, oppure la casella che chiede il percorso e cerca nel computer. Maiusc+clic su + e Ctrl+Maiusc+T aprono sempre la casella.",
+            "Сразу папку, либо окно, которое спрашивает путь и ищет по компьютеру. Shift+щелчок по + и Ctrl+Shift+T всегда открывают окно.",
+            "すぐにフォルダーを開くか、パスを尋ねてコンピューターを検索するボックスを開きます。+ を Shift+クリック、または Ctrl+Shift+T で常にボックスが開きます。",
+            "立即打开一个文件夹，或打开询问路径并搜索此计算机的框。Shift+点击 + 以及 Ctrl+Shift+T 总是打开这个框。",
+        ],
+    ),
+    (
+        "Numa pasta",
+        [
+            "Dans un dossier",
+            "In einem Ordner",
+            "In una cartella",
+            "В папке",
+            "フォルダーで",
+            "在文件夹中",
+        ],
+    ),
+    (
+        "Na caixa de busca",
+        [
+            "Dans la boîte de recherche",
+            "Im Suchfeld",
+            "Nella casella di ricerca",
+            "В окне поиска",
+            "検索ボックスで",
+            "在搜索框中",
+        ],
+    ),
+    (
         "Lê a tabela dos discos NTFS como o Everything: o índice do computador fica pronto em segundos, também depois de reiniciar. Instala um serviço do Windows, com permissão de administrador uma vez.",
         [
             "Lit la table des disques NTFS comme Everything : l'index de l'ordinateur est prêt en quelques secondes, même après un redémarrage. Installe un service Windows, avec l'autorisation d'administrateur une seule fois.",

@@ -151,6 +151,9 @@ pub struct Ui {
     pub hover_audio: bool,
     /// How long the mouse rests on a sound file before it plays, in ms.
     pub hover_audio_delay_ms: u32,
+    /// Folder a new tab starts in (Ctrl+T and the `+`). Empty follows the
+    /// home folder. A folder that no longer exists falls back to home.
+    pub new_tab_path: String,
 }
 
 impl Default for Ui {
@@ -168,6 +171,7 @@ impl Default for Ui {
             welcome_done: false,
             hover_audio: true,
             hover_audio_delay_ms: 400,
+            new_tab_path: String::new(),
         }
     }
 }

@@ -377,6 +377,11 @@ pub(super) static STRINGS: &[(&str, &str, &str)] = &[
     ),
     ("Nome", "Name", "Nombre"),
     ("Nova aba", "New tab", "Nueva pestaña"),
+    (
+        "Ir para uma pasta, ou buscar no computador",
+        "Go to a folder, or search the computer",
+        "Ir a una carpeta, o buscar en el equipo",
+    ),
     ("Nova pasta", "New folder", "Nueva carpeta"),
     ("Não deu para atualizar: {error}", "Could not update: {error}", "No se pudo actualizar: {error}"),
     (

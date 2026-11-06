@@ -82,8 +82,10 @@ actions!(
         FocusNextPane,
         /// Move focus to the previous pane, wrapping around.
         FocusPrevPane,
-        /// Open a new tab in the active pane, rooted at home.
+        /// Open a new tab in the active pane, at `[ui] new_tab_path`.
         NewTab,
+        /// Open the box that searches the computer or takes a typed path.
+        GoTo,
         /// Close the active tab (closing the pane if it was its last tab).
         CloseTab,
         /// Toggle the active tab's left quick-access sidebar.
@@ -122,6 +124,7 @@ pub fn rebind_shortcuts(cx: &mut App) {
     use nohrs_core::shortcuts::{Action, chords};
     let page_actions = [
         Action::NewTab,
+        Action::GoTo,
         Action::CloseTab,
         Action::SplitVertical,
         Action::SplitHorizontal,
@@ -149,6 +152,7 @@ pub fn rebind_shortcuts(cx: &mut App) {
     for (keys, action) in &wanted {
         bindings.push(match action {
             Action::NewTab => KeyBinding::new(keys, NewTab, context),
+            Action::GoTo => KeyBinding::new(keys, GoTo, context),
             Action::CloseTab => KeyBinding::new(keys, CloseTab, context),
             Action::SplitVertical => KeyBinding::new(keys, SplitVertical, context),
             Action::SplitHorizontal => KeyBinding::new(keys, SplitHorizontal, context),
@@ -425,7 +429,15 @@ impl ExplorerPage {
             return;
         };
         self.subscribe_tab(&tab, cx);
-        self.configure_tab(&tab, Some(home_dir()), sidebar_visible, cx);
+        // `[ui] new_tab_path`: the folder every new tab starts in. Empty, or a
+        // folder that is gone, falls back to home.
+        let configured = self.ui.new_tab_path.trim();
+        let start = if configured.is_empty() || !std::path::Path::new(configured).is_dir() {
+            home_dir()
+        } else {
+            configured.to_string()
+        };
+        self.configure_tab(&tab, Some(start), sidebar_visible, cx);
         // Make the pane active and focus its new (now active) tab.
         self.group.set_active(pane_index, window, cx);
         self.group.focus_active(window, cx);
@@ -985,13 +997,11 @@ impl ExplorerPage {
             on_close_pane: Rc::new(|this: &mut Self, pane, window, cx| {
                 this.close_pane(pane, window, cx)
             }),
-            // The "+" opens the search box, as Ctrl+T does; Enter with
-            // nothing typed there makes the plain new tab.
+            // The "+" opens a tab at once, at `[ui] new_tab_path` (home when
+            // unset), as in Explorer. The search box is on Ctrl+Shift+T.
             on_new_tab: Rc::new(|this: &mut Self, pane, window, cx| {
                 this.set_active(pane, window, cx);
-                if this.palette.is_none() {
-                    this.toggle_palette(window, cx);
-                }
+                this.new_tab_in_pane(pane, window, cx);
             }),
             on_activate_tab: Rc::new(|this: &mut Self, pane, tab, window, cx| {
                 this.activate_tab(pane, tab, window, cx)
@@ -1585,9 +1595,14 @@ impl Render for ExplorerPage {
             .on_action(cx.listener(|this, _: &FocusPrevPane, window, cx| {
                 this.focus_prev(window, cx);
             }))
-            // Ctrl+T opens the search box; Enter with nothing typed opens the
-            // plain new tab Ctrl+T used to (the "+" still does at once).
+            // Ctrl+T opens a tab at once, like the "+" and like Explorer.
             .on_action(cx.listener(|this, _: &NewTab, window, cx| {
+                let pane = this.group.active();
+                this.new_tab_in_pane(pane, window, cx);
+            }))
+            // Ctrl+Shift+T opens the box that searches the computer or takes
+            // a typed path.
+            .on_action(cx.listener(|this, _: &GoTo, window, cx| {
                 this.toggle_palette(window, cx);
             }))
             .on_action(cx.listener(|this, _: &CloseTab, window, cx| {

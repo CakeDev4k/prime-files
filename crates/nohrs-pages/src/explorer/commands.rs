@@ -88,6 +88,7 @@ impl ExplorerPane {
             Action::OpenPowerShell => self.open_in(OpenIn::PowerShell, cx),
             Action::OpenFileExplorer => self.open_in(OpenIn::FileExplorer, cx),
             Action::NewTab
+            | Action::GoTo
             | Action::CloseTab
             | Action::SplitVertical
             | Action::SplitHorizontal

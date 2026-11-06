@@ -147,6 +147,8 @@ async fn apply_config_ui_reflects_ui_section(cx: &mut TestAppContext) {
                 welcome_done: false,
                 hover_audio: false,
                 hover_audio_delay_ms: 400,
+                new_tab_path: String::new(),
+                new_tab_mode: config::NewTabMode::Folder,
             };
             page.apply_config_ui(&ui, cx);
             assert!(page.show_hidden);
@@ -196,6 +198,8 @@ async fn config_reload_keeps_a_sort_chosen_in_the_session(cx: &mut TestAppContex
                 welcome_done: false,
                 hover_audio: false,
                 hover_audio_delay_ms: 400,
+                new_tab_path: String::new(),
+                new_tab_mode: config::NewTabMode::Folder,
             };
             page.apply_config_ui(&ui, cx);
             page.set_sort(SortKey::Modified, false, cx);
@@ -901,6 +905,8 @@ async fn split_pane_inherits_applied_ui_config(cx: &mut TestAppContext) {
                 welcome_done: false,
                 hover_audio: false,
                 hover_audio_delay_ms: 400,
+                new_tab_path: String::new(),
+                new_tab_mode: config::NewTabMode::Folder,
             };
             page.apply_config_ui(&ui, cx);
 
@@ -1032,6 +1038,30 @@ async fn new_tab_appends_and_activates(cx: &mut TestAppContext) {
             // Switching back to the first tab makes it active again.
             page.test_activate_tab(0, 0, window, cx);
             assert_eq!(page.active_tab(0), 0);
+        })
+        .unwrap();
+}
+
+// The box itself needs a renderer, so this checks the decision it rests on:
+// Shift asks, and `[ui] new_tab_mode = "box"` asks without it.
+#[gpui::test]
+async fn new_tab_asks_when_shifted_or_configured_to(cx: &mut TestAppContext) {
+    use nohrs_core::config::NewTabMode;
+    let window = new_explorer_page(cx);
+    window
+        .update(cx, |page, window, cx| {
+            page.test_set_new_tab_mode(NewTabMode::Folder);
+            assert!(!page.new_tab_asks(false), "the folder mode opens a tab");
+            assert!(page.new_tab_asks(true), "Shift always asks");
+
+            page.test_set_new_tab_mode(NewTabMode::Box);
+            assert!(page.new_tab_asks(false), "the box mode asks by itself");
+            assert!(page.new_tab_asks(true));
+
+            // And the folder mode does open the tab.
+            page.test_set_new_tab_mode(NewTabMode::Folder);
+            page.new_tab_request(0, false, window, cx);
+            assert_eq!(page.tab_count(0), 2);
         })
         .unwrap();
 }
@@ -2744,6 +2774,8 @@ async fn each_folder_opens_with_the_zoom_and_sort_it_was_left_with(cx: &mut Test
                 welcome_done: false,
                 hover_audio: false,
                 hover_audio_delay_ms: 400,
+                new_tab_path: String::new(),
+                new_tab_mode: config::NewTabMode::Folder,
             };
             page.apply_config_ui(&ui, cx);
 

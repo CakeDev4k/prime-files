@@ -154,6 +154,9 @@ pub struct Ui {
     /// Folder a new tab starts in (Ctrl+T and the `+`). Empty follows the
     /// home folder. A folder that no longer exists falls back to home.
     pub new_tab_path: String,
+    /// What Ctrl+T and the `+` open first. Shift+click on the `+`, and
+    /// Ctrl+Shift+T, always open the box.
+    pub new_tab_mode: NewTabMode,
 }
 
 impl Default for Ui {
@@ -172,6 +175,7 @@ impl Default for Ui {
             hover_audio: true,
             hover_audio_delay_ms: 400,
             new_tab_path: String::new(),
+            new_tab_mode: NewTabMode::Folder,
         }
     }
 }
@@ -413,6 +417,29 @@ impl SplitDirection {
         match value {
             "vertical" => Some(Self::Vertical),
             "horizontal" => Some(Self::Horizontal),
+            _ => None,
+        }
+    }
+}
+
+/// What a new tab opens first: the folder at once, or the box that asks for
+/// a path.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "lowercase")]
+pub enum NewTabMode {
+    /// A tab at `new_tab_path` at once, as Explorer does.
+    #[default]
+    Folder,
+    /// The box that searches the computer or takes a typed path.
+    Box,
+}
+
+impl NewTabMode {
+    /// Parse the `config.toml` spelling (`folder`/`box`).
+    pub fn parse(value: &str) -> Option<Self> {
+        match value {
+            "folder" => Some(Self::Folder),
+            "box" => Some(Self::Box),
             _ => None,
         }
     }

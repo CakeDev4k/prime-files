@@ -1,0 +1,6 @@
+# The linker is most of an edit-and-rebuild here: touching only the binary's
+# main.rs took 4.4 s with Microsoft's link.exe. rust-lld ships with every
+# Rust toolchain (also on the release workflow's runner), reads the same
+# MSVC libraries and resources, and links the same program faster.
+[target.x86_64-pc-windows-msvc]
+linker = "rust-lld.exe"

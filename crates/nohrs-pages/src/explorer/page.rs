@@ -15,7 +15,7 @@ use std::time::Duration;
 use gpui::prelude::FluentBuilder as _;
 use gpui::*;
 use gpui_component::resizable::ResizableState;
-use nohrs_core::config::{Compact, DockSide, Explorer as ExplorerConfig, Layout, SplitDirection, Ui};
+use nohrs_core::config::{Compact, DockSide, Explorer as ExplorerConfig, Layout, NewTabMode, SplitDirection, Ui};
 use nohrs_core::telemetry::LogErr;
 use nohrs_services::fs::trash::Ledger as TrashLedger;
 use nohrs_services::search::SearchService;
@@ -417,6 +417,31 @@ impl ExplorerPage {
         self.configure_tab(&tab, cwd, false, cx);
         tab.update(cx, |pane, _| pane.preview_visible = false);
         Some(index)
+    }
+
+    /// Whether the box opens instead of a tab: Shift asked for it, or
+    /// `[ui] new_tab_mode` says so.
+    pub(crate) fn new_tab_asks(&self, ask: bool) -> bool {
+        ask || self.ui.new_tab_mode == NewTabMode::Box
+    }
+
+    /// What Ctrl+T and the `+` do: the box when `ask` is set (Shift) or
+    /// `[ui] new_tab_mode` says so, a tab at `new_tab_path` otherwise.
+    pub(crate) fn new_tab_request(
+        &mut self,
+        pane_index: usize,
+        ask: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.set_active(pane_index, window, cx);
+        if !self.new_tab_asks(ask) {
+            self.new_tab_in_pane(pane_index, window, cx);
+            return;
+        }
+        if self.palette.is_none() {
+            self.toggle_palette(window, cx);
+        }
     }
 
     /// Opens a new tab in `pane_index`, rooted at home (§4), and activates it.
@@ -1004,11 +1029,11 @@ impl ExplorerPage {
             on_close_pane: Rc::new(|this: &mut Self, pane, window, cx| {
                 this.close_pane(pane, window, cx)
             }),
-            // The "+" opens a tab at once, at `[ui] new_tab_path` (home when
-            // unset), as in Explorer. The search box is on Ctrl+Shift+T.
+            // The "+" opens what `[ui] new_tab_mode` says: a tab at once, or
+            // the box. Shift+click always asks.
             on_new_tab: Rc::new(|this: &mut Self, pane, window, cx| {
-                this.set_active(pane, window, cx);
-                this.new_tab_in_pane(pane, window, cx);
+                let ask = window.modifiers().shift;
+                this.new_tab_request(pane, ask, window, cx);
             }),
             on_activate_tab: Rc::new(|this: &mut Self, pane, tab, window, cx| {
                 this.activate_tab(pane, tab, window, cx)
@@ -1602,10 +1627,11 @@ impl Render for ExplorerPage {
             .on_action(cx.listener(|this, _: &FocusPrevPane, window, cx| {
                 this.focus_prev(window, cx);
             }))
-            // Ctrl+T opens a tab at once, like the "+" and like Explorer.
+            // Ctrl+T opens what `[ui] new_tab_mode` says, like the "+".
             .on_action(cx.listener(|this, _: &NewTab, window, cx| {
                 let pane = this.group.active();
-                this.new_tab_in_pane(pane, window, cx);
+                let ask = window.modifiers().shift;
+                this.new_tab_request(pane, ask, window, cx);
             }))
             // Ctrl+Shift+T opens the box that searches the computer or takes
             // a typed path.
@@ -1744,6 +1770,10 @@ impl ExplorerPage {
     }
 
     /// Test entry points for the tab actions exercised without keybindings.
+    pub(crate) fn test_set_new_tab_mode(&mut self, mode: NewTabMode) {
+        self.ui.new_tab_mode = mode;
+    }
+
     pub(crate) fn test_new_tab(
         &mut self,
         pane_index: usize,

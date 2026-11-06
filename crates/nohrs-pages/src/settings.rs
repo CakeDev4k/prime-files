@@ -19,7 +19,7 @@ use gpui::{
 };
 use gpui_component::input::{Input, InputState};
 use gpui_component::{Icon, Sizable as _};
-use nohrs_core::config::{self, Config, DockSide, SortOrder, SplitDirection, ThemeMode};
+use nohrs_core::config::{self, Config, DockSide, NewTabMode, SortOrder, SplitDirection, ThemeMode};
 use nohrs_core::i18n::{self, Lang, tr};
 use nohrs_core::telemetry::LogErr;
 use nohrs_core::shortcuts::{self, Action, Chord};
@@ -674,6 +674,27 @@ impl SettingsPage {
             Group::titled(
                 t!("Abas e painéis"),
                 vec![
+                    Row::hint(
+                        t!("Ctrl+T e o + abrem"),
+                        t!("Uma pasta de uma vez, ou a caixa que pergunta o caminho e busca no computador. Shift+clique no + e Ctrl+Shift+T abrem sempre a caixa."),
+                        self.config_choice(
+                            "new-tab-mode",
+                            &[
+                                (
+                                    t!("Numa pasta"),
+                                    self.config.ui.new_tab_mode == NewTabMode::Folder,
+                                    "\"folder\"",
+                                ),
+                                (
+                                    t!("Na caixa de busca"),
+                                    self.config.ui.new_tab_mode == NewTabMode::Box,
+                                    "\"box\"",
+                                ),
+                            ],
+                            ("ui", "new_tab_mode"),
+                            cx,
+                        ),
+                    ),
                     Row::hint(
                         t!("Reabrir as abas ao iniciar"),
                         t!("Volta com as abas da última vez. Vale na próxima vez que o Prime Files abrir."),

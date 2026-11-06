@@ -1795,7 +1795,11 @@ impl SettingsPage {
             .flex()
             // Only long rows wrap: a short row beside its text measured at
             // its narrowest and broke onto two lines.
-            .when(options.len() > 5, |this| this.flex_wrap())
+            // A long row wraps within the width it is given: as a flex item
+            // that may shrink, in a parent that is itself a flex row. In a
+            // block parent it was measured as two lines and drawn as one,
+            // running past the card with an empty line under it.
+            .when(options.len() > 5, |this| this.flex_wrap().flex_1().min_w(px(0.0)))
             .p(px(2.0))
             .gap(px(2.0))
             .rounded(px(7.0))
@@ -1975,7 +1979,7 @@ impl SettingsPage {
             .when(divider, |this| this.border_b_1().border_color(rgb(theme::border())))
             .map(|this| {
                 if stacked {
-                    this.flex().flex_col().gap(px(10.0)).child(text).child(div().child(row.control))
+                    this.flex().flex_col().gap(px(10.0)).child(text).child(div().w_full().flex().child(row.control))
                 } else {
                     this.flex()
                         .items_center()

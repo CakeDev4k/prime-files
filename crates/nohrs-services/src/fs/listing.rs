@@ -67,7 +67,16 @@ fn list_dir_impl(path: &str, limit: usize, cursor: Option<&str>) -> Result<ListR
                 } else if file_type.is_file() {
                     ("file", md.len(), modified)
                 } else if file_type.is_symlink() {
-                    ("symlink", 0, modified)
+                    // A link made with `mklink /D` or a junction (`mklink /J`)
+                    // is shown as what it points at: a folder opens here like
+                    // any other, instead of going to Explorer as a file the
+                    // default program opens. Only links pay for the second
+                    // read. A broken one stays a link.
+                    match fs::metadata(entry.path()) {
+                        Ok(target) if target.is_dir() => ("dir", 0, modified),
+                        Ok(target) => ("file", target.len(), modified),
+                        Err(_) => ("symlink", 0, modified),
+                    }
                 } else {
                     ("other", 0, modified)
                 }
@@ -130,6 +139,34 @@ mod tests {
             cursor,
         })
         .unwrap()
+    }
+
+    // A junction (what `mklink /J` makes, and what tools like Steam and
+    // OneDrive leave around) lists as the folder it points at, so it opens
+    // here; a junction to nothing stays a link.
+    #[cfg(windows)]
+    #[test]
+    fn a_junction_lists_as_the_folder_it_points_at() {
+        let dir = tempdir().unwrap();
+        let target = dir.path().join("alvo");
+        std::fs::create_dir(&target).unwrap();
+        std::fs::write(target.join("dentro.txt"), "x").unwrap();
+        let junction = |name: &str, to: &std::path::Path| {
+            let status = std::process::Command::new("cmd")
+                .args(["/C", "mklink", "/J"])
+                .arg(dir.path().join(name))
+                .arg(to)
+                .output()
+                .unwrap()
+                .status;
+            assert!(status.success(), "mklink /J failed");
+        };
+        junction("ligacao", &target);
+        junction("quebrada", &dir.path().join("sumiu"));
+        let listed = list(dir.path().to_str().unwrap(), 100, None);
+        let kind = |name: &str| listed.entries.iter().find(|entry| entry.name == name).unwrap().kind.clone();
+        assert_eq!(kind("ligacao"), "dir");
+        assert_eq!(kind("quebrada"), "symlink");
     }
 
     #[test]

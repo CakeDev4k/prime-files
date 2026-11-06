@@ -33,9 +33,10 @@ pub(crate) enum ClipMode {
 
 /// Process-wide explorer clipboard, shared across panes and windows so a copy in
 /// one pane can be pasted in another. The paths are mirrored to the system
-/// clipboard as text for interop with external apps, but this global stays the
-/// source of truth for paste because the system clipboard cannot carry the
-/// copy/cut distinction across platforms.
+/// clipboard for interop with external apps (on Windows also as files, for the
+/// Explorer and the desktop), but this global stays the source of truth for paste
+/// because the system clipboard cannot carry the copy/cut distinction across
+/// platforms.
 #[derive(Clone, Default)]
 pub(crate) struct ExplorerClipboard {
     entry: Option<(ClipMode, Vec<PathBuf>)>,
@@ -104,6 +105,158 @@ fn retain_failed_cut(failed: Vec<PathBuf>, generation: u64, cx: &mut App) {
         return;
     }
     ExplorerClipboard::write(Some((ClipMode::Cut, failed)), cx);
+}
+
+// The tests stay on gpui's clipboard so they never replace the real one.
+#[cfg(all(windows, not(test)))]
+fn write_system_clipboard(mode: ClipMode, paths: &[PathBuf], text: String, cx: &mut App) {
+    if let Err(error) = windows_clipboard::write_files(mode, paths, &text) {
+        tracing::warn!("could not put files on the Windows clipboard: {error}");
+        cx.write_to_clipboard(ClipboardItem::new_string(text));
+    }
+}
+
+#[cfg(not(all(windows, not(test))))]
+fn write_system_clipboard(_mode: ClipMode, _paths: &[PathBuf], text: String, cx: &mut App) {
+    cx.write_to_clipboard(ClipboardItem::new_string(text));
+}
+
+// The Explorer and the desktop paste only CF_HDROP: with path text alone, their
+// Paste has nothing to take. gpui's clipboard writes one entry and empties the
+// clipboard first, so it cannot carry these formats.
+#[cfg(windows)]
+#[cfg_attr(test, allow(dead_code))]
+#[allow(unsafe_code)]
+mod windows_clipboard {
+    use std::os::windows::ffi::OsStrExt;
+    use std::path::PathBuf;
+
+    use windows::Win32::Foundation::{GlobalFree, HANDLE, HGLOBAL};
+    use windows::Win32::System::DataExchange::{
+        CloseClipboard, EmptyClipboard, OpenClipboard, RegisterClipboardFormatW, SetClipboardData,
+    };
+    use windows::Win32::System::Memory::{GMEM_MOVEABLE, GlobalAlloc, GlobalLock, GlobalUnlock};
+    use windows::Win32::System::Ole::{CF_HDROP, CF_UNICODETEXT, DROPEFFECT_COPY, DROPEFFECT_MOVE};
+    use windows::Win32::UI::Shell::{CFSTR_PREFERREDDROPEFFECT, DROPFILES};
+
+    use super::ClipMode;
+
+    pub(super) fn write_files(
+        mode: ClipMode,
+        paths: &[PathBuf],
+        text: &str,
+    ) -> windows::core::Result<()> {
+        // One open for all the formats: closing between them would let a
+        // clipboard listener take the clipboard and fail the next write.
+        unsafe { OpenClipboard(None) }?;
+        let result = write_formats(mode, paths, text);
+        if let Err(error) = unsafe { CloseClipboard() } {
+            tracing::warn!("could not close the clipboard: {error}");
+        }
+        result
+    }
+
+    fn write_formats(mode: ClipMode, paths: &[PathBuf], text: &str) -> windows::core::Result<()> {
+        unsafe { EmptyClipboard() }?;
+
+        let text_bytes: Vec<u8> = text
+            .encode_utf16()
+            .chain(Some(0))
+            .flat_map(u16::to_le_bytes)
+            .collect();
+        set_format(u32::from(CF_UNICODETEXT.0), &text_bytes)?;
+        set_format(u32::from(CF_HDROP.0), &drop_files_block(paths))?;
+
+        let effect = match mode {
+            ClipMode::Copy => DROPEFFECT_COPY,
+            ClipMode::Cut => DROPEFFECT_MOVE,
+        };
+        let effect_format = unsafe { RegisterClipboardFormatW(CFSTR_PREFERREDDROPEFFECT) };
+        if effect_format == 0 {
+            return Err(windows::core::Error::from_win32());
+        }
+        set_format(effect_format, &effect.0.to_le_bytes())
+    }
+
+    fn set_format(format: u32, bytes: &[u8]) -> windows::core::Result<()> {
+        let global = global_from_bytes(bytes)?;
+        if let Err(error) = unsafe { SetClipboardData(format, Some(HANDLE(global.0))) } {
+            // The clipboard takes ownership of the memory only on success.
+            free_global(global);
+            return Err(error);
+        }
+        Ok(())
+    }
+
+    fn global_from_bytes(bytes: &[u8]) -> windows::core::Result<HGLOBAL> {
+        let global = unsafe { GlobalAlloc(GMEM_MOVEABLE, bytes.len()) }?;
+        let destination = unsafe { GlobalLock(global) };
+        if destination.is_null() {
+            let error = windows::core::Error::from_win32();
+            free_global(global);
+            return Err(error);
+        }
+        unsafe {
+            std::ptr::copy_nonoverlapping(bytes.as_ptr(), destination.cast::<u8>(), bytes.len());
+            // Reports an error when the lock count reaches zero, which is the
+            // expected outcome here, so there is no failure to act on.
+            GlobalUnlock(global).ok();
+        }
+        Ok(global)
+    }
+
+    fn free_global(global: HGLOBAL) {
+        if let Err(error) = unsafe { GlobalFree(Some(global)) } {
+            tracing::warn!("could not free clipboard memory: {error}");
+        }
+    }
+
+    // A DROPFILES header followed by NUL-terminated UTF-16 paths and a final NUL.
+    fn drop_files_block(paths: &[PathBuf]) -> Vec<u8> {
+        let header_size = std::mem::size_of::<DROPFILES>();
+        let mut block = vec![0u8; header_size];
+        let files_offset = header_size as u32;
+        let wide_characters = 1u32;
+        block[..4].copy_from_slice(&files_offset.to_le_bytes());
+        block[header_size - 4..].copy_from_slice(&wide_characters.to_le_bytes());
+        for path in paths {
+            for unit in path.as_os_str().encode_wide().chain(Some(0)) {
+                block.extend_from_slice(&unit.to_le_bytes());
+            }
+        }
+        block.extend_from_slice(&0u16.to_le_bytes());
+        block
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+        use windows::Win32::UI::Shell::{DragQueryFileW, HDROP};
+
+        #[test]
+        fn drop_files_block_reads_back_through_the_shell() {
+            let paths = [
+                PathBuf::from(r"C:\temp\alfa.txt"),
+                PathBuf::from(r"C:\pasta com espaço\é 日本語.txt"),
+                PathBuf::from(r"\\servidor\pasta\beta"),
+            ];
+            let global = global_from_bytes(&drop_files_block(&paths)).expect("allocate block");
+            let drop_handle = HDROP(global.0);
+
+            let count = unsafe { DragQueryFileW(drop_handle, u32::MAX, None) };
+            let read_back: Vec<PathBuf> = (0..count)
+                .map(|index| {
+                    let length = unsafe { DragQueryFileW(drop_handle, index, None) } as usize;
+                    let mut buffer = vec![0u16; length + 1];
+                    unsafe { DragQueryFileW(drop_handle, index, Some(&mut buffer)) };
+                    PathBuf::from(String::from_utf16_lossy(&buffer[..length]))
+                })
+                .collect();
+            free_global(global);
+
+            assert_eq!(read_back, paths);
+        }
+    }
 }
 
 // The path `name` should take inside `dir`, numbered if the filesystem already
@@ -757,9 +910,9 @@ impl ExplorerPane {
         if paths.is_empty() {
             return;
         }
-        let buffers = paths.iter().map(PathBuf::from).collect();
+        let buffers: Vec<PathBuf> = paths.iter().map(PathBuf::from).collect();
+        write_system_clipboard(mode, &buffers, paths.join("\n"), cx);
         ExplorerClipboard::write(Some((mode, buffers)), cx);
-        cx.write_to_clipboard(ClipboardItem::new_string(paths.join("\n")));
         let message = match mode {
             ClipMode::Copy => i18n::plural(paths.len(), k!("{n} item copiado"), k!("{n} itens copiados")),
             ClipMode::Cut => i18n::plural(paths.len(), k!("{n} item recortado"), k!("{n} itens recortados")),

@@ -5658,4 +5658,48 @@ pub(super) static EXTRA: &[(&str, [&str; 6])] = &[
             "还原失败",
         ],
     ),
+    (
+        "Buscando no computador…",
+        [
+            "Recherche dans l’ordinateur…",
+            "Computer wird durchsucht…",
+            "Ricerca nel computer…",
+            "Поиск на компьютере…",
+            "コンピューターを検索中…",
+            "正在搜索电脑…",
+        ],
+    ),
+    (
+        "Buscar arquivos e pastas no computador ou digitar um caminho",
+        [
+            "Rechercher des fichiers et dossiers ou saisir un chemin",
+            "Dateien und Ordner suchen oder einen Pfad eingeben",
+            "Cerca file e cartelle nel computer o digita un percorso",
+            "Искать файлы и папки на компьютере или ввести путь",
+            "コンピューターのファイルやフォルダーを検索、またはパスを入力",
+            "搜索电脑上的文件和文件夹，或输入路径",
+        ],
+    ),
+    (
+        "Enter abre numa nova aba · arraste para levar o arquivo · Esc fecha",
+        [
+            "Entrée ouvre dans un nouvel onglet · glissez pour emporter le fichier · Échap ferme",
+            "Enter öffnet in neuem Tab · ziehen, um die Datei mitzunehmen · Esc schließt",
+            "Invio apre in una nuova scheda · trascina per portare il file · Esc chiude",
+            "Enter — открыть в новой вкладке · перетащите, чтобы взять файл · Esc — закрыть",
+            "Enter で新しいタブに開く · ドラッグでファイルを持ち出す · Esc で閉じる",
+            "Enter 在新标签页中打开 · 拖动以带走文件 · Esc 关闭",
+        ],
+    ),
+    (
+        "Ir para a aba",
+        [
+            "Aller à l’onglet",
+            "Zum Tab wechseln",
+            "Vai alla scheda",
+            "Перейти на вкладку",
+            "タブに移動",
+            "切换到标签页",
+        ],
+    ),
 ];

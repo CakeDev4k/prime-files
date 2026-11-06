@@ -1,5 +1,6 @@
 mod audio_session;
 pub(crate) mod commands;
+mod palette;
 pub(crate) mod context_menu;
 mod creative;
 mod documents;

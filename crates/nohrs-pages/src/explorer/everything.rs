@@ -1682,6 +1682,35 @@ pub(crate) fn status(cx: &App) -> Status {
 
 /// Reads the saved index on first use and walks the drives again when it is
 /// missing or old.
+/// What the Ctrl+T palette searches with: the index as it is now, ready to
+/// run off the UI thread. `None` while there is nothing to search yet, or
+/// when `query` says nothing.
+pub(crate) fn finder(cx: &App, query: &str, cwd: &str) -> Option<Finder> {
+    let state = cx.try_global::<Everything>()?;
+    let index = state.index.clone();
+    let walking = state.walking_is_new().then(|| state.walking.clone()).flatten();
+    if index.is_none() && walking.is_none() {
+        return None;
+    }
+    let parsed = Query::parse(query, cwd)?;
+    Some(Finder { index, walking, fresh: state.fresh.clone(), parsed })
+}
+
+/// A search taken from [`finder`], to [`run`](Finder::run) on another thread.
+pub(crate) struct Finder {
+    index: Option<Arc<Index>>,
+    walking: Option<Arc<Mutex<Segment>>>,
+    fresh: Arc<Mutex<Fresh>>,
+    parsed: Query,
+}
+
+impl Finder {
+    /// The hits as (name, path, is a folder), best first.
+    pub(crate) fn run(&self, cancel: &AtomicBool) -> Vec<(String, String, bool)> {
+        gather(self.index.as_deref(), self.walking.as_deref(), Some(&*self.fresh), &self.parsed, cancel)
+    }
+}
+
 pub(crate) fn ensure(cx: &mut App) {
     let state = cx.default_global::<Everything>();
     if state._watcher.is_none() {

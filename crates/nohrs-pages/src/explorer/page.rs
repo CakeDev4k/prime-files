@@ -193,13 +193,15 @@ fn clamp_index(index: usize, len: usize) -> usize {
 /// the tab's `EntityId` by funneling every tab create/remove through the helpers
 /// here, so the map stays consistent across the 2-D pane/tab structure.
 pub struct ExplorerPage {
-    group: PaneGroup<ExplorerPane>,
+    pub(crate) group: PaneGroup<ExplorerPane>,
     // Navigation-event subscriptions, one per live tab, keyed by tab entity id.
     tab_subscriptions: HashMap<EntityId, Subscription>,
     /// Whether navigation in one pane mirrors into the others (§3.2).
     synced_panes: bool,
     // `[explorer] background_tabs`: a tab opened from an item stays behind.
     background_tabs: bool,
+    /// The Ctrl+T search box, while it is open.
+    pub(crate) palette: Option<super::palette::Palette>,
     // Last-applied `[ui]` settings, replayed onto tabs opened later so they match
     // config rather than reverting to pane defaults.
     ui: Ui,
@@ -251,6 +253,9 @@ impl ExplorerPage {
         cx: &mut Context<Self>,
     ) -> Self {
         bind_pane_keys(cx);
+        // The Ctrl+T box searches again when the index arrives or changes,
+        // and shows how far a first indexing has got.
+        cx.observe_global::<super::everything::Everything>(|page, cx| page.palette_index_changed(cx)).detach();
         // Before any tab reads a folder, so the first one already opens as it
         // was left.
         super::folder_views::FolderViews::install(store.clone(), cx);
@@ -278,6 +283,7 @@ impl ExplorerPage {
             tab_subscriptions: HashMap::new(),
             synced_panes: false,
             background_tabs: true,
+            palette: None,
             ui: Ui::default(),
             store,
             save_task: None,
@@ -407,7 +413,7 @@ impl ExplorerPage {
     }
 
     /// Opens a new tab in `pane_index`, rooted at home (§4), and activates it.
-    fn new_tab_in_pane(&mut self, pane_index: usize, window: &mut Window, cx: &mut Context<Self>) {
+    pub(crate) fn new_tab_in_pane(&mut self, pane_index: usize, window: &mut Window, cx: &mut Context<Self>) {
         // Inherit the sidebar visibility of the pane's currently active tab so the
         // new tab looks continuous with what the user was just seeing.
         let sidebar_visible = self
@@ -1513,9 +1519,10 @@ impl Render for ExplorerPage {
             .on_action(cx.listener(|this, _: &FocusPrevPane, window, cx| {
                 this.focus_prev(window, cx);
             }))
+            // Ctrl+T opens the search box; Enter with nothing typed opens the
+            // plain new tab Ctrl+T used to (the "+" still does at once).
             .on_action(cx.listener(|this, _: &NewTab, window, cx| {
-                let pane = this.group.active();
-                this.new_tab_in_pane(pane, window, cx);
+                this.toggle_palette(window, cx);
             }))
             .on_action(cx.listener(|this, _: &CloseTab, window, cx| {
                 let pane = this.group.active();
@@ -1557,6 +1564,7 @@ impl Render for ExplorerPage {
                 }
             }))
             .child(arranged)
+            .children(self.render_palette(window, cx))
     }
 }
 

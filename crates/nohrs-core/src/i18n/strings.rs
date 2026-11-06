@@ -958,4 +958,8 @@ pub(super) static STRINGS: &[(&str, &str, &str)] = &[
     ("{n} itens restaurados", "{n} items restored", "{n} elementos restaurados"),
     ("{path}: não está mais na Lixeira", "{path}: no longer in the Recycle Bin", "{path}: ya no está en la Papelera"),
     ("A restauração falhou", "Restoring failed", "La restauración falló"),
+    ("Buscando no computador…", "Searching the computer…", "Buscando en el equipo…"),
+    ("Buscar arquivos e pastas no computador ou digitar um caminho", "Search files and folders on the computer or type a path", "Buscar archivos y carpetas en el equipo o escribir una ruta"),
+    ("Enter abre numa nova aba · arraste para levar o arquivo · Esc fecha", "Enter opens in a new tab · drag to take the file · Esc closes", "Enter abre en una pestaña nueva · arrastra para llevar el archivo · Esc cierra"),
+    ("Ir para a aba", "Switch to tab", "Ir a la pestaña"),
 ];

@@ -354,3 +354,9 @@ mod tests {
 pub(crate) fn show_properties(paths: &[PathBuf]) -> Result<(), String> {
     platform::properties(paths).map_err(|error| error.to_string())
 }
+
+/// Drags `paths` out as Explorer would; runs the drag's own loop until the
+/// drop, so call it from a task, not inside an update.
+pub(crate) fn drag_out(hwnd: i64, paths: &[PathBuf]) -> Result<(), String> {
+    platform::drag(hwnd, paths).map_err(|error| error.to_string())
+}

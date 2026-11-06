@@ -517,4 +517,8 @@ pub(super) static ARABIC: &[(&str, &str)] = &[
     ("{n} itens restaurados", "استُعيدت {n} عناصر"),
     ("{path}: não está mais na Lixeira", "{path}: لم يعد في سلة المحذوفات"),
     ("A restauração falhou", "فشلت الاستعادة"),
+    ("Buscando no computador…", "جارٍ البحث في الكمبيوتر…"),
+    ("Buscar arquivos e pastas no computador ou digitar um caminho", "ابحث عن ملفات ومجلدات في الكمبيوتر أو اكتب مسارًا"),
+    ("Enter abre numa nova aba · arraste para levar o arquivo · Esc fecha", "Enter للفتح في علامة تبويب جديدة · اسحب لأخذ الملف · Esc للإغلاق"),
+    ("Ir para a aba", "الانتقال إلى علامة التبويب"),
 ];

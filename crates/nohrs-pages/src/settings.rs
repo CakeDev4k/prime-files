@@ -256,6 +256,11 @@ impl SettingsPage {
     // Asks the registry, off the UI thread: each question is a `reg.exe` run.
     fn refresh_default_explorer(&mut self, cx: &mut Context<Self>) {
         let query = cx.background_spawn(async {
+            // The taskbar's File Explorer button, for copies made the default
+            // before 0.3.5 took it over (issue #4).
+            if let Err(error) = crate::default_explorer::repair() {
+                tracing::warn!("could not take over the taskbar's File Explorer: {error}");
+            }
             (crate::default_explorer::is_default(), crate::default_explorer::starts_with_windows())
         });
         cx.spawn(async move |this: gpui::WeakEntity<Self>, cx| {
@@ -643,10 +648,10 @@ impl SettingsPage {
                     .reset(("explorer", "split_direction"), explorer.split_direction == SplitDirection::Vertical, "\"vertical\""),
                     Row::hint(
                         t!("Abas novas ao fundo"),
-                        t!("O botão do meio e \"Abrir em nova aba\" abrem a aba sem sair da atual, como num navegador."),
+                        t!("O botão do meio abre a pasta numa aba atrás da atual, como num navegador. \"Abrir em nova aba\" do menu sempre vai para ela."),
                         self.switch("background-tabs", explorer.background_tabs, ("explorer", "background_tabs"), cx),
                     )
-                    .reset(("explorer", "background_tabs"), !explorer.background_tabs, "false"),
+                    .reset(("explorer", "background_tabs"), explorer.background_tabs, "true"),
                     Row::hint(
                         t!("Painéis sincronizados"),
                         t!("Navegar num painel leva o outro para a mesma pasta."),

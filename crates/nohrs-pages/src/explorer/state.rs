@@ -203,10 +203,6 @@ pub struct ExplorerPane {
     pub(crate) preview_pdf: Option<super::pdf::PdfPreview>,
     /// The video or audio file playing in the preview.
     pub(crate) preview_media: Option<super::media::MediaPreview>,
-    /// Player volume, 0..=1, and whether it is muted: kept by the pane, not
-    /// the player, so the next file plays as loud as the last one did.
-    pub(crate) media_volume: f64,
-    pub(crate) media_muted: bool,
     /// The selection was set without the preview following it (`reveal`);
     /// the next render opens it.
     pub(crate) preview_selection_pending: bool,
@@ -567,7 +563,6 @@ impl ExplorerPane {
             preview_listing: None,
             preview_pdf: None,
             preview_media: None,
-            media_volume: 1.0,
             preview_selection_pending: false,
             preview_follow: None,
             preview_follow_delay: super::preview::PREVIEW_FOLLOW_DELAY,
@@ -585,7 +580,6 @@ impl ExplorerPane {
             preview_scroll: gpui::ScrollHandle::new(),
             preview_width: Default::default(),
             preview_pan: None,
-            media_muted: false,
             status_message: None,
             trash_ledger,
             renaming: None,

@@ -333,10 +333,10 @@ fn band_cell(item: BandItem, cx: &mut Context<ExplorerPane>) -> AnyElement {
                 match &in_tab {
                     BandTarget::Place(place) => {
                         if let Some(path) = &place.path {
-                            this.open_path_in_new_tab(path, true, cx);
+                            this.open_path_in_new_tab(path, true, true, cx);
                         }
                     }
-                    BandTarget::Folder(folder) => this.open_path_in_new_tab(folder, true, cx),
+                    BandTarget::Folder(folder) => this.open_path_in_new_tab(folder, true, true, cx),
                 }
             }),
         )
@@ -647,7 +647,7 @@ fn row(
                 MouseButton::Middle,
                 cx.listener(move |this, _, _, cx| {
                     cx.stop_propagation();
-                    this.open_path_in_new_tab(&path, true, cx);
+                    this.open_path_in_new_tab(&path, true, true, cx);
                 }),
             )
         })

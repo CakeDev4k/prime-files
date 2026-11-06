@@ -22,6 +22,11 @@ const FOLDER_CLASSES: [&str; 2] = ["Directory", "Drive"];
 // file managers take those two over.
 const NEW_WINDOW_KEY: &str =
     r"HKCU\Software\Classes\CLSID\{52205fd8-5dfb-447d-801a-d0b52f2e83e1}\shell\opennewwindow";
+// The same object's default verb. Win+E asks for `opennewwindow`, but the
+// File Explorer pinned to the taskbar (and the Start menu's) is a shortcut to
+// the object itself, which runs `open`: with only the first taken over, the
+// taskbar button kept opening Explorer (Prime Files issue #4).
+const OPEN_KEY: &str = r"HKCU\Software\Classes\CLSID\{52205fd8-5dfb-447d-801a-d0b52f2e83e1}\shell\open";
 
 fn reg(args: &[&str]) -> io::Result<std::process::Output> {
     let mut command = Command::new("reg.exe");
@@ -69,11 +74,49 @@ pub fn enable(exe: &Path) -> io::Result<()> {
         reg_ok(&["add", &format!(r"{verb}\command"), "/ve", "/d", &format!("{quoted} \"%1\""), "/f"])?;
         reg_ok(&["add", &shell, "/ve", "/d", VERB, "/f"])?;
     }
-    // Without an argument Nohrs brings its open window forward, or opens one.
-    let command = format!(r"{NEW_WINDOW_KEY}\command");
-    reg_ok(&["add", &command, "/ve", "/d", &quoted, "/f"])?;
-    reg_ok(&["add", &command, "/v", "DelegateExecute", "/d", "", "/f"])?;
+    launcher_verbs(&quoted)
+}
+
+// Without an argument Nohrs brings its open window forward, or opens one.
+fn launcher_verbs(quoted: &str) -> io::Result<()> {
+    for key in [NEW_WINDOW_KEY, OPEN_KEY] {
+        let command = format!(r"{key}\command");
+        reg_ok(&["add", &command, "/ve", "/d", quoted, "/f"])?;
+        reg_ok(&["add", &command, "/v", "DelegateExecute", "/d", "", "/f"])?;
+    }
     Ok(())
+}
+
+/// For a copy made the default before the taskbar's verb was taken over
+/// too: gives `open` the program `opennewwindow` already names. Never points
+/// either at the running executable, which may be a test copy; does nothing
+/// while Prime Files is not the default or `open` already has a command.
+pub fn repair() -> io::Result<()> {
+    // Only the installed copy: a build run from the source tree, or a test
+    // copy, must not change what the person's taskbar opens.
+    let installed = std::env::current_exe()
+        .ok()
+        .and_then(|exe| exe.parent().map(|folder| folder.join("unins000.exe").is_file()))
+        .unwrap_or(false);
+    if !installed || !is_default() {
+        return Ok(());
+    }
+    let command_of = |key: &str| -> Option<String> {
+        let output = reg(&["query", &format!(r"{key}\command"), "/ve"]).ok()?;
+        String::from_utf8_lossy(&output.stdout)
+            .lines()
+            .find_map(|line| line.split_once("REG_SZ").map(|(_, value)| value.trim().to_string()))
+            .filter(|value| !value.is_empty())
+    };
+    if command_of(OPEN_KEY).is_some() || !is_ours(&format!(r"{NEW_WINDOW_KEY}\command")) {
+        return Ok(());
+    }
+    let Some(program) = command_of(NEW_WINDOW_KEY) else {
+        return Ok(());
+    };
+    let command = format!(r"{OPEN_KEY}\command");
+    reg_ok(&["add", &command, "/ve", "/d", &program, "/f"])?;
+    reg_ok(&["add", &command, "/v", "DelegateExecute", "/d", "", "/f"])
 }
 
 /// Gives folders back to Explorer, removing only what [`enable`] added.
@@ -87,8 +130,10 @@ pub fn disable() -> io::Result<()> {
             reg_ok(&["delete", &shell, "/ve", "/f"])?;
         }
     }
-    if is_ours(&format!(r"{NEW_WINDOW_KEY}\command")) {
-        reg_ok(&["delete", NEW_WINDOW_KEY, "/f"])?;
+    for key in [NEW_WINDOW_KEY, OPEN_KEY] {
+        if is_ours(&format!(r"{key}\command")) {
+            reg_ok(&["delete", key, "/f"])?;
+        }
     }
     Ok(())
 }

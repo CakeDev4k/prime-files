@@ -9,9 +9,14 @@
 
 use gpui::{Context, RenderImage, Task};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::mpsc;
 
 use super::ExplorerPane;
+
+// The preview's volume (an f64's bits) and mute, for the whole app.
+static MEDIA_VOLUME: AtomicU64 = AtomicU64::new(0x3FF0_0000_0000_0000);
+static MEDIA_MUTED: AtomicBool = AtomicBool::new(false);
 
 /// Largest frame handed to the UI, in pixels. Frames are scaled down by the
 /// engine to fit, so a 4K video costs what a 1080p one does.
@@ -105,7 +110,7 @@ impl ExplorerPane {
         let (sender, receiver) = async_channel::unbounded();
         // Queued before the engine exists; the player applies it as it starts.
         commands
-            .send(Command::Volume(effective_volume(self.media_volume, self.media_muted)))
+            .send(Command::Volume(effective_volume(self.media_volume(), self.media_muted())))
             .ok();
         if is_audio(&path) {
             // Its own reader on its own thread: playback starts at once and
@@ -210,26 +215,38 @@ impl ExplorerPane {
         }
     }
 
+    /// The preview's volume, 0..=1. One for every tab (issue #2): set in
+    /// one tab, the next sound in another plays at it too.
+    pub(crate) fn media_volume(&self) -> f64 {
+        f64::from_bits(MEDIA_VOLUME.load(Ordering::Relaxed))
+    }
+
+    /// Whether the preview is muted, shared by every tab like the volume.
+    pub(crate) fn media_muted(&self) -> bool {
+        MEDIA_MUTED.load(Ordering::Relaxed)
+    }
+
     /// Mutes or unmutes the previewed media.
     pub(crate) fn toggle_media_mute(&mut self, cx: &mut Context<Self>) {
-        self.media_muted = !self.media_muted;
+        let muted = !self.media_muted();
+        MEDIA_MUTED.store(muted, Ordering::Relaxed);
         // Unmuting a slider left at zero would still be silent.
-        if !self.media_muted && self.media_volume <= 0.0 {
-            self.media_volume = 0.5;
+        if !muted && self.media_volume() <= 0.0 {
+            MEDIA_VOLUME.store(0.5_f64.to_bits(), Ordering::Relaxed);
         }
         self.send_media_volume(cx);
     }
 
     /// Sets the volume to `volume` (0..=1), unmuting.
     pub(crate) fn set_media_volume(&mut self, volume: f64, cx: &mut Context<Self>) {
-        self.media_volume = volume.clamp(0.0, 1.0);
-        self.media_muted = false;
+        MEDIA_VOLUME.store(volume.clamp(0.0, 1.0).to_bits(), Ordering::Relaxed);
+        MEDIA_MUTED.store(false, Ordering::Relaxed);
         self.send_media_volume(cx);
     }
 
     fn send_media_volume(&mut self, cx: &mut Context<Self>) {
         if let Some(media) = self.preview_media.as_ref() {
-            media.send(Command::Volume(effective_volume(self.media_volume, self.media_muted)));
+            media.send(Command::Volume(effective_volume(self.media_volume(), self.media_muted())));
         }
         cx.notify();
     }
@@ -339,6 +356,7 @@ mod platform {
             attributes.SetUnknown(&MF_MEDIA_ENGINE_CALLBACK, &listener)?;
             attributes.SetUINT32(&MF_MEDIA_ENGINE_VIDEO_OUTPUT_FORMAT, B8G8R8A8)?;
             let engine: IMFMediaEngine = factory.CreateInstance(0, &attributes)?;
+            crate::explorer::audio_session::watch();
             engine.SetSource(&BSTR::from(path))?;
             engine
         };

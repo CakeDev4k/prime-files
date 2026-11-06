@@ -427,6 +427,20 @@ impl DirectWriteState {
             else {
                 continue;
             };
+            // NOHRS: a font asked for without fallbacks still gets Segoe UI
+            // and Tahoma before the system's own list. The UI font is the
+            // icon-title font of Windows, which a person may have set to one
+            // without Arabic; file names in Arabic then came out as empty
+            // boxes (issue #1 of Prime Files).
+            let default_fallbacks;
+            let font_fallbacks = match font_fallbacks {
+                Some(fallbacks) => Some(fallbacks),
+                None => {
+                    default_fallbacks =
+                        FontFallbacks::from_fonts(vec!["Segoe UI".to_string(), "Tahoma".to_string()]);
+                    Some(&default_fallbacks)
+                }
+            };
             let fallbacks = font_fallbacks
                 .and_then(|fallbacks| self.generate_font_fallbacks(fallbacks).log_err().flatten());
             let font_info = FontInfo {

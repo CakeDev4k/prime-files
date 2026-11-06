@@ -52,3 +52,12 @@ and a right-to-left paragraph would be aligned to its far end.
 
 When gpui is upgraded: check whether `DrawGlyphRun` still ignores the origin
 and the bidi level.
+
+## Default font fallbacks (05/11/2026)
+
+`direct_write.rs`, where a font is loaded: a font asked for without
+fallbacks gets Segoe UI and Tahoma ahead of the system's list. gpui takes the
+UI font from the icon-title font of Windows (`SPI_GETICONTITLELOGFONT`); a
+user with that set to a font without Arabic saw Arabic file names as boxes
+(Prime Files issue #1). Not reproduced here: on this machine the font is
+Segoe UI and Arabic already showed.

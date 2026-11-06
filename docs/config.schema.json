@@ -137,8 +137,8 @@
       "description": "Split-view and pane settings (see `docs/explorer-essentials.md` §3).",
       "properties": {
         "background_tabs": {
-          "default": false,
-          "description": "Whether a tab opened with the middle button (or \"Open in new tab\")\nstays behind the current one, as in a browser, instead of being shown.",
+          "default": true,
+          "description": "Whether a tab opened with the middle button stays behind the current\none, as in a browser (issue #6). \"Open in new tab\" in the menu always\nshows the tab it opens.",
           "type": "boolean"
         },
         "restore_tabs": {
@@ -567,7 +567,7 @@
     "explorer": {
       "$ref": "#/$defs/Explorer",
       "default": {
-        "background_tabs": false,
+        "background_tabs": true,
         "restore_tabs": true,
         "reveal_from_other_apps": true,
         "split_direction": "vertical",

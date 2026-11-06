@@ -661,27 +661,69 @@ impl ExplorerPane {
         }
         let total = paths.len();
         let label = i18n::plural(total, k!("{n} item enviado para a Lixeira"), k!("{n} itens enviados para a Lixeira"));
-        self.run_fs_op(total, label, cx, move || {
-            let mut report = OpReport::default();
-            // Read in here rather than captured: `to_record` borrows from
-            // `ledger`, which this closure owns.
-            let record = match ledger.to_record() {
-                Ok(record) => record,
-                Err(error) => {
-                    for path in &paths {
-                        report.failed(format!("{path}: {error}"));
+        self.run_fs_op_with(
+            total,
+            label,
+            cx,
+            move || {
+                let mut report = OpReport::default();
+                // Read in here rather than captured: `to_record` borrows from
+                // `ledger`, which this closure owns.
+                let record = match ledger.to_record() {
+                    Ok(record) => record,
+                    Err(error) => {
+                        for path in &paths {
+                            report.failed(format!("{path}: {error}"));
+                        }
+                        return (report, Vec::new());
                     }
-                    return report;
+                };
+                // One call for the whole selection: on Windows that is one Shell
+                // operation instead of one per item (`ops::trash_paths`).
+                let paths: Vec<PathBuf> = paths.iter().map(PathBuf::from).collect();
+                let failed = ops::trash_paths(&paths, record);
+                for (path, error) in &failed {
+                    report.failed(format!("{}: {error}", path.display()));
                 }
-            };
-            // One call for the whole selection: on Windows that is one Shell
-            // operation instead of one per item (`ops::trash_paths`).
-            let paths: Vec<PathBuf> = paths.iter().map(PathBuf::from).collect();
-            for (path, error) in ops::trash_paths(&paths, record) {
-                report.failed(format!("{}: {error}", path.display()));
+                let trashed: Vec<PathBuf> =
+                    paths.into_iter().filter(|path| !failed.iter().any(|(gone, _)| gone == path)).collect();
+                (report, trashed)
+            },
+            |trashed, _| remember_trashed(trashed),
+        );
+    }
+
+    /// Ctrl+Z: puts the last batch sent to the Recycle Bin back where it was
+    /// (issue #8). Batches from every tab share one history, newest first, as
+    /// Explorer's do.
+    pub(crate) fn undo_trash(&mut self, cx: &mut Context<Self>) {
+        let Some(batch) = TRASHED.lock().ok().and_then(|mut history| history.pop()) else {
+            self.set_status(StatusLevel::Info, t!("Nada para desfazer").to_string());
+            cx.notify();
+            return;
+        };
+        let total = batch.len();
+        let label = i18n::plural(total, k!("{n} item restaurado"), k!("{n} itens restaurados"));
+        self.run_fs_op(total, label, cx, move || {
+            // On a thread of its own: the `trash` crate initializes COM as a
+            // single-threaded apartment and panics on a pool thread already in
+            // the multithreaded one, and a panic on gpui's pool aborts the app
+            // (as for deleting, `ops::os_trash_delete`).
+            let restored = std::thread::Builder::new().name("trash-restore".into()).spawn(move || restore_batch(batch));
+            match restored.map(|thread| thread.join()) {
+                Ok(Ok(report)) => report,
+                Ok(Err(_)) | Err(_) => {
+                    let mut report = OpReport::default();
+                    report.failed(t!("A restauração falhou").to_string());
+                    report
+                }
             }
-            report
         });
+    }
+
+    /// Whether Ctrl+Z has a deletion to undo.
+    pub(crate) fn can_undo_trash(&self) -> bool {
+        TRASHED.lock().is_ok_and(|history| !history.is_empty())
     }
 
     pub(crate) fn delete_permanent_paths(&mut self, paths: Vec<String>, cx: &mut Context<Self>) {
@@ -1570,15 +1612,15 @@ impl ExplorerPane {
                 .iter()
                 .find(|entry| entry.path == path)
                 .is_some_and(|entry| entry.kind == "dir");
-            self.open_path_in_new_tab(&path, is_dir, cx);
+            self.open_path_in_new_tab(&path, is_dir, false, cx);
         }
     }
 
     /// Asks the page for a new tab on `path` (a folder), or on the folder
     /// holding it with it selected.
-    pub(crate) fn open_path_in_new_tab(&mut self, path: &str, is_dir: bool, cx: &mut Context<Self>) {
+    pub(crate) fn open_path_in_new_tab(&mut self, path: &str, is_dir: bool, middle: bool, cx: &mut Context<Self>) {
         let event = if is_dir {
-            PaneEvent::OpenInNewTab { folder: path.to_string(), select: None }
+            PaneEvent::OpenInNewTab { folder: path.to_string(), select: None, middle }
         } else {
             let Some(parent) = std::path::Path::new(path).parent() else {
                 return;
@@ -1586,6 +1628,7 @@ impl ExplorerPane {
             PaneEvent::OpenInNewTab {
                 folder: parent.to_string_lossy().into_owned(),
                 select: Some(path.to_string()),
+                middle,
             }
         };
         cx.emit(event);
@@ -1598,7 +1641,7 @@ impl ExplorerPane {
             return;
         };
         let (path, is_dir) = (entry.path.clone(), entry.kind == "dir");
-        self.open_path_in_new_tab(&path, is_dir, cx);
+        self.open_path_in_new_tab(&path, is_dir, true, cx);
     }
 
     /// Explorer's Properties window for the selection.
@@ -1612,4 +1655,63 @@ impl ExplorerPane {
             cx.notify();
         }
     }
+}
+
+// What went to the Recycle Bin, a batch per deletion, newest last; Ctrl+Z
+// takes the last one back out. Kept for the app rather than a tab.
+static TRASHED: std::sync::Mutex<Vec<Vec<PathBuf>>> = std::sync::Mutex::new(Vec::new());
+const UNDO_DEPTH: usize = 30;
+
+fn remember_trashed(trashed: Vec<PathBuf>) {
+    if trashed.is_empty() {
+        return;
+    }
+    if let Ok(mut history) = TRASHED.lock() {
+        history.push(trashed);
+        let excess = history.len().saturating_sub(UNDO_DEPTH);
+        history.drain(..excess);
+    }
+}
+
+// Windows paths compare without case, and the Recycle Bin may hand one back
+// with its own capitals.
+fn same_place(a: &Path, b: &Path) -> bool {
+    a.to_string_lossy().to_lowercase() == b.to_string_lossy().to_lowercase()
+}
+
+// Puts each path of a batch back from the Recycle Bin: the newest item that
+// came from there, as the same name may have been deleted before.
+fn restore_batch(batch: Vec<PathBuf>) -> OpReport {
+    let mut report = OpReport::default();
+    let mut store = match nohrs_services::fs::trash::default_store(nohrs_services::fs::trash::open_ledger) {
+        Ok(store) => store,
+        Err(error) => {
+            report.failed(error.to_string());
+            return report;
+        }
+    };
+    let items = match store.list() {
+        Ok(items) => items,
+        Err(error) => {
+            report.failed(error.to_string());
+            return report;
+        }
+    };
+    for path in &batch {
+        // The newest item that came from there: the same name may have
+        // been deleted before.
+        let item = items
+            .iter()
+            .filter(|item| same_place(&item.original_path, path))
+            .max_by_key(|item| item.deleted_at_unix);
+        match item {
+            Some(item) => {
+                if let Err(error) = store.restore(item) {
+                    report.failed(format!("{}: {error}", path.display()));
+                }
+            }
+            None => report.failed(tf!("{path}: não está mais na Lixeira", path = path.display())),
+        }
+    }
+    report
 }

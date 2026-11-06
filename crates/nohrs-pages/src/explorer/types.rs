@@ -112,5 +112,8 @@ pub enum PaneEvent {
     OpenInNewTab {
         folder: String,
         select: Option<String>,
+        /// Asked by the middle button, which leaves the tab behind when
+        /// `[explorer] background_tabs` says so.
+        middle: bool,
     },
 }

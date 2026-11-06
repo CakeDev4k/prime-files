@@ -128,7 +128,7 @@ impl ExplorerPane {
                 return;
             }
             let delay = Duration::from_millis(u64::from(self.hover_audio_delay_ms));
-            let volume = if self.media_muted { 0.0 } else { self.media_volume };
+            let volume = if self.media_muted() { 0.0 } else { self.media_volume() };
             let task = cx.spawn({
                 let path = path.clone();
                 async move |this: WeakEntity<Self>, cx| {
@@ -285,6 +285,7 @@ mod platform {
             let attributes = attributes.ok_or_else(windows::core::Error::empty)?;
             let listener: IMFMediaEngineNotify = Listener.into();
             attributes.SetUnknown(&MF_MEDIA_ENGINE_CALLBACK, &listener)?;
+            crate::explorer::audio_session::watch();
             factory.CreateInstance(MF_MEDIA_ENGINE_AUDIOONLY.0 as u32, &attributes)
         }
     }

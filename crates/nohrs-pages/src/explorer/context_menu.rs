@@ -61,10 +61,11 @@ enum Command {
     OpenInNewTab,
     Properties,
     Customize,
+    UndoTrash,
 }
 
 impl Command {
-    const ALL: [Command; 44] = [
+    const ALL: [Command; 45] = [
         Command::ViewList,
         Command::ViewGrid,
         Command::ViewTree,
@@ -109,6 +110,7 @@ impl Command {
         Command::OpenInNewTab,
         Command::Properties,
         Command::Customize,
+        Command::UndoTrash,
     ];
 
     fn from_id(id: u32) -> Option<Self> {
@@ -820,6 +822,10 @@ impl ExplorerPane {
             Entry::command(Command::Refresh as u32, t!("Atualizar"))
                 .with_icon("icons/refresh-cw.svg")
                 .with_shortcut(keys_of(Action::Refresh)),
+            Entry::command(Command::UndoTrash as u32, t!("Desfazer exclusão"))
+                .with_icon("icons/undo-2.svg")
+                .with_shortcut(keys_of(Action::Undo))
+                .enabled(self.can_undo_trash()),
             Entry::Separator,
             Entry::command(Command::Paste as u32, t!("Colar"))
                 .with_icon("icons/clipboard.svg")
@@ -952,6 +958,7 @@ impl ExplorerPane {
             | Command::RemoveNetworkPlace
             | Command::MoreOptions => {}
             Command::CopyPath => self.copy_paths_as_text(cx),
+            Command::UndoTrash => self.undo_trash(cx),
             Command::OpenInNewTab => self.open_selection_in_new_tab(cx),
             Command::Properties => self.show_selection_properties(cx),
             Command::Customize => window.dispatch_action(

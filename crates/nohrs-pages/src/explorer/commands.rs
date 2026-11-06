@@ -42,6 +42,7 @@ impl ExplorerPane {
             }
             Action::Refresh => self.reload(cx),
             Action::Trash => self.trash_selection(cx),
+            Action::Undo => self.undo_trash(cx),
             Action::DeletePermanently => self.request_permanent_delete(window, cx),
             Action::NewFolder => self.create_new_folder(window, cx),
             Action::GoUp => self.go_up(window, cx),

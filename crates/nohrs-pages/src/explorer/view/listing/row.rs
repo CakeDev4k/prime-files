@@ -140,7 +140,10 @@ pub fn render(
             cx.listener(move |this, event: &gpui::MouseDownEvent, _window, cx| {
                 // Right of the Name column a press draws a selection
                 // rectangle, as in Explorer; on the name it picks up the file.
-                if !(this.press_on_row_blank(ix, event.position)
+                // A row already selected is picked up from anywhere on it, so
+                // a selection can be dragged by any column (issue #7).
+                if !(!this.is_selected(ix)
+                    && this.press_on_row_blank(ix, event.position)
                     && this.start_marquee(event.position, event.modifiers, Some(ix), cx))
                 {
                     this.press_entry(ix, event.position, false);

@@ -28,7 +28,7 @@ expression: parsed
             synced_panes: false,
             restore_tabs: true,
             reveal_from_other_apps: true,
-            background_tabs: false,
+            background_tabs: true,
         },
         compact: Compact {
             enabled: false,

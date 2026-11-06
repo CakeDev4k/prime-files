@@ -277,7 +277,7 @@ impl ExplorerPage {
             group,
             tab_subscriptions: HashMap::new(),
             synced_panes: false,
-            background_tabs: false,
+            background_tabs: true,
             ui: Ui::default(),
             store,
             save_task: None,
@@ -488,8 +488,9 @@ impl ExplorerPage {
                 self.open_terminal_at(*side, *size, cx);
                 return;
             }
-            PaneEvent::OpenInNewTab { folder, select } => {
-                self.open_in_new_tab_later(folder.clone(), select.clone(), cx);
+            PaneEvent::OpenInNewTab { folder, select, middle } => {
+                let background = *middle && self.background_tabs;
+                self.open_in_new_tab_later(folder.clone(), select.clone(), background, cx);
                 return;
             }
         };
@@ -782,12 +783,13 @@ impl ExplorerPage {
 
     /// Opens a tab beside the active one on `folder`, selecting `select` in
     /// it, from an item's middle click or its menu. Unlike [`Self::open_path`]
-    /// it always makes a tab, and it stays behind when `[explorer]
-    /// background_tabs` asks for that, as a browser's middle click does.
+    /// it always makes a tab, and `background` leaves it behind the current
+    /// one, as a browser's middle click does.
     pub fn open_in_new_tab(
         &mut self,
         folder: String,
         select: Option<String>,
+        background: bool,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -805,7 +807,7 @@ impl ExplorerPage {
                 pane.reveal(select);
             }
         });
-        if self.background_tabs {
+        if background {
             // `add_tab` activated the new tab; the one clicked in comes back.
             if let Some((pane, index)) = self.group.locate_tab(current.entity_id()) {
                 self.group.set_active_tab(pane, index, window, cx);
@@ -819,7 +821,7 @@ impl ExplorerPage {
 
     // The event arrives inside the pane's update, and a tab is built with the
     // window, which is reached from a task of its own (as for a split).
-    fn open_in_new_tab_later(&mut self, folder: String, select: Option<String>, cx: &mut Context<Self>) {
+    fn open_in_new_tab_later(&mut self, folder: String, select: Option<String>, background: bool, cx: &mut Context<Self>) {
         let Some(window) = cx.windows().into_iter().next() else {
             return;
         };
@@ -827,7 +829,7 @@ impl ExplorerPage {
         cx.spawn(async move |_, cx| {
             window
                 .update(cx, |_, window, cx| {
-                    this.update(cx, |page, cx| page.open_in_new_tab(folder, select, window, cx)).log_err();
+                    this.update(cx, |page, cx| page.open_in_new_tab(folder, select, background, window, cx)).log_err();
                 })
                 .log_err();
         })

@@ -185,8 +185,9 @@ pub struct Explorer {
     /// Whether "show in folder" from other programs (Premiere's Reveal in
     /// Explorer, a browser's Show in folder) opens here instead of Explorer.
     pub reveal_from_other_apps: bool,
-    /// Whether a tab opened with the middle button (or "Open in new tab")
-    /// stays behind the current one, as in a browser, instead of being shown.
+    /// Whether a tab opened with the middle button stays behind the current
+    /// one, as in a browser (issue #6). "Open in new tab" in the menu always
+    /// shows the tab it opens.
     pub background_tabs: bool,
 }
 
@@ -197,7 +198,7 @@ impl Default for Explorer {
             synced_panes: false,
             restore_tabs: true,
             reveal_from_other_apps: true,
-            background_tabs: false,
+            background_tabs: true,
         }
     }
 }
@@ -1930,13 +1931,13 @@ mod tests {
             items = "windows"
             hidden = ["Enviar para"]
             [explorer]
-            background_tabs = true
+            background_tabs = false
         "#;
         let (config, diagnostics) = Config::from_toml_str(toml);
         assert_eq!(config.menu.quick, vec!["copy_path".to_string(), "delete".to_string()]);
         assert_eq!(config.menu.items, Menu::default().items, "a string is not a list");
         assert_eq!(config.menu.hidden, vec!["Enviar para".to_string()]);
-        assert!(config.explorer.background_tabs);
+        assert!(!config.explorer.background_tabs);
         assert_eq!(diagnostics.len(), 1, "{diagnostics:?}");
     }
 

@@ -1102,7 +1102,7 @@ fn render_volume(
     glyph: impl Fn(&'static str) -> Div,
     cx: &mut Context<ExplorerPane>,
 ) -> AnyElement {
-    let level = if page.media_muted { 0.0 } else { page.media_volume as f32 };
+    let level = if page.media_muted() { 0.0 } else { page.media_volume() as f32 };
     // Segoe Fluent's speaker with no, one, two or three waves.
     let speaker = match level {
         0.0 => "\u{e74f}",
@@ -1119,7 +1119,7 @@ fn render_volume(
     let wheel = cx.listener(|this, event: &ScrollWheelEvent, window, cx| {
         let delta = f32::from(event.delta.pixel_delta(window.line_height()).y);
         if delta != 0.0 {
-            let current = if this.media_muted { 0.0 } else { this.media_volume };
+            let current = if this.media_muted() { 0.0 } else { this.media_volume() };
             this.set_media_volume(current + 0.05 * f64::from(delta.signum()), cx);
             cx.stop_propagation();
         }

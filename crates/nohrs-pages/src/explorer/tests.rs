@@ -811,7 +811,7 @@ async fn synced_panes_mirror_navigation(cx: &mut TestAppContext) {
                 synced_panes: true,
                 restore_tabs: true,
                 reveal_from_other_apps: true,
-                background_tabs: false,
+                background_tabs: true,
             };
             page.apply_config_explorer(&synced, cx);
             assert!(page.is_synced());
@@ -850,7 +850,7 @@ async fn synced_navigation_clears_stale_search_state(cx: &mut TestAppContext) {
                 synced_panes: true,
                 restore_tabs: true,
                 reveal_from_other_apps: true,
-                background_tabs: false,
+                background_tabs: true,
             };
             page.apply_config_explorer(&synced, cx);
 
@@ -993,7 +993,7 @@ async fn close_pane_keeps_subscriptions_aligned(cx: &mut TestAppContext) {
                 synced_panes: true,
                 restore_tabs: true,
                 reveal_from_other_apps: true,
-                background_tabs: false,
+                background_tabs: true,
             };
             page.apply_config_explorer(&synced, cx);
             page.pane(0)

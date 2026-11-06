@@ -943,11 +943,27 @@ impl<T: PaneItem> PaneGroup<T> {
             // explorer's bars then are: no line under it.
             .when(!self.tabs_in_frame(), |this| this.border_b_1())
             .border_color(rgb(theme::border()))
-            .children(tabs)
+            // The tabs shrink together down to their narrowest, then the strip
+            // scrolls (the wheel moves it sideways). Without a strip of their
+            // own they kept their minimum width and ran on under the window's
+            // buttons (issue #3).
+            .child(
+                div()
+                    .id(("tab-strip", pane_index))
+                    .flex()
+                    .flex_row()
+                    .items_end()
+                    .h_full()
+                    .min_w(px(0.0))
+                    .flex_shrink()
+                    .overflow_x_scroll()
+                    .children(tabs),
+            )
             // New-tab affordance (`Cmd/Ctrl+T`, §4 / §6).
             .child(
                 div()
                     .id(SharedString::from(format!("new-tab-{pane_index}")))
+                    .flex_shrink_0()
                     .flex()
                     .items_center()
                     .justify_center()
@@ -1275,7 +1291,7 @@ impl<T: PaneItem> PaneGroup<T> {
             .h(px(32.0))
             // A fixed band of widths, as browsers do: many tabs shrink
             // together, and a long folder name cannot push the rest away.
-            .min_w(px(110.0))
+            .min_w(px(84.0))
             .max_w(px(220.0))
             .flex_shrink()
             .pl(px(12.0))

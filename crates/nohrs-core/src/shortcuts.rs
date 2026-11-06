@@ -39,6 +39,7 @@ pub enum Action {
     ZoomOut,
     ZoomReset,
     NewTab,
+    GoTo,
     CloseTab,
     SplitVertical,
     SplitHorizontal,
@@ -124,6 +125,13 @@ pub const ACTIONS: &[ActionInfo] = &[
     info(Action::SearchIndex, "search_index", SEARCH, crate::k!("Buscar no índice"), &["ctrl-shift-f"]),
     info(Action::FilterBar, "filter_bar", SEARCH, crate::k!("Barra de filtros"), &["ctrl-shift-l"]),
     info(Action::NewTab, "new_tab", PANES, crate::k!("Nova aba"), &["ctrl-t"]),
+    info(
+        Action::GoTo,
+        "go_to",
+        PANES,
+        crate::k!("Ir para uma pasta, ou buscar no computador"),
+        &["ctrl-shift-t"],
+    ),
     info(Action::CloseTab, "close_tab", PANES, crate::k!("Fechar aba"), &["ctrl-w"]),
     info(Action::SplitVertical, "split_vertical", PANES, crate::k!("Dividir lado a lado"), &["ctrl-\\"]),
     // Shift+\ comes as `|` on some layouts, with or without the shift.

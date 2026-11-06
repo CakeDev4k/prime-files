@@ -124,6 +124,7 @@ impl ExplorerPane {
                 }
             }
             Action::NewTab
+            | Action::GoTo
             | Action::CloseTab
             | Action::SplitVertical
             | Action::SplitHorizontal

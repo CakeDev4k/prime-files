@@ -21,21 +21,19 @@ pub fn render(
     // This PC is an address, not a path: one crumb with its name. Under a
     // drive, a crumb for it comes first, as in Explorer, leading back to it.
     let location = page.location_name(cx);
-    let parts = if location.is_some() { Vec::new() } else { path_parts(&page.cwd) };
+    if location.is_none() && !continues_below(&page.crumb_trail, &page.cwd) {
+        page.crumb_trail = page.cwd.clone();
+    }
+    // The crumbs run to the deepest folder of the trail; the ones past the
+    // folder on screen are dimmed, and clicking one goes back down there.
+    let parts = if location.is_some() { Vec::new() } else { path_parts(&page.crumb_trail) };
+    let current_ix = if location.is_some() { 0 } else { path_parts(&page.cwd).len().saturating_sub(1) };
     let under_this_pc = location.is_none() && starts_with_drive(&page.cwd);
-    let this_pc_name = page
-        .sidebar
-        .places
-        .as_ref()
-        .and_then(|places| places.this_pc.as_ref())
-        .map(|place| place.name.clone())
-        .unwrap_or_else(|| i18n::tr(crate::explorer::places::THIS_PC_NAME).to_string());
 
-    let (display_parts, is_truncated) = if parts.len() > 5 {
-        (parts[(parts.len() - 5)..].to_vec(), true)
-    } else {
-        (parts.clone(), false)
-    };
+    // Five crumbs at most, always including the folder on screen.
+    let start_idx = if parts.len() > 5 { (parts.len() - 5).min(current_ix) } else { 0 };
+    let display_parts = parts[start_idx..].to_vec();
+    let is_truncated = start_idx > 0;
 
     let mut bc = Breadcrumb::new();
     // On a share, Network and the server come first, as in Explorer, each
@@ -44,28 +42,40 @@ pub fn render(
     if unc_server.is_some() {
         bc = bc.child(
             BreadcrumbItem::new(i18n::tr(crate::explorer::network::NETWORK_NAME).to_string()).on_click(cx.listener(
-                |this, _, window, cx| this.change_dir(crate::explorer::network::NETWORK.to_string(), window, cx),
+                |this, _, window, cx| {
+                    cx.stop_propagation();
+                    this.change_dir(crate::explorer::network::NETWORK.to_string(), window, cx)
+                },
             )),
         );
     }
     if let Some(name) = location {
         bc = bc.child(BreadcrumbItem::new(name));
     } else if under_this_pc {
-        bc = bc.child(BreadcrumbItem::new(this_pc_name).on_click(cx.listener(|this, _, window, cx| {
-            this.change_dir(crate::explorer::places::THIS_PC.to_string(), window, cx)
-        })));
+        // A computer, as the Explorer draws it there: the name took a
+        // crumb's worth of room on every path of every drive.
+        bc = bc.child(
+            BreadcrumbItem::new("\u{e7f4}")
+                .font_family(theme::icon_font())
+                .text_size(px(14.0))
+                .on_click(cx.listener(|this, _, window, cx| {
+                    cx.stop_propagation();
+                    this.change_dir(crate::explorer::places::THIS_PC.to_string(), window, cx)
+                })),
+        );
     } else if let Some(server) = unc_server.clone() {
         let address = format!("\\\\{server}");
         bc = bc.child(
-            BreadcrumbItem::new(server).on_click(cx.listener(move |this, _, window, cx| this.change_dir(address.clone(), window, cx))),
+            BreadcrumbItem::new(server).on_click(cx.listener(move |this, _, window, cx| {
+                cx.stop_propagation();
+                this.change_dir(address.clone(), window, cx)
+            })),
         );
     }
 
     if is_truncated {
-        bc = bc.child(BreadcrumbItem::new("…").on_click(cx.listener(move |_this, _, _, _| {})));
+        bc = bc.child(BreadcrumbItem::new("…").on_click(cx.listener(move |_this, _, _, cx| cx.stop_propagation())));
     }
-
-    let start_idx = if is_truncated { parts.len() - 5 } else { 0 };
 
     for (display_i, p) in display_parts.iter().enumerate() {
         let actual_i = start_idx + display_i;
@@ -92,9 +102,17 @@ pub fn render(
             path_here = page.cwd.clone();
         }
 
-        bc = bc.child(BreadcrumbItem::new(text).on_click(
-            cx.listener(move |this, _, window, cx| this.change_dir(path_here.clone(), window, cx)),
-        ));
+        let item = BreadcrumbItem::new(text).on_click(cx.listener(move |this, _, window, cx| {
+            // Only the crumb: a click on the bar around it opens the address
+            // field.
+            cx.stop_propagation();
+            this.change_dir(path_here.clone(), window, cx)
+        }));
+        bc = bc.child(match actual_i.cmp(&current_ix) {
+            std::cmp::Ordering::Less => item,
+            std::cmp::Ordering::Equal => item.text_color(rgb(theme::fg())),
+            std::cmp::Ordering::Greater => item.text_color(rgb(theme::fg_secondary())).opacity(0.55),
+        });
     }
 
     let can_go_back = page.history_index > 0;
@@ -199,8 +217,10 @@ pub fn render(
                 .min_w(px(0.0))
                 .child(Input::new(&state.input).small().text_sm())
                 .into_any_element(),
-            // A double click anywhere on the bar, crumbs included, turns it
-            // into the full path; a single click on a crumb still navigates.
+            // A click on the bar outside the crumbs turns it into the full
+            // path, selected, as File Pilot's and the Explorer's do; a
+            // double click anywhere, crumbs included, too. A single click on
+            // a crumb navigates.
             None => div()
                 .id("path-bar")
                 .flex_1()
@@ -209,10 +229,9 @@ pub fn render(
                 .items_center()
                 .overflow_hidden()
                 .min_w(px(0.0))
-                .on_click(cx.listener(|this, event: &ClickEvent, window, cx| {
-                    if event.click_count() >= 2 {
-                        this.begin_path_edit(window, cx);
-                    }
+                .cursor_text()
+                .on_click(cx.listener(|this, _event: &ClickEvent, window, cx| {
+                    this.begin_path_edit(window, cx);
                 }))
                 .child(bc)
                 .into_any_element(),
@@ -429,6 +448,20 @@ fn view_mode_button(
 }
 
 // `C:\...`: a path on a lettered drive, which Explorer shows under This PC.
+// Whether `trail` is `cwd` or a folder somewhere below it, so the crumbs of
+// the trail still lead through the folder on screen. Windows paths compare
+// without case.
+fn continues_below(trail: &str, cwd: &str) -> bool {
+    if trail.is_empty() {
+        return false;
+    }
+    let trail = trail.to_lowercase();
+    let cwd = cwd.to_lowercase();
+    let cwd = cwd.trim_end_matches(['\\', '/']);
+    trail.trim_end_matches(['\\', '/']) == cwd
+        || trail.strip_prefix(cwd).is_some_and(|rest| rest.starts_with(['\\', '/']))
+}
+
 fn starts_with_drive(path: &str) -> bool {
     let bytes = path.as_bytes();
     bytes.len() >= 2 && bytes[0].is_ascii_alphabetic() && bytes[1] == b':'
@@ -459,7 +492,17 @@ fn path_parts(path: &str) -> Vec<String> {
 
 #[cfg(test)]
 mod tests {
-    use super::path_parts;
+    use super::{continues_below, path_parts};
+
+    #[test]
+    fn the_trail_survives_going_up_and_not_another_branch() {
+        assert!(continues_below(r"C:\Edição\SFX\Awkhard", r"C:\Edição"));
+        assert!(continues_below(r"C:\Edição\SFX", r"c:\edição\sfx"));
+        assert!(continues_below(r"C:\Edição\SFX", r"C:\"));
+        assert!(!continues_below(r"C:\Edição\SFX", r"C:\Edição\Música"));
+        assert!(!continues_below(r"C:\Edição2\SFX", r"C:\Edição"));
+        assert!(!continues_below("", r"C:\Edição"));
+    }
 
     #[cfg(windows)]
     #[test]

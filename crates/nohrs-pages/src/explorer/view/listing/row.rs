@@ -196,6 +196,13 @@ pub fn render(
                         {
                             this.record_click(ix, mouse.up.click_count);
                             let modifiers = mouse.up.modifiers;
+                            let plain = !(modifiers.shift || modifiers.platform || modifiers.control);
+                            // On the name only, as the Explorer does: the other
+                            // columns of a selected row are where it is dragged.
+                            let was_sole_selection = this.selection.len() == 1
+                                && this.is_selected(ix)
+                                && !this.press_on_row_blank(ix, mouse.up.position);
+                            this.arm_slow_rename(ix, mouse.up.click_count, plain, was_sole_selection, window, cx);
                             if modifiers.shift {
                                 this.select_range_to(ix);
                             } else if modifiers.platform || modifiers.control {
@@ -374,6 +381,10 @@ pub fn render(
                                                     })),
                                             )
                                         })
+                                        .when_some(item.cloud_state(), |this, state| {
+                                            this.child(cloud_badge(state))
+                                        })
+                                        .children(copy_progress(&item.path))
                                         .when_some(hit_folder, |this, folder| {
                                             this.child(crate::explorer::view::hit_folder_label(
                                                 &folder,
@@ -474,4 +485,41 @@ pub fn render(
         Some(folder) => crate::explorer::drag::drop_into(row, &folder, cx),
         None => row,
     }
+}
+
+/// The Explorer's Status icon for an item of a cloud-synced folder (OneDrive
+/// and the like): a cloud when it is only online, a green check when it is
+/// downloaded, a filled green check when it is always kept on the device.
+pub(crate) fn cloud_badge(state: nohrs_models::file_entry::CloudState) -> impl IntoElement {
+    use nohrs_models::file_entry::CloudState;
+    const GREEN: u32 = 0x22A045;
+    let (glyph, color, tip) = match state {
+        CloudState::OnlineOnly => ("\u{e753}", theme::fg_secondary(), nohrs_core::t!("Disponível só online")),
+        CloudState::OnDevice => ("\u{e930}", GREEN, nohrs_core::t!("Disponível neste dispositivo")),
+        CloudState::AlwaysKept => ("\u{ec61}", GREEN, nohrs_core::t!("Sempre mantido neste dispositivo")),
+    };
+    div()
+        .id(SharedString::from(tip))
+        .flex_shrink_0()
+        .pl(px(6.0))
+        .font_family(theme::icon_font())
+        .text_size(px(12.0))
+        .text_color(rgb(color))
+        .tooltip(move |window, cx| gpui_component::tooltip::Tooltip::new(tip).build(window, cx))
+        .child(glyph)
+}
+
+/// "42%" after the name of a file still being copied here, so it is not
+/// opened half-written.
+pub(crate) fn copy_progress(path: &str) -> Option<impl IntoElement> {
+    let (copied, total) = nohrs_services::fs::ops::transfers::progress(std::path::Path::new(path))?;
+    let percent = if total > 0 { copied.saturating_mul(100) / total } else { 0 };
+    Some(
+        div()
+            .flex_shrink_0()
+            .pl(px(6.0))
+            .text_xs()
+            .text_color(rgb(theme::accent()))
+            .child(format!("{percent}%")),
+    )
 }

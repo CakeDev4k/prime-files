@@ -114,12 +114,51 @@ fn write_system_clipboard(mode: ClipMode, paths: &[PathBuf], text: String, cx: &
         tracing::warn!("could not put files on the Windows clipboard: {error}");
         cx.write_to_clipboard(ClipboardItem::new_string(text));
     }
+    windows_clipboard::remember_ours();
 }
 
 #[cfg(not(all(windows, not(test))))]
 fn write_system_clipboard(_mode: ClipMode, _paths: &[PathBuf], text: String, cx: &mut App) {
     cx.write_to_clipboard(ClipboardItem::new_string(text));
 }
+
+// Whether the explorer's own clipboard is still the newest thing copied: after a
+// copy in another program, Paste takes that instead.
+#[cfg(all(windows, not(test)))]
+fn explorer_clipboard_is_current() -> bool {
+    windows_clipboard::still_ours()
+}
+
+#[cfg(not(all(windows, not(test))))]
+fn explorer_clipboard_is_current() -> bool {
+    true
+}
+
+#[cfg(all(windows, not(test)))]
+fn system_clipboard_files() -> Option<(ClipMode, Vec<PathBuf>)> {
+    windows_clipboard::read_files()
+}
+
+#[cfg(not(all(windows, not(test))))]
+fn system_clipboard_files() -> Option<(ClipMode, Vec<PathBuf>)> {
+    None
+}
+
+#[cfg(all(windows, not(test)))]
+fn forget_system_cut() {
+    windows_clipboard::forget_cut();
+}
+
+#[cfg(not(all(windows, not(test))))]
+fn forget_system_cut() {}
+
+#[cfg(all(windows, not(test)))]
+fn adopt_system_clipboard() {
+    windows_clipboard::remember_ours();
+}
+
+#[cfg(not(all(windows, not(test))))]
+fn adopt_system_clipboard() {}
 
 // The Explorer and the desktop paste only CF_HDROP: with path text alone, their
 // Paste has nothing to take. gpui's clipboard writes one entry and empties the
@@ -128,18 +167,51 @@ fn write_system_clipboard(_mode: ClipMode, _paths: &[PathBuf], text: String, cx:
 #[cfg_attr(test, allow(dead_code))]
 #[allow(unsafe_code)]
 mod windows_clipboard {
-    use std::os::windows::ffi::OsStrExt;
+    use std::os::windows::ffi::{OsStrExt, OsStringExt};
     use std::path::PathBuf;
+    use std::sync::atomic::{AtomicU32, Ordering};
 
     use windows::Win32::Foundation::{GlobalFree, HANDLE, HGLOBAL};
     use windows::Win32::System::DataExchange::{
-        CloseClipboard, EmptyClipboard, OpenClipboard, RegisterClipboardFormatW, SetClipboardData,
+        CloseClipboard, EmptyClipboard, GetClipboardData, GetClipboardSequenceNumber,
+        IsClipboardFormatAvailable, OpenClipboard, RegisterClipboardFormatW, SetClipboardData,
     };
-    use windows::Win32::System::Memory::{GMEM_MOVEABLE, GlobalAlloc, GlobalLock, GlobalUnlock};
+    use windows::Win32::System::Memory::{
+        GMEM_MOVEABLE, GlobalAlloc, GlobalLock, GlobalSize, GlobalUnlock,
+    };
     use windows::Win32::System::Ole::{CF_HDROP, CF_UNICODETEXT, DROPEFFECT_COPY, DROPEFFECT_MOVE};
-    use windows::Win32::UI::Shell::{CFSTR_PREFERREDDROPEFFECT, DROPFILES};
+    use windows::Win32::UI::Input::KeyboardAndMouse::GetActiveWindow;
+    use windows::Win32::UI::Shell::{CFSTR_PREFERREDDROPEFFECT, DROPFILES, DragQueryFileW, HDROP};
 
     use super::ClipMode;
+
+    // The sequence number the clipboard had right after our last write. While
+    // it is unchanged the explorer's own clipboard (which knows copy from cut
+    // for sure) is current; once another program writes, that one is stale and
+    // the system clipboard is read instead.
+    static OURS: AtomicU32 = AtomicU32::new(0);
+
+    pub(super) fn remember_ours() {
+        OURS.store(unsafe { GetClipboardSequenceNumber() }, Ordering::Relaxed);
+    }
+
+    pub(super) fn still_ours() -> bool {
+        OURS.load(Ordering::Relaxed) == unsafe { GetClipboardSequenceNumber() }
+    }
+
+    // `EmptyClipboard` with no owner leaves the clipboard ownerless, and the
+    // documentation says `SetClipboardData` then fails; the active window of
+    // this thread is the explorer window the command came from.
+    fn open() -> windows::core::Result<()> {
+        let owner = unsafe { GetActiveWindow() };
+        unsafe { OpenClipboard((!owner.is_invalid()).then_some(owner)) }
+    }
+
+    fn close() {
+        if let Err(error) = unsafe { CloseClipboard() } {
+            tracing::warn!("could not close the clipboard: {error}");
+        }
+    }
 
     pub(super) fn write_files(
         mode: ClipMode,
@@ -148,12 +220,84 @@ mod windows_clipboard {
     ) -> windows::core::Result<()> {
         // One open for all the formats: closing between them would let a
         // clipboard listener take the clipboard and fail the next write.
-        unsafe { OpenClipboard(None) }?;
+        open()?;
         let result = write_formats(mode, paths, text);
-        if let Err(error) = unsafe { CloseClipboard() } {
-            tracing::warn!("could not close the clipboard: {error}");
-        }
+        close();
         result
+    }
+
+    /// Empties the system clipboard if it still holds what this app put there.
+    /// A cut that was pasted here has moved its files: leaving the cut on the
+    /// clipboard would let a later paste (here or in the Explorer) try to move
+    /// paths that no longer exist, which is also why the Explorer empties it.
+    pub(super) fn forget_cut() {
+        if !still_ours() || open().is_err() {
+            return;
+        }
+        if let Err(error) = unsafe { EmptyClipboard() } {
+            tracing::warn!("could not empty the clipboard: {error}");
+        }
+        close();
+        remember_ours();
+    }
+
+    /// Files the Explorer (or another program) put on the clipboard, with the
+    /// effect it asked for: a cut in the Explorer arrives as a move.
+    pub(super) fn read_files() -> Option<(ClipMode, Vec<PathBuf>)> {
+        let hdrop_format = u32::from(CF_HDROP.0);
+        if unsafe { IsClipboardFormatAvailable(hdrop_format) }.is_err() {
+            return None;
+        }
+        open().ok()?;
+        let read = read_open_clipboard();
+        close();
+        read
+    }
+
+    fn read_open_clipboard() -> Option<(ClipMode, Vec<PathBuf>)> {
+        let handle = unsafe { GetClipboardData(u32::from(CF_HDROP.0)) }.ok()?;
+        let drop_handle = HDROP(handle.0);
+        let count = unsafe { DragQueryFileW(drop_handle, u32::MAX, None) };
+        let paths: Vec<PathBuf> = (0..count)
+            .filter_map(|index| {
+                let length = unsafe { DragQueryFileW(drop_handle, index, None) } as usize;
+                if length == 0 {
+                    return None;
+                }
+                let mut buffer = vec![0u16; length + 1];
+                let written = unsafe { DragQueryFileW(drop_handle, index, Some(&mut buffer)) };
+                let written = (written as usize).min(length);
+                Some(PathBuf::from(std::ffi::OsString::from_wide(&buffer[..written])))
+            })
+            .collect();
+        if paths.is_empty() {
+            return None;
+        }
+        let effect_format = unsafe { RegisterClipboardFormatW(CFSTR_PREFERREDDROPEFFECT) };
+        let mode = if effect_format != 0 && preferred_effect(effect_format) & DROPEFFECT_MOVE.0 != 0
+        {
+            ClipMode::Cut
+        } else {
+            ClipMode::Copy
+        };
+        Some((mode, paths))
+    }
+
+    fn preferred_effect(format: u32) -> u32 {
+        let Ok(handle) = (unsafe { GetClipboardData(format) }) else {
+            return 0;
+        };
+        let global = HGLOBAL(handle.0);
+        if unsafe { GlobalSize(global) } < std::mem::size_of::<u32>() {
+            return 0;
+        }
+        let data = unsafe { GlobalLock(global) };
+        if data.is_null() {
+            return 0;
+        }
+        let effect = unsafe { data.cast::<u32>().read_unaligned() };
+        unsafe { GlobalUnlock(global) }.ok();
+        effect
     }
 
     fn write_formats(mode: ClipMode, paths: &[PathBuf], text: &str) -> windows::core::Result<()> {
@@ -415,7 +559,7 @@ impl Applied {
 /// counting it as one puts the source back on the clipboard, and the retry then
 /// numbers around the name this very batch just took.
 #[derive(Default)]
-struct OpReport {
+pub(crate) struct OpReport {
     /// One per operation that did not happen. These decide the footer.
     failures: Vec<String>,
     /// One per thing an operation finished and could not clear away.
@@ -423,7 +567,7 @@ struct OpReport {
 }
 
 impl OpReport {
-    fn failed(&mut self, message: String) {
+    pub(crate) fn failed(&mut self, message: String) {
         self.failures.push(message);
     }
 
@@ -742,7 +886,7 @@ impl ExplorerPane {
     // failure) on the background executor, then reloads the listing and reports
     // the outcome in the status bar. `total` and `success_label` describe the
     // batch for the success / partial-failure messages.
-    fn run_fs_op<F>(&mut self, total: usize, success_label: String, cx: &mut Context<Self>, op: F)
+    pub(crate) fn run_fs_op<F>(&mut self, total: usize, success_label: String, cx: &mut Context<Self>, op: F)
     where
         F: FnOnce() -> OpReport + Send + 'static,
     {
@@ -768,10 +912,46 @@ impl ExplorerPane {
     {
         use nohrs_core::telemetry::LogErr as _;
         let task = cx.background_spawn(async move { op() });
+        // A copy of big files takes a while: the status bar says how far it
+        // is, and the copied files' rows too (they repaint with it).
+        let done = std::rc::Rc::new(std::cell::Cell::new(false));
+        cx.spawn({
+            let done = done.clone();
+            async move |this: WeakEntity<Self>, cx: &mut AsyncApp| {
+                loop {
+                    cx.background_executor().timer(std::time::Duration::from_millis(300)).await;
+                    if done.get() {
+                        return;
+                    }
+                    let Some((count, copied, total)) = nohrs_services::fs::ops::transfers::summary() else {
+                        continue;
+                    };
+                    let percent = if total > 0 { copied.saturating_mul(100) / total } else { 0 };
+                    let text = tf!(
+                        "Copiando {count} arquivo(s)… {percent}% ({copied} de {total})",
+                        count = count,
+                        percent = percent,
+                        copied = super::preview_listing::human_size(copied),
+                        total = super::preview_listing::human_size(total),
+                    );
+                    if this
+                        .update(cx, |pane, cx| {
+                            pane.set_status(StatusLevel::Info, text);
+                            cx.notify();
+                        })
+                        .is_err()
+                    {
+                        return;
+                    }
+                }
+            }
+        })
+        .detach();
         cx.spawn(move |this: WeakEntity<Self>, cx: &mut AsyncApp| {
             let mut cx = cx.clone();
             async move {
                 let (report, outcome) = task.await;
+                done.set(true);
                 cx.update(|cx| on_complete(outcome, cx)).log_err();
                 // Before the update, not inside it: this is what writes the
                 // failures to the log, and a batch can outlive the pane that
@@ -927,16 +1107,21 @@ impl ExplorerPane {
     }
 
     fn read_clipboard(&self, cx: &App) -> Option<(ClipMode, Vec<PathBuf>)> {
-        if let Some((mode, paths)) = cx
-            .try_global::<ExplorerClipboard>()
-            .and_then(|clip| clip.entry.clone())
+        let current = explorer_clipboard_is_current();
+        if current
+            && let Some((mode, paths)) = cx
+                .try_global::<ExplorerClipboard>()
+                .and_then(|clip| clip.entry.clone())
         {
             return Some((mode, paths));
         }
-        if ExplorerClipboard::cut_in_flight(cx) {
+        if current && ExplorerClipboard::cut_in_flight(cx) {
             // Emptied by a cut paste that is still moving those very sources.
             // Falling back now would hand them straight back as a copy.
             return None;
+        }
+        if let Some(files) = system_clipboard_files() {
+            return Some(files);
         }
         // Fall back to the system clipboard as newline-separated path text (e.g.
         // a path copied from elsewhere), treated as a copy.
@@ -973,6 +1158,12 @@ impl ExplorerPane {
         let Some((mode, sources)) = self.read_clipboard(cx) else {
             return false;
         };
+        if !explorer_clipboard_is_current() {
+            // Copied in another program: adopt it, so a cut from the Explorer
+            // is consumed and retried exactly like one made here.
+            ExplorerClipboard::write(Some((mode, sources.clone())), cx);
+            adopt_system_clipboard();
+        }
         let dest_dir = PathBuf::from(&self.cwd);
         self.prepare_transfer(mode, sources, dest_dir, true)
     }
@@ -1101,6 +1292,7 @@ impl ExplorerPane {
         // `retain_failed_cut`, which uses this generation to recognize the
         // clipboard state it left behind.
         let cut_generation = (mode == ClipMode::Cut && from_clipboard).then(|| {
+            forget_system_cut();
             ExplorerClipboard::begin_cut(cx);
             ExplorerClipboard::write(None, cx)
         });
@@ -1343,6 +1535,58 @@ impl ExplorerPane {
         cx.notify();
     }
 
+    /// Starts the rename of the folder `create_new_folder` made, once it is in
+    /// the listing. Called by it and on each frame.
+    pub(crate) fn take_rename_when_listed(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.listing_pending || self.rename_when_listed.is_none() {
+            return;
+        }
+        let Some(path) = self.rename_when_listed.take() else {
+            return;
+        };
+        if let Some(index) = self.filtered_entries.iter().position(|entry| super::same_path(&entry.path, &path)) {
+            self.select_single(index);
+            self.scroll_entry_into_view(index);
+            self.begin_rename(index, window, cx);
+        }
+    }
+
+    /// A plain click on the item that was already the only one selected
+    /// renames it after the double-click time, as in the Explorer, unless a
+    /// second click (a double click) or another click comes first.
+    pub(crate) fn arm_slow_rename(
+        &mut self,
+        ix: usize,
+        click_count: usize,
+        plain: bool,
+        was_sole_selection: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.slow_rename = None;
+        if click_count != 1 || !plain || !was_sole_selection || self.renaming.is_some() {
+            return;
+        }
+        let Some(path) = self.filtered_entries.get(ix).map(|entry| entry.path.clone()) else {
+            return;
+        };
+        let delay = double_click_time();
+        self.slow_rename = Some(cx.spawn_in(window, async move |this, cx| {
+            cx.background_executor().timer(delay).await;
+            this.update_in(cx, |pane, window, cx| {
+                pane.slow_rename = None;
+                let Some(index) = pane.filtered_entries.iter().position(|entry| entry.path == path) else {
+                    return;
+                };
+                if pane.selection.len() == 1 && pane.is_selected(index) && pane.renaming.is_none() {
+                    pane.begin_rename(index, window, cx);
+                    cx.notify();
+                }
+            })
+            .ok();
+        }));
+    }
+
     /// Creates a new folder in the current directory and immediately starts an
     /// inline rename of it so the user can name it (§1, §6).
     pub(crate) fn create_new_folder(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -1350,16 +1594,16 @@ impl ExplorerPane {
         let name = ops::unique_name(&parent, t!("Nova pasta"));
         match ops::create_dir(&parent, &name) {
             Ok(path) => {
+                // The listing is read on its own thread and may not have the
+                // folder yet: it is selected, scrolled to and put in rename
+                // mode once it does (`take_rename_when_listed`), instead of
+                // being looked for here and, not found, left for the user to
+                // hunt down.
                 self.reload(cx);
-                let created = path.to_string_lossy();
-                if let Some(index) = self
-                    .filtered_entries
-                    .iter()
-                    .position(|entry| entry.path == created)
-                {
-                    self.select_single(index);
-                    self.begin_rename(index, window, cx);
-                }
+                let created = path.to_string_lossy().into_owned();
+                self.reveal(&created);
+                self.rename_when_listed = Some(created);
+                self.take_rename_when_listed(window, cx);
                 cx.notify();
             }
             Err(error) => {
@@ -1371,6 +1615,20 @@ impl ExplorerPane {
             }
         }
     }
+}
+
+// The system's double-click time: a second click within it is a double
+// click, and only after it does a click on the selected item rename.
+#[cfg(windows)]
+#[allow(unsafe_code)]
+fn double_click_time() -> std::time::Duration {
+    let millis = unsafe { windows::Win32::UI::Input::KeyboardAndMouse::GetDoubleClickTime() };
+    std::time::Duration::from_millis(u64::from(millis.clamp(200, 2000)))
+}
+
+#[cfg(not(windows))]
+fn double_click_time() -> std::time::Duration {
+    std::time::Duration::from_millis(500)
 }
 
 #[cfg(test)]

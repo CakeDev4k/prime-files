@@ -377,6 +377,8 @@ mod platform {
     /// `CMIC_MASK_UNICODE` (shobjidl.h), missing from the bindings: the
     /// command info carries the wide strings.
     const CMIC_MASK_UNICODE: u32 = 0x4000;
+    /// `CMIC_MASK_NOASYNC` (shobjidl.h), missing from the bindings too.
+    const CMIC_MASK_NOASYNC: u32 = 0x0000_0100;
 
     thread_local! {
         // The menu whose owner-drawn submenus ("Open with", "Send to", "New")
@@ -747,7 +749,11 @@ mod platform {
         let directory_wide = wide(directory);
         let info = CMINVOKECOMMANDINFOEX {
             cbSize: std::mem::size_of::<CMINVOKECOMMANDINFOEX>() as u32,
-            fMask: CMIC_MASK_UNICODE | CMIC_MASK_PTINVOKE,
+            // NOASYNC: Pin to Quick access and Pin to Start finish their work
+            // after InvokeCommand returns, on objects this menu holds; the
+            // menu was released right away and they never happened (issues
+            // #11 and #13). Explorer asks for the same when it invokes.
+            fMask: CMIC_MASK_UNICODE | CMIC_MASK_PTINVOKE | CMIC_MASK_NOASYNC,
             hwnd,
             // The command's offset, passed where a verb string would go, as
             // MAKEINTRESOURCE does.

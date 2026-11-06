@@ -336,8 +336,8 @@ fn band_cell(item: BandItem, cx: &mut Context<ExplorerPane>) -> AnyElement {
                 cx.stop_propagation();
                 match &in_tab {
                     BandTarget::Place(place) => {
-                        if let Some(path) = &place.path {
-                            this.open_path_in_new_tab(path, true, true, cx);
+                        if let Some(address) = ExplorerPane::place_address(place) {
+                            this.open_path_in_new_tab(&address, true, true, cx);
                         }
                     }
                     BandTarget::Folder(folder) => this.open_path_in_new_tab(folder, true, true, cx),
@@ -646,7 +646,7 @@ fn row(
         .when(active, |this| this.bg(rgb(theme::accent_subtle())))
         .when(!active, |this| this.hover(|this| this.bg(rgb(theme::bg_hover()))))
         .on_click(cx.listener(move |this, _, window, cx| this.open_place(&opened, window, cx)))
-        .when_some(place.path.clone(), |this, path| {
+        .when_some(ExplorerPane::place_address(&place), |this, path| {
             this.on_mouse_down(
                 MouseButton::Middle,
                 cx.listener(move |this, _, _, cx| {

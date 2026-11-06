@@ -14,6 +14,7 @@
 
 mod arabic;
 mod extra;
+mod hungarian;
 mod strings;
 
 use std::collections::HashMap;
@@ -43,12 +44,25 @@ pub enum Lang {
     Zh,
     /// العربية — written right to left; the text system orders each line.
     Ar,
+    /// Magyar.
+    Hu,
 }
 
 impl Lang {
     /// Every language, in the order the settings page lists them.
-    pub const ALL: [Lang; 10] =
-        [Lang::Pt, Lang::En, Lang::Es, Lang::Fr, Lang::De, Lang::It, Lang::Ru, Lang::Ja, Lang::Zh, Lang::Ar];
+    pub const ALL: [Lang; 11] = [
+        Lang::Pt,
+        Lang::En,
+        Lang::Es,
+        Lang::Fr,
+        Lang::De,
+        Lang::It,
+        Lang::Hu,
+        Lang::Ru,
+        Lang::Ja,
+        Lang::Zh,
+        Lang::Ar,
+    ];
 
     /// The value `ui.language` stores for this language.
     pub fn code(self) -> &'static str {
@@ -63,6 +77,7 @@ impl Lang {
             Lang::Ja => "ja",
             Lang::Zh => "zh-CN",
             Lang::Ar => "ar",
+            Lang::Hu => "hu",
         }
     }
 
@@ -80,6 +95,7 @@ impl Lang {
             Lang::Ja => "日本語",
             Lang::Zh => "简体中文",
             Lang::Ar => "العربية",
+            Lang::Hu => "Magyar",
         }
     }
 
@@ -99,6 +115,7 @@ impl Lang {
             "ja" => Some(Lang::Ja),
             "zh" => Some(Lang::Zh),
             "ar" => Some(Lang::Ar),
+            "hu" => Some(Lang::Hu),
             _ => None,
         }
     }
@@ -118,6 +135,7 @@ impl Lang {
         const RUSSIAN: &[&str] = &["RU", "BY", "KZ", "KG"];
         const JAPANESE: &[&str] = &["JP"];
         const CHINESE: &[&str] = &["CN", "SG"];
+        const HUNGARIAN: &[&str] = &["HU"];
         const ARABIC: &[&str] = &[
             "SA", "AE", "EG", "MA", "DZ", "TN", "LY", "IQ", "JO", "LB", "SY", "KW", "QA", "BH", "OM", "YE",
             "SD", "PS", "MR",
@@ -134,6 +152,7 @@ impl Lang {
             (JAPANESE, Lang::Ja),
             (CHINESE, Lang::Zh),
             (ARABIC, Lang::Ar),
+            (HUNGARIAN, Lang::Hu),
         ]
         .into_iter()
         .find(|(countries, _)| countries.contains(&country))
@@ -157,7 +176,7 @@ impl Lang {
             Lang::Ru => Some(3),
             Lang::Ja => Some(4),
             Lang::Zh => Some(5),
-            Lang::Pt | Lang::En | Lang::Es | Lang::Ar => None,
+            Lang::Pt | Lang::En | Lang::Es | Lang::Ar | Lang::Hu => None,
         }
     }
 }
@@ -222,6 +241,11 @@ fn arabic_table() -> &'static HashMap<&'static str, &'static str> {
     TABLE.get_or_init(|| arabic::ARABIC.iter().copied().collect())
 }
 
+fn hungarian_table() -> &'static HashMap<&'static str, &'static str> {
+    static TABLE: OnceLock<HashMap<&'static str, &'static str>> = OnceLock::new();
+    TABLE.get_or_init(|| hungarian::HUNGARIAN.iter().copied().collect())
+}
+
 /// `key` in a given language. A language missing the row falls back to
 /// English, which more people read than Portuguese.
 pub fn tr_in(lang: Lang, key: &'static str) -> &'static str {
@@ -230,6 +254,10 @@ pub fn tr_in(lang: Lang, key: &'static str) -> &'static str {
         Lang::En => table().get(key).map_or(key, |row| row.0),
         Lang::Es => table().get(key).map_or(key, |row| row.1),
         Lang::Ar => match arabic_table().get(key) {
+            Some(text) => text,
+            None => tr_in(Lang::En, key),
+        },
+        Lang::Hu => match hungarian_table().get(key) {
             Some(text) => text,
             None => tr_in(Lang::En, key),
         },
@@ -433,6 +461,30 @@ mod tests {
         for (pt, _) in arabic::ARABIC {
             assert!(strings::STRINGS.iter().any(|row| row.0 == *pt), "row in arabic.rs without one in strings.rs: {pt:?}");
         }
+    }
+
+    #[test]
+    fn every_row_has_hungarian_with_its_placeholders() {
+        let hungarian: std::collections::HashMap<&str, &str> = hungarian::HUNGARIAN.iter().copied().collect();
+        assert_eq!(hungarian.len(), hungarian::HUNGARIAN.len(), "duplicated row in i18n/hungarian.rs");
+        let mut missing = Vec::new();
+        for &(pt, _, _) in strings::STRINGS {
+            match hungarian.get(pt) {
+                Some(text) => {
+                    assert!(!text.trim().is_empty(), "empty Hungarian for {pt:?}");
+                    assert_eq!(placeholders(pt), placeholders(text), "placeholders differ: {pt:?} -> {text:?}");
+                }
+                None => missing.push(pt),
+            }
+        }
+        assert!(missing.is_empty(), "no row in i18n/hungarian.rs for:
+{missing:#?}");
+        for (pt, _) in hungarian::HUNGARIAN {
+            assert!(strings::STRINGS.iter().any(|row| row.0 == *pt), "row in hungarian.rs without one in strings.rs: {pt:?}");
+        }
+        assert_eq!(tr_in(Lang::Hu, "Copiar"), "Másolás");
+        assert_eq!(Lang::parse("hu-HU"), Some(Lang::Hu));
+        assert_eq!(Lang::for_country("HU"), Some(Lang::Hu));
     }
 
     #[test]

@@ -10,24 +10,42 @@
 //! level written down.
 
 use std::path::PathBuf;
-use std::sync::Once;
+use std::sync::OnceLock;
+use std::sync::mpsc;
 use std::time::Duration;
 
-/// Starts watching, once per run. Called where a media engine is made: before
-/// one, there is no session to watch.
+/// Starts watching (once per run) and looks again right away. Called where a
+/// media engine is made: its session appears a moment later, and is given
+/// the kept level within a tenth of a second instead of at the next look —
+/// until 06/11/2026 a sound started at 100 % for up to the whole interval
+/// (issue #17).
 pub(crate) fn watch() {
-    static STARTED: Once = Once::new();
-    STARTED.call_once(|| {
+    static NUDGE: OnceLock<Option<mpsc::Sender<()>>> = OnceLock::new();
+    let nudge = NUDGE.get_or_init(|| {
+        let (sender, receiver) = mpsc::channel();
         let spawned = std::thread::Builder::new()
             .name("audio-session".into())
-            .spawn(|| platform::run(store_path()));
-        if let Err(error) = spawned {
-            tracing::warn!("could not watch the audio session: {error}");
+            .spawn(move || platform::run(store_path(), receiver));
+        match spawned {
+            Ok(_) => Some(sender),
+            Err(error) => {
+                tracing::warn!("could not watch the audio session: {error}");
+                None
+            }
         }
     });
+    if let Some(nudge) = nudge
+        && nudge.send(()).is_err()
+    {
+        tracing::debug!("the audio session watcher is gone");
+    }
 }
 
 const POLL: Duration = Duration::from_millis(1500);
+/// How often to look while a new engine's session may be appearing.
+const QUICK: Duration = Duration::from_millis(100);
+/// How long after a nudge to keep looking that often.
+const QUICK_FOR: Duration = Duration::from_secs(3);
 
 fn store_path() -> PathBuf {
     nohrs_core::config::paths::data_dir().join("mixer-volume")
@@ -63,7 +81,9 @@ impl Level {
 mod platform {
     //! Core Audio has no safe binding.
 
-    use super::{Level, POLL};
+    use super::{Level, POLL, QUICK, QUICK_FOR};
+    use std::sync::mpsc;
+    use std::time::Instant;
     use std::collections::HashSet;
     use std::path::PathBuf;
     use windows::Win32::Media::Audio::{
@@ -73,12 +93,13 @@ mod platform {
     use windows::Win32::System::Com::{CLSCTX_ALL, COINIT_MULTITHREADED, CoCreateInstance, CoInitializeEx, CoTaskMemFree};
     use windows::core::Interface;
 
-    pub fn run(path: PathBuf) {
+    pub fn run(path: PathBuf, nudges: mpsc::Receiver<()>) {
         if let Err(error) = unsafe { CoInitializeEx(None, COINIT_MULTITHREADED) }.ok() {
             tracing::debug!("CoInitializeEx: {error}");
         }
         let mut saved = std::fs::read_to_string(&path).ok().as_deref().and_then(Level::parse);
         let mut adopted: HashSet<String> = HashSet::new();
+        let mut quick_until: Option<Instant> = None;
         loop {
             match own_sessions() {
                 Ok(sessions) => {
@@ -102,7 +123,12 @@ mod platform {
                 }
                 Err(error) => tracing::debug!("audio sessions: {error}"),
             }
-            std::thread::sleep(POLL);
+            let wait = if quick_until.is_some_and(|until| Instant::now() < until) { QUICK } else { POLL };
+            match nudges.recv_timeout(wait) {
+                Ok(()) => quick_until = Some(Instant::now() + QUICK_FOR),
+                Err(mpsc::RecvTimeoutError::Timeout) => {}
+                Err(mpsc::RecvTimeoutError::Disconnected) => return,
+            }
         }
     }
 
@@ -159,7 +185,7 @@ mod platform {
 
 #[cfg(not(windows))]
 mod platform {
-    pub fn run(_path: std::path::PathBuf) {}
+    pub fn run(_path: std::path::PathBuf, _nudges: std::sync::mpsc::Receiver<()>) {}
 }
 
 #[cfg(test)]

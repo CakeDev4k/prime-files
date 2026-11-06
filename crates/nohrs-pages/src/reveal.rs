@@ -12,7 +12,7 @@
 //! Active whenever Nohrs runs, default folder handler or not: the owner asked
 //! for Premiere's reveal without making Nohrs the default.
 
-use gpui::{AsyncWindowContext, Context, WeakEntity, Window};
+use gpui::{Context, WeakEntity, Window};
 
 use crate::root::RootView;
 
@@ -28,23 +28,44 @@ fn enabled() -> bool {
     ENABLED.load(std::sync::atomic::Ordering::Relaxed)
 }
 
+// Until when Explorer windows are left alone because Prime Files opened them
+// itself ("Open in File Explorer", a place only the Explorer shows).
+static LEAVE_EXPLORER_UNTIL: std::sync::Mutex<Option<std::time::Instant>> = std::sync::Mutex::new(None);
+
+/// Lets the next Explorer window (within a few seconds) stay the
+/// Explorer's: called right before Prime Files starts explorer.exe itself.
+pub fn leave_next_explorer_window() {
+    if let Ok(mut until) = LEAVE_EXPLORER_UNTIL.lock() {
+        *until = Some(std::time::Instant::now() + std::time::Duration::from_secs(8));
+    }
+}
+
+// Whether a window opened on a plain folder is taken too, not only reveals:
+// with Prime Files as the default explorer, folders the Explorer opens on
+// its own (its taskbar Jump List, issue #10) open here instead.
+fn takes_folders() -> bool {
+    let left_alone = LEAVE_EXPLORER_UNTIL
+        .lock()
+        .ok()
+        .and_then(|until| *until)
+        .is_some_and(|until| std::time::Instant::now() < until);
+    !left_alone && crate::default_explorer::is_default()
+}
+
 /// Starts watching for Explorer windows opened to reveal a file.
-pub fn watch(window: &mut Window, cx: &mut Context<RootView>) {
+pub fn watch(_window: &mut Window, cx: &mut Context<RootView>) {
     let (sender, receiver) = async_channel::unbounded::<String>();
     if !platform::start_hook(sender) {
         return;
     }
-    cx.spawn_in(
-        window,
-        async move |this: WeakEntity<RootView>, cx: &mut AsyncWindowContext| {
-            while let Ok(path) = receiver.recv().await {
-                let shown = this.update_in(cx, |root, window, cx| root.reveal_from_elsewhere(&path, window, cx));
-                if shown.is_err() {
-                    return;
-                }
+    // Shown in the window used last (`crate::windows`).
+    cx.spawn(async move |_this: WeakEntity<RootView>, cx: &mut gpui::AsyncApp| {
+        while let Ok(path) = receiver.recv().await {
+            if crate::windows::with_target(cx, |root, window, cx| root.reveal_from_elsewhere(&path, window, cx)).is_none() {
+                tracing::debug!("no explorer window to show {path} in");
             }
-        },
-    )
+        }
+    })
     .detach();
 }
 
@@ -78,8 +99,8 @@ mod platform {
     use windows::Win32::System::Variant::VARIANT;
     use windows::Win32::UI::Accessibility::{HWINEVENTHOOK, SetWinEventHook};
     use windows::Win32::UI::Shell::{
-        IFolderView2, IShellBrowser, IShellWindows, IWebBrowser2, SID_STopLevelBrowser, SIGDN_FILESYSPATH,
-        SVGIO_ALLVIEW, ShellWindows,
+        IFolderView2, IShellBrowser, IShellItem, IShellWindows, IWebBrowser2, SID_STopLevelBrowser,
+        SIGDN_FILESYSPATH, SVGIO_ALLVIEW, ShellWindows,
     };
     use windows::Win32::UI::WindowsAndMessaging::{
         DispatchMessageW, EVENT_OBJECT_SHOW, GetClassNameW, GetMessageW, MSG, OBJID_WINDOW,
@@ -94,6 +115,9 @@ mod platform {
     /// Polls after the listing during which a reveal's selection may still
     /// arrive: 150 ms, too soon for a person to have clicked.
     const SELECTION_GRACE: u32 = 3;
+    /// Polls an empty folder is given before it counts as listed: an empty
+    /// view and one still reading look the same.
+    const EMPTY_GRACE: u32 = 40;
 
     static SENDER: OnceLock<async_channel::Sender<String>> = OnceLock::new();
 
@@ -164,8 +188,16 @@ mod platform {
         let deadline = Instant::now() + SETTLE;
         // Polls since the folder's items were first listed.
         let mut listed_for = None;
+        let mut empty_for = 0;
         while Instant::now() < deadline {
             match read_window(hwnd) {
+                Some((browser, View::Empty(folder))) => {
+                    empty_for += 1;
+                    if empty_for > EMPTY_GRACE {
+                        take_folder(&browser, folder);
+                        break;
+                    }
+                }
                 Some((browser, View::Selected(path))) => {
                     tracing::debug!("reveal of {path} taken from Explorer");
                     if let Some(sender) = SENDER.get()
@@ -177,13 +209,15 @@ mod platform {
                     }
                     break;
                 }
-                Some((_, View::Listed)) => {
+                Some((browser, View::Listed(folder))) => {
                     // A reveal's selection lands with the listing or just
                     // after it; still none a moment later, the window was
-                    // opened on a folder and stays the user's.
+                    // opened on a folder: it stays the user's, unless Prime
+                    // Files is the default explorer.
                     let polls = listed_for.get_or_insert(0);
                     *polls += 1;
                     if *polls > SELECTION_GRACE {
+                        take_folder(&browser, folder);
                         break;
                     }
                 }
@@ -195,9 +229,29 @@ mod platform {
         unsafe { CoUninitialize() };
     }
 
+    // A window opened on a folder, taken when Prime Files is the default
+    // explorer. Only folders on disk: This PC, the Control Panel and the like
+    // have no path and stay in the Explorer.
+    fn take_folder(browser: &IWebBrowser2, folder: Option<String>) {
+        let Some(folder) = folder else { return };
+        // A .zip the Explorer opens as a "compressed folder" has the file's
+        // path: taken, it would come back here selected, never opened.
+        if !std::path::Path::new(&folder).is_dir() || !super::takes_folders() {
+            return;
+        }
+        tracing::debug!("Explorer window on {folder} taken");
+        if let Some(sender) = SENDER.get()
+            && sender.send_blocking(folder).is_ok()
+        {
+            unsafe { browser.Quit() }.ok();
+        }
+    }
+
     enum View {
-        /// Items are listed and none is selected.
-        Listed,
+        /// Nothing is listed (yet), in the folder at this path.
+        Empty(Option<String>),
+        /// Items are listed and none is selected, in the folder at this path.
+        Listed(Option<String>),
         /// The first selected item, as a path.
         Selected(String),
     }
@@ -215,15 +269,21 @@ mod platform {
             let provider: IServiceProvider = browser.cast().ok()?;
             let shell_browser: IShellBrowser = unsafe { provider.QueryService(&SID_STopLevelBrowser) }.ok()?;
             let view: IFolderView2 = unsafe { shell_browser.QueryActiveShellView() }.ok()?.cast().ok()?;
+            let folder = unsafe { view.GetFolder::<IShellItem>() }.ok().and_then(|folder| {
+                let name = unsafe { folder.GetDisplayName(SIGDN_FILESYSPATH) }.ok()?;
+                let path = unsafe { name.to_string() }.ok();
+                unsafe { CoTaskMemFree(Some(name.0 as _)) };
+                path
+            });
             if unsafe { view.ItemCount(SVGIO_ALLVIEW) }.ok()? == 0 {
-                return None;
+                return Some((browser, View::Empty(folder)));
             }
             let selection = unsafe { view.GetSelection(false) }.ok();
             let first = selection
                 .filter(|selection| unsafe { selection.GetCount() }.is_ok_and(|count| count > 0))
                 .and_then(|selection| unsafe { selection.GetItemAt(0) }.ok());
             let Some(first) = first else {
-                return Some((browser, View::Listed));
+                return Some((browser, View::Listed(folder)));
             };
             let name = unsafe { first.GetDisplayName(SIGDN_FILESYSPATH) }.ok()?;
             let path = unsafe { name.to_string() }.ok();

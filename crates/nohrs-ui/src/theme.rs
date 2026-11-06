@@ -21,6 +21,19 @@ pub mod theme {
         DARK.load(Ordering::Relaxed)
     }
 
+    /// The font holding the system's icon glyphs (caption buttons, player).
+    /// Segoe Fluent Icons ships only with Windows 11; Windows 10 has the same
+    /// code points in Segoe MDL2 Assets, and naming a font that is not
+    /// installed draws every glyph as an empty box.
+    pub fn icon_font() -> &'static str {
+        static FONT: std::sync::OnceLock<&'static str> = std::sync::OnceLock::new();
+        FONT.get_or_init(|| {
+            let windows = std::env::var_os("WINDIR").unwrap_or_else(|| "C:\\Windows".into());
+            let fluent = std::path::Path::new(&windows).join("Fonts").join("SegoeIcons.ttf");
+            if fluent.is_file() { "Segoe Fluent Icons" } else { "Segoe MDL2 Assets" }
+        })
+    }
+
     // The accent the user picked, as `0x01rrggbb`; zero means the palette's
     // own orange. The marker byte keeps black (`#000000`) distinguishable from
     // "nothing picked".

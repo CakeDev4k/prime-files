@@ -62,10 +62,13 @@ enum Command {
     Properties,
     Customize,
     UndoTrash,
+    RestoreFromBin,
+    PurgeFromBin,
+    EmptyBin,
 }
 
 impl Command {
-    const ALL: [Command; 45] = [
+    const ALL: [Command; 48] = [
         Command::ViewList,
         Command::ViewGrid,
         Command::ViewTree,
@@ -111,6 +114,9 @@ impl Command {
         Command::Properties,
         Command::Customize,
         Command::UndoTrash,
+        Command::RestoreFromBin,
+        Command::PurgeFromBin,
+        Command::EmptyBin,
     ];
 
     fn from_id(id: u32) -> Option<Self> {
@@ -264,6 +270,28 @@ impl ExplorerPane {
             one_folder,
             extended,
         };
+        // In the Recycle Bin a file's Windows entries would act on its copy
+        // inside `$Recycle.Bin`; the Bin's own are what make sense there.
+        if super::recycle_bin::is_recycle_bin(&self.cwd) {
+            let own = if row.is_some() {
+                vec![
+                    Entry::command(Command::RestoreFromBin as u32, t!("Restaurar")).with_icon("icons/undo-2.svg"),
+                    Entry::Separator,
+                    Entry::command(Command::PurgeFromBin as u32, t!("Excluir para sempre")).with_icon("icons/trash-2.svg"),
+                ]
+            } else {
+                vec![
+                    Entry::command(Command::EmptyBin as u32, t!("Esvaziar a Lixeira")).with_icon("icons/trash-2.svg"),
+                    Entry::command(Command::Refresh as u32, t!("Atualizar")).with_icon("icons/refresh-cw.svg"),
+                ]
+            };
+            self.show_menu_with(purpose, Vec::new(), own, false, hwnd, window, cx);
+            return;
+        }
+        if menu_config().classic {
+            self.show_classic_menu(purpose, window, cx);
+            return;
+        }
         let (before, own, windows) = self.listing_entries(&purpose, cx);
         self.show_menu_with(purpose, before, own, windows, hwnd, window, cx);
     }
@@ -374,6 +402,9 @@ impl ExplorerPane {
                 (menu.quick.iter().chain(menu.items.iter()).any(|id| id == "copy_path")).then_some("copyaspath"),
             )
             .collect();
+        // The Recycle Bin's items take only its own entries: the row's Cut,
+        // Copy, Rename and Delete would act on their copies in `$Recycle.Bin`.
+        let in_recycle_bin = super::recycle_bin::is_recycle_bin(&self.cwd);
         cx.spawn_in(
             window,
             async move |this: WeakEntity<Self>, cx: &mut AsyncWindowContext| {
@@ -388,7 +419,7 @@ impl ExplorerPane {
                             // Paste is Nohrs's own; on files the ones in the
                             // row above replace the Shell's.
                             if files { &shell_hidden[..] } else { &["paste"][..] },
-                            files,
+                            files && !in_recycle_bin,
                         )
                     }
                     MenuPurpose::Place(place) => (
@@ -898,7 +929,12 @@ impl ExplorerPane {
             },
             // The Shell may have created, moved or deleted something ("New",
             // "Send to", an archiver); the listing is read again either way.
-            Choice::Ran => self.reload(cx),
+            // Pinning to Quick access changes the sidebar as well as the
+            // folder's own menu.
+            Choice::Ran => {
+                self.refresh_places();
+                self.reload(cx);
+            }
         }
         cx.notify();
     }
@@ -959,6 +995,9 @@ impl ExplorerPane {
             | Command::MoreOptions => {}
             Command::CopyPath => self.copy_paths_as_text(cx),
             Command::UndoTrash => self.undo_trash(cx),
+            Command::RestoreFromBin => self.restore_from_recycle_bin(cx),
+            Command::PurgeFromBin => self.purge_from_recycle_bin(cx),
+            Command::EmptyBin => self.empty_recycle_bin(cx),
             Command::OpenInNewTab => self.open_selection_in_new_tab(cx),
             Command::Properties => self.show_selection_properties(cx),
             Command::Customize => window.dispatch_action(

@@ -354,6 +354,8 @@ fn render_grid_item(
                 this.record_click(ix, event.click_count);
                 let modifiers = event.modifiers;
                 let plain = !(modifiers.shift || modifiers.platform || modifiers.control);
+                let was_sole_selection = this.selection.len() == 1 && this.is_selected(ix);
+                this.arm_slow_rename(ix, event.click_count, plain, was_sole_selection, window, cx);
                 let keep_selection = this.press_entry(ix, event.position, plain);
                 if modifiers.shift {
                     this.select_range_to(ix);
@@ -399,6 +401,14 @@ fn render_grid_item(
                         .into_any_element(),
                 }),
         )
+        // In the icon's bottom-left corner, where the Explorer draws it.
+        .children(item.cloud_state().map(|state| {
+            div()
+                .absolute()
+                .left(px(TILE_PADDING - 4.0))
+                .top(px(TILE_PADDING + tile.icon - 16.0))
+                .child(super::row::cloud_badge(state))
+        }))
         .child(match rename_input {
             Some(input) => div()
                 .w_full()

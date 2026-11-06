@@ -72,6 +72,7 @@ mod legacy {
                 kind,
                 size,
                 modified,
+                attributes: 0,
             });
         }
         Ok(entries)

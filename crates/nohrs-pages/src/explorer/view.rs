@@ -54,6 +54,20 @@ pub fn render(
     if page.tick_reveal_glow() {
         window.request_animation_frame();
     }
+    page.take_rename_when_listed(window, cx);
+    if page.activation_watch.is_none() {
+        page.activation_watch = Some(cx.observe_window_activation(window, |page, window, cx| {
+            if !window.is_window_active() {
+                page.slow_rename = None;
+                let had_menu = page.context_menu.take().is_some() || page.zoom_menu_open || page.open_in_menu;
+                page.zoom_menu_open = false;
+                page.open_in_menu = false;
+                if had_menu {
+                    cx.notify();
+                }
+            }
+        }));
+    }
     if std::mem::take(&mut page.preview_selection_pending)
         && let Some(path) = page.active_path.clone()
     {

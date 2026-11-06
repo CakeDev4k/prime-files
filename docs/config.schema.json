@@ -282,6 +282,11 @@
     "Menu": {
       "description": "A file's right-click menu, as the person arranged it. Ids the build does\nnot know are dropped when the menu is drawn, so an older build reading a\nnewer file still shows a menu.",
       "properties": {
+        "classic": {
+          "default": false,
+          "description": "The right click opens the classic Windows menu (Windows 10's, with\nRename, Copy, Paste written out) straight away, instead of Prime\nFiles' menu with \"Show more options\" at the bottom.",
+          "type": "boolean"
+        },
         "hidden": {
           "default": [],
           "description": "Windows entries hidden by their label, as the menu shows it.",
@@ -487,7 +492,7 @@
         },
         "language": {
           "default": "auto",
-          "description": "Interface language: `\"auto\"` follows the Windows regional format\n(then the country), or one of `\"pt-BR\"`, `\"en\"`, `\"es\"`, `\"fr\"`, `\"de\"`,\n`\"it\"`, `\"ru\"`, `\"ja\"`, `\"zh-CN\"`, `\"ar\"`.",
+          "description": "Interface language: `\"auto\"` follows the Windows regional format\n(then the country), or one of `\"pt-BR\"`, `\"en\"`, `\"es\"`, `\"fr\"`, `\"de\"`,\n`\"it\"`, `\"ru\"`, `\"ja\"`, `\"zh-CN\"`, `\"ar\"`, `\"hu\"`.",
           "type": "string"
         },
         "name_lines": {
@@ -613,6 +618,7 @@
     "menu": {
       "$ref": "#/$defs/Menu",
       "default": {
+        "classic": false,
         "hidden": [],
         "items": [
           "new_tab",

@@ -693,6 +693,7 @@ impl ExplorerPage {
     /// Applies the `[layout]` config section: where the sidebar, the preview
     /// and the terminal dock, and the tabs' layout.
     pub fn apply_config_layout(&mut self, layout: &Layout, cx: &mut Context<Self>) {
+        super::view::panels::load_sizes();
         super::view::panels::set_sides(layout.sidebar, layout.preview);
         self.terminal_side = layout.terminal;
         self.group.set_vertical_tabs(layout.vertical_tabs);
@@ -758,10 +759,37 @@ impl ExplorerPage {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        self.open_path_with(folder, select, false, window, cx);
+    }
+
+    /// Shows `folder` in the tab on screen instead of a new one: a window
+    /// opened for one folder (a tab torn off) has just that tab.
+    pub fn open_path_in_place(
+        &mut self,
+        folder: String,
+        select: Option<String>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.open_path_with(folder, select, true, window, cx);
+    }
+
+    fn open_path_with(
+        &mut self,
+        folder: String,
+        select: Option<String>,
+        in_place: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         let pane_index = self.group.active();
         let current = self.group.active_pane().clone();
         let already_there = super::same_path(&current.read(cx).cwd, &folder);
         let tab = if already_there {
+            current
+        } else if in_place {
+            let sidebar_visible = current.read(cx).sidebar_visible;
+            self.configure_tab(&current, Some(folder), sidebar_visible, cx);
             current
         } else {
             let sidebar_visible = current.read(cx).sidebar_visible;
@@ -1417,6 +1445,39 @@ impl ExplorerPage {
 
     // The button came up: ends the divider's drag (closing a pane squeezed
     // shut) and the terminal's (closing it, or docking it where it was let go).
+    // The tab being dragged, let go at `event`: outside the window it closes
+    // here and opens in a new window under the pointer. The last tab of the
+    // window stays: tearing it off would leave this window empty.
+    fn tear_off_tab(&mut self, event: &MouseUpEvent, window: &mut Window, cx: &mut Context<Self>) {
+        let Some((pane, tab)) = crate::pane_group::take_dragged_tab() else {
+            return;
+        };
+        if !cx.has_active_drag() {
+            return;
+        }
+        let viewport = window.viewport_size();
+        let position = event.position;
+        let outside = position.x < px(0.0)
+            || position.y < px(0.0)
+            || position.x > viewport.width
+            || position.y > viewport.height;
+        let tabs: usize = (0..self.group.pane_count()).map(|index| self.group.tab_count(index)).sum();
+        if !outside || tabs <= 1 {
+            return;
+        }
+        let Some(entity) = self.group.tab(pane, tab) else {
+            return;
+        };
+        let folder = entity.read(cx).cwd.clone();
+        let window_bounds = window.bounds();
+        let origin = window_bounds.origin + position;
+        let window_size = window_bounds.size;
+        self.close_tab_in_pane(pane, tab, window, cx);
+        // After this update: a window opened from inside another's update
+        // would borrow the app twice.
+        cx.defer(move |cx| crate::windows::open_window_at(folder, origin, window_size, cx));
+    }
+
     fn finish_page_drags(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if let Some(index) = self.group.finish_drag() {
             self.close_pane(index, window, cx);
@@ -1531,12 +1592,31 @@ impl Render for ExplorerPage {
             }))
             .on_action(cx.listener(|this, _: &CloseTab, window, cx| {
                 let pane = this.group.active();
+                // The last tab of the last pane closes the window, as Ctrl+W
+                // does in the Explorer and in browsers (issue #9); before, it
+                // did nothing.
+                if this.group.pane_count() == 1 && this.group.tab_count(pane) <= 1 {
+                    window.remove_window();
+                    return;
+                }
                 let tab = this.group.active_tab(pane);
                 this.close_tab_in_pane(pane, tab, window, cx);
             }))
             .on_action(cx.listener(|this, _: &ToggleTerminal, window, cx| {
                 this.toggle_terminal(window, cx);
             }))
+            // A tab let go outside the window opens in a window of its own,
+            // as a browser tab torn off; let go inside, it was a reorder.
+            .on_mouse_up_out(
+                MouseButton::Left,
+                cx.listener(|page, event: &MouseUpEvent, window, cx| page.tear_off_tab(event, window, cx)),
+            )
+            .on_mouse_up(
+                MouseButton::Left,
+                cx.listener(|_page, _event: &MouseUpEvent, _window, _cx| {
+                    crate::pane_group::take_dragged_tab();
+                }),
+            )
             .when(self.terminal_drag.is_some() || self.group.dragging(), |this| {
                 this.on_mouse_move(cx.listener(|page, event: &MouseMoveEvent, window, cx| {
                     if event.pressed_button != Some(MouseButton::Left) {

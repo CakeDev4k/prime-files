@@ -91,6 +91,7 @@ impl RootView {
         config_path: PathBuf,
         config_overrides: Vec<ConfigOverride>,
         config_error: Option<String>,
+        primary: bool,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
@@ -133,10 +134,20 @@ impl RootView {
         view.start_progress_loop(window, cx);
         view.apply_config(config, config_error, window, cx);
         view.start_config_watch(window, cx);
-        crate::ipc::serve(window, cx);
-        crate::file_dialog::watch(window, cx);
-        crate::reveal::watch(window, cx);
-        view.start_updates(window, cx);
+        // Once per run, in the main window; each answers through the window
+        // used last (`crate::windows`).
+        if primary {
+            crate::ipc::serve(window, cx);
+            crate::file_dialog::watch(window, cx);
+            crate::reveal::watch(window, cx);
+            view.start_updates(window, cx);
+        }
+        cx.observe_window_activation(window, |_root, window, cx| {
+            if window.is_window_active() {
+                crate::windows::touch(window, cx);
+            }
+        })
+        .detach();
         view
     }
 

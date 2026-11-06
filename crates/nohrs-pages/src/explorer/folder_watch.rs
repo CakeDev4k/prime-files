@@ -30,12 +30,15 @@ const SPACING: Duration = Duration::from_millis(800);
 /// How often a refresh put off (an open rename field, a search on screen) is
 /// tried again.
 const RETRY: Duration = Duration::from_secs(1);
+/// How often a folder whose drive sends no notifications is looked at again.
+const POLL: Duration = Duration::from_secs(3);
 
 /// The watch on a pane's folders; dropping it stops it.
 pub(crate) struct FolderWatch {
     folders: Vec<String>,
     _watcher: notify::RecommendedWatcher,
     _task: Task<()>,
+    _poll: Option<Task<()>>,
 }
 
 impl ExplorerPane {
@@ -58,6 +61,7 @@ impl ExplorerPane {
             return;
         }
         let (sender, receiver) = async_channel::unbounded::<()>();
+        let sender_for_poll = sender.clone();
         let watcher = notify::recommended_watcher(move |result: notify::Result<notify::Event>| {
             let Ok(event) = result else {
                 return;
@@ -78,13 +82,24 @@ impl ExplorerPane {
                 return;
             }
         };
+        // A drive that sends no notifications — the virtual drive of Google
+        // Drive for desktop (FAT32 to Windows), and some network drives —
+        // accepts the watch and then stays silent, so a file saved there
+        // from the cloud only showed after F5. Those folders are looked at
+        // every few seconds instead; NTFS and ReFS (local disks, OneDrive)
+        // do notify, so they cost nothing.
+        let mut polled = Vec::new();
         for folder in &folders {
-            // A drive that sends no notifications (some network and cloud
-            // drives) is refreshed by F5 as before.
-            if let Err(error) = watcher.watch(Path::new(folder), RecursiveMode::NonRecursive) {
-                tracing::debug!("cannot watch {folder}: {error}");
+            match watcher.watch(Path::new(folder), RecursiveMode::NonRecursive) {
+                Ok(()) if notifies(Path::new(folder)) => {}
+                Ok(()) => polled.push(folder.clone()),
+                Err(error) => {
+                    tracing::debug!("cannot watch {folder}: {error}");
+                    polled.push(folder.clone());
+                }
             }
         }
+        let poll = (!polled.is_empty()).then(|| poll(polled, sender_for_poll.clone(), cx));
         let task = cx.spawn(async move |this: WeakEntity<Self>, cx| {
             let mut last: Option<Instant> = None;
             while receiver.recv().await.is_ok() {
@@ -107,7 +122,7 @@ impl ExplorerPane {
                 last = Some(Instant::now());
             }
         });
-        self.folder_watch = Some(FolderWatch { folders, _watcher: watcher, _task: task });
+        self.folder_watch = Some(FolderWatch { folders, _watcher: watcher, _task: task, _poll: poll });
     }
 
     /// Reads the folder again because the disk changed. Put off (false)
@@ -121,4 +136,72 @@ impl ExplorerPane {
         cx.notify();
         true
     }
+}
+
+// Looks at `folders` every [`POLL`] and signals when what a listing would show
+// of them (names, sizes, dates, attributes) changed. The reading runs off the
+// UI thread; the first look only records the starting point.
+fn poll(folders: Vec<String>, changed: async_channel::Sender<()>, cx: &mut Context<ExplorerPane>) -> Task<()> {
+    let executor = cx.background_executor().clone();
+    cx.background_executor().spawn(async move {
+        let mut last: Option<u64> = None;
+        loop {
+            executor.timer(POLL).await;
+            let now = folders.iter().fold(0u64, |sum, folder| sum.wrapping_add(fingerprint(Path::new(folder))));
+            if last.is_some_and(|last| last != now) && changed.send(()).await.is_err() {
+                return;
+            }
+            last = Some(now);
+        }
+    })
+}
+
+#[allow(clippy::disallowed_methods)]
+fn fingerprint(folder: &Path) -> u64 {
+    use std::hash::{Hash, Hasher};
+    let Ok(entries) = std::fs::read_dir(folder) else {
+        return 0;
+    };
+    // A sum of per-entry hashes, so the order the drive lists them in does
+    // not matter.
+    entries.flatten().fold(0u64, |sum, entry| {
+        let mut hasher = std::collections::hash_map::DefaultHasher::new();
+        entry.file_name().hash(&mut hasher);
+        if let Ok(metadata) = entry.metadata() {
+            metadata.len().hash(&mut hasher);
+            metadata.modified().ok().hash(&mut hasher);
+            #[cfg(windows)]
+            std::os::windows::fs::MetadataExt::file_attributes(&metadata).hash(&mut hasher);
+        }
+        sum.wrapping_add(hasher.finish())
+    })
+}
+
+// Whether the folder's file system sends change notifications reliably.
+#[cfg(windows)]
+#[allow(unsafe_code)]
+fn notifies(folder: &Path) -> bool {
+    use std::os::windows::ffi::OsStrExt;
+    use windows::Win32::Storage::FileSystem::{GetVolumeInformationW, GetVolumePathNameW};
+    use windows::core::PCWSTR;
+
+    let wide: Vec<u16> = folder.as_os_str().encode_wide().chain(Some(0)).collect();
+    let mut root = [0u16; 512];
+    if unsafe { GetVolumePathNameW(PCWSTR(wide.as_ptr()), &mut root) }.is_err() {
+        return true;
+    }
+    let mut file_system = [0u16; 64];
+    if unsafe { GetVolumeInformationW(PCWSTR(root.as_ptr()), None, None, None, None, Some(&mut file_system)) }
+        .is_err()
+    {
+        return true;
+    }
+    let length = file_system.iter().position(|&unit| unit == 0).unwrap_or(file_system.len());
+    let name = String::from_utf16_lossy(&file_system[..length]);
+    matches!(name.as_str(), "NTFS" | "ReFS")
+}
+
+#[cfg(not(windows))]
+fn notifies(_folder: &Path) -> bool {
+    true
 }

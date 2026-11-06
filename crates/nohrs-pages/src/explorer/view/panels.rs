@@ -109,6 +109,48 @@ thread_local! {
     };
 }
 
+// The sizes the panels were dragged to, kept across runs: until 06/11/2026
+// they lived only in memory and every start went back to the defaults.
+// Four numbers, sidebar column/band then preview column/band.
+fn sizes_file() -> std::path::PathBuf {
+    nohrs_core::config::paths::data_dir().join("panel-sizes")
+}
+
+/// Reads the sizes kept by the last run. Called once, before the first
+/// window lays out its panels: a small file, read on the UI thread.
+#[allow(clippy::disallowed_methods)]
+pub(crate) fn load_sizes() {
+    static LOADED: std::sync::Once = std::sync::Once::new();
+    LOADED.call_once(|| {
+        let Ok(text) = std::fs::read_to_string(sizes_file()) else {
+            return;
+        };
+        let numbers: Vec<f32> = text.split_whitespace().filter_map(|word| word.parse().ok()).collect();
+        let [sidebar_column, sidebar_band, preview_column, preview_band] = numbers[..] else {
+            return;
+        };
+        let mut arrangement = ARRANGEMENT.get();
+        arrangement.sizes = [[sidebar_column, sidebar_band], [preview_column, preview_band]];
+        ARRANGEMENT.set(arrangement);
+    });
+}
+
+fn save_sizes(cx: &mut App) {
+    let [[sidebar_column, sidebar_band], [preview_column, preview_band]] = ARRANGEMENT.get().sizes;
+    let text = format!("{sidebar_column} {sidebar_band} {preview_column} {preview_band}");
+    cx.background_spawn(async move {
+        let path = sizes_file();
+        let written = path.parent().map_or(Ok(()), std::fs::create_dir_all).and_then(|()| {
+            #[allow(clippy::disallowed_methods)]
+            std::fs::write(&path, text)
+        });
+        if let Err(error) = written {
+            tracing::warn!("could not keep the panel sizes: {error}");
+        }
+    })
+    .detach();
+}
+
 fn slot(side: DockSide) -> usize {
     if side.is_column() { 0 } else { 1 }
 }
@@ -419,12 +461,14 @@ impl ExplorerPane {
             }
             _ => {}
         }
+        save_sizes(cx);
         true
     }
 
     /// Back to the default size, from a double click on the panel's edge.
-    pub(crate) fn reset_panel_size(&mut self, panel: Panel) {
+    pub(crate) fn reset_panel_size(&mut self, panel: Panel, cx: &mut Context<Self>) {
         set_size(panel, panel.default_size(side(panel).is_column()));
+        save_sizes(cx);
     }
 }
 
@@ -892,7 +936,7 @@ fn edge_strip(
             cx.listener(move |this, event: &MouseDownEvent, _window, cx| {
                 cx.stop_propagation();
                 if event.click_count >= 2 {
-                    this.reset_panel_size(panel);
+                    this.reset_panel_size(panel, cx);
                     this.dock_drag = None;
                 } else {
                     this.start_panel_resize(panel, event.position);

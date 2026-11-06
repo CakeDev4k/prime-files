@@ -188,6 +188,7 @@ mod tests {
             kind: kind.to_string(),
             size,
             modified: 0,
+            attributes: 0,
         }
     }
 
@@ -259,6 +260,7 @@ mod tests {
                 kind: "file".into(),
                 size: 0,
                 modified: 100,
+                attributes: 0,
             },
             FileEntryDto {
                 name: "new".into(),
@@ -266,6 +268,7 @@ mod tests {
                 kind: "file".into(),
                 size: 0,
                 modified: 900,
+                attributes: 0,
             },
         ];
         sort_entries(&mut entries, SortKey::Modified, true);

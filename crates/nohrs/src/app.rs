@@ -8,19 +8,14 @@
 //! binary owns the keybinding that summons the launcher from anywhere.
 
 use crate::cli::{Cli, Command};
-use gpui::{App, AppContext, Application, Bounds, KeyBinding, WindowAppearance, px, size};
-use gpui_component::Root;
-use gpui_component::resizable::ResizableState;
+use gpui::{App, AppContext, Application, KeyBinding, WindowAppearance};
 use nohrs_core::config::{self, ConfigOverride, ThemeMode};
 use nohrs_core::telemetry::logging::{FileLogConfig, init_logging_with_file};
 use nohrs_launcher::{LauncherIndex, ToggleLauncher};
-use nohrs_pages::RootView;
 use nohrs_services::fs::trash;
 use nohrs_services::search::SearchService;
 use nohrs_store::{KvStore, RedbKvStore, StoreLogConfig};
 use nohrs_ui::assets::Assets;
-use nohrs_ui::components::layout::unified_toolbar::UNIFIED_TOOLBAR_HEIGHT;
-use nohrs_ui::window::{self, traffic_lights::TrafficLightsHook};
 use std::sync::Arc;
 
 pub struct NohrsApp;
@@ -41,12 +36,13 @@ impl NohrsApp {
         if let Err(error) = config::ensure_exists(&config_path) {
             tracing::warn!("could not create {}: {error}", config_path.display());
         }
-        let (mut config, diagnostics) = config::load_from_path(&config_path);
+        // Read here for what comes before any window (language, theme,
+        // shortcuts); each window reads it again and reports its problems.
+        let (mut config, _diagnostics) = config::load_from_path(&config_path);
         let config_overrides = vec![ConfigOverride::from_env(), cli.overrides()];
         for over in &config_overrides {
             config.apply_override(over);
         }
-        let config_error = config::report_diagnostics(&diagnostics);
 
         // Before any window draws a word: "auto" needs to know the answer.
         nohrs_pages::locale::detect_and_record();
@@ -86,15 +82,6 @@ impl NohrsApp {
                 return;
             }
 
-            let resizable = app.new(|_| ResizableState::default());
-            let bounds = Bounds::centered(
-                None,
-                size(px(config::WINDOW_WIDTH), px(config::WINDOW_HEIGHT)),
-                app,
-            );
-            let traffic_lights = TrafficLightsHook::new().center_vertically(UNIFIED_TOOLBAR_HEIGHT);
-            let window_options = window::unified_window_options(bounds, &traffic_lights);
-
             // Open the host KV store (`state.redb`) for tab/session restore
             // (docs/persistence.md §3). Failure is non-fatal: the app starts
             // without session persistence rather than crashing.
@@ -109,61 +96,37 @@ impl NohrsApp {
             // so Delete can refuse rather than silently lose the way back.
             let trash_ledger = trash::Ledger::open();
 
-            let opened = app.open_window(window_options, {
-                let config = config.clone();
-                let config_path = config_path.clone();
-                let config_overrides = config_overrides.clone();
-                let config_error = config_error.clone();
-                let store = store.clone();
-                let trash_ledger = trash_ledger.clone();
-                move |window, cx| {
-                    // Initialize SearchService. Failure is non-fatal: the app starts
-                    // with full-text search disabled rather than crashing.
-                    let search_service: Option<Arc<SearchService>> = match SearchService::new() {
-                        Ok(service) => Some(Arc::new(service)),
-                        Err(e) => {
-                            tracing::error!(
-                                "Failed to initialize search service; starting with search disabled: {}",
-                                e
-                            );
-                            None
-                        }
-                    };
-
-                    // Kick off initial indexing on GPUI's background executor, which
-                    // is a thread pool (replacing tokio::task::spawn_blocking;
-                    // async-runtime.md §2).
-                    if let Some(service) = &search_service
-                        && let Some(job) = service.take_initial_indexing_job()
-                    {
-                        cx.background_spawn(async move { job.run() }).detach();
-                    }
-
-                    let view = cx.new(|cx| {
-                        RootView::new(
-                            resizable.clone(),
-                            search_service,
-                            store,
-                            trash_ledger,
-                            config,
-                            config_path,
-                            config_overrides,
-                            config_error,
-                            window,
-                            cx,
-                        )
-                    });
-                    if let Some(path) = &initial_path {
-                        view.update(cx, |root, cx| root.open_initial_path(path, window, cx));
-                    }
-                    // At sign-in: on the taskbar, out of the way, ready for the
-                    // first folder another program asks for.
-                    if background {
-                        window.minimize_window();
-                    }
-                    cx.new(|cx| Root::new(view, window, cx))
+            // Initialize SearchService once, for every window. Failure is
+            // non-fatal: the app starts with full-text search disabled.
+            let search_service: Option<Arc<SearchService>> = match SearchService::new() {
+                Ok(service) => Some(Arc::new(service)),
+                Err(e) => {
+                    tracing::error!("Failed to initialize search service; starting with search disabled: {}", e);
+                    None
                 }
+            };
+            // Initial indexing on GPUI's background executor, a thread pool
+            // (replacing tokio::task::spawn_blocking; async-runtime.md §2).
+            if let Some(service) = &search_service
+                && let Some(job) = service.take_initial_indexing_job()
+            {
+                app.background_spawn(async move { job.run() }).detach();
+            }
+
+            // What every explorer window is built from: the first one is the
+            // main window, and a tab dragged out opens another
+            // (`nohrs_pages::windows`).
+            app.set_global(nohrs_pages::windows::WindowSetup {
+                search_service,
+                store,
+                trash_ledger,
+                config_path: config_path.clone(),
+                config_overrides: config_overrides.clone(),
             });
+            let opened = nohrs_pages::windows::open_window(
+                nohrs_pages::windows::WindowRequest { path: initial_path.clone(), bounds: None, background },
+                app,
+            );
             if let Err(error) = opened {
                 tracing::error!("failed to open main window: {error}");
             }

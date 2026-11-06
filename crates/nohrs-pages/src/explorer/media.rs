@@ -218,11 +218,13 @@ impl ExplorerPane {
     /// The preview's volume, 0..=1. One for every tab (issue #2): set in
     /// one tab, the next sound in another plays at it too.
     pub(crate) fn media_volume(&self) -> f64 {
+        load_saved_volume();
         f64::from_bits(MEDIA_VOLUME.load(Ordering::Relaxed))
     }
 
     /// Whether the preview is muted, shared by every tab like the volume.
     pub(crate) fn media_muted(&self) -> bool {
+        load_saved_volume();
         MEDIA_MUTED.load(Ordering::Relaxed)
     }
 
@@ -245,6 +247,7 @@ impl ExplorerPane {
     }
 
     fn send_media_volume(&mut self, cx: &mut Context<Self>) {
+        save_volume(self.media_volume(), self.media_muted(), cx);
         if let Some(media) = self.preview_media.as_ref() {
             media.send(Command::Volume(effective_volume(self.media_volume(), self.media_muted())));
         }
@@ -601,4 +604,47 @@ mod tests {
         assert!(is_media("song.flac"));
         assert!(!is_media("notes.txt"));
     }
+}
+
+// The preview's volume and mute survive a restart (issue #18), in a file of
+// their own beside the mixer's (`audio_session.rs`): `0.300 1`.
+fn volume_file() -> std::path::PathBuf {
+    nohrs_core::config::paths::data_dir().join("preview-volume")
+}
+
+// Reads the kept volume the first time it is asked for. A small file read
+// once per run; the slider moves the in-memory value from then on.
+#[allow(clippy::disallowed_methods)]
+fn load_saved_volume() {
+    static LOADED: std::sync::Once = std::sync::Once::new();
+    LOADED.call_once(|| {
+        let Ok(text) = std::fs::read_to_string(volume_file()) else {
+            return;
+        };
+        let mut parts = text.split_whitespace();
+        if let Some(volume) = parts.next().and_then(|volume| volume.parse::<f64>().ok())
+            && (0.0..=1.0).contains(&volume)
+        {
+            MEDIA_VOLUME.store(volume.to_bits(), Ordering::Relaxed);
+        }
+        MEDIA_MUTED.store(parts.next() == Some("1"), Ordering::Relaxed);
+    });
+}
+
+fn save_volume(volume: f64, muted: bool, cx: &mut Context<ExplorerPane>) {
+    let text = format!("{volume:.3} {}", u8::from(muted));
+    cx.background_executor().spawn(async move {
+        let path = volume_file();
+        let written = path
+            .parent()
+            .map_or(Ok(()), std::fs::create_dir_all)
+            .and_then(|()| {
+                #[allow(clippy::disallowed_methods)]
+                std::fs::write(&path, text)
+            });
+        if let Err(error) = written {
+            tracing::warn!("could not keep the preview volume: {error}");
+        }
+    })
+    .detach();
 }

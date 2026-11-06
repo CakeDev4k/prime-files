@@ -124,7 +124,7 @@ impl Default for Theme {
 pub struct Ui {
     /// Interface language: `"auto"` follows the Windows regional format
     /// (then the country), or one of `"pt-BR"`, `"en"`, `"es"`, `"fr"`, `"de"`,
-    /// `"it"`, `"ru"`, `"ja"`, `"zh-CN"`, `"ar"`.
+    /// `"it"`, `"ru"`, `"ja"`, `"zh-CN"`, `"ar"`, `"hu"`.
     pub language: String,
     /// Column the listing is sorted by on load.
     pub default_sort: SortOrder,
@@ -219,6 +219,10 @@ pub struct Menu {
     pub items: Vec<String>,
     /// Windows entries hidden by their label, as the menu shows it.
     pub hidden: Vec<String>,
+    /// The right click opens the classic Windows menu (Windows 10's, with
+    /// Rename, Copy, Paste written out) straight away, instead of Prime
+    /// Files' menu with "Show more options" at the bottom.
+    pub classic: bool,
 }
 
 /// The icons the menu's row can hold, in the order of a fresh config.
@@ -236,6 +240,7 @@ impl Default for Menu {
             quick: MENU_QUICK_DEFAULT.iter().map(|id| id.to_string()).collect(),
             items: MENU_ITEMS_DEFAULT.iter().map(|id| id.to_string()).collect(),
             hidden: Vec::new(),
+            classic: false,
         }
     }
 }
@@ -895,7 +900,7 @@ impl Config {
              accent = \"orange\"   # \"orange\" | \"blue\" | \"teal\" | \"green\" | \"purple\" | \"pink\" | \"red\" | hex\n\
              \n\
              [ui]\n\
-             language = \"auto\"   # \"auto\" (Windows region) | \"pt-BR\" | \"en\" | \"es\" | \"fr\" | \"de\" | \"it\" | \"ru\" | \"ja\" | \"zh-CN\" | \"ar\"\n\
+             language = \"auto\"   # \"auto\" (Windows region) | \"pt-BR\" | \"en\" | \"es\" | \"fr\" | \"de\" | \"it\" | \"ru\" | \"ja\" | \"zh-CN\" | \"ar\" | \"hu\"\n\
              default_sort =\"name\"   # \"name\" | \"modified\" | \"size\" | \"kind\"\n\
              default_sort_descending = false  # true = Z to A, largest or newest first\n\
              show_hidden = false\n\
@@ -1178,7 +1183,13 @@ fn read_menu(table: &toml::Table, menu: &mut Menu, diagnostics: &mut Vec<Diagnos
             None => diagnostics.push(Diagnostic::warn(format!("invalid menu.{key} {value}; expected a list of strings"))),
         }
     }
-    warn_unknown_keys(table, &["quick", "items", "hidden"], "menu.", diagnostics);
+    if let Some(value) = table.get("classic") {
+        match value.as_bool() {
+            Some(flag) => menu.classic = flag,
+            None => diagnostics.push(Diagnostic::warn(format!("invalid menu.classic {value}; using {}", menu.classic))),
+        }
+    }
+    warn_unknown_keys(table, &["quick", "items", "hidden", "classic"], "menu.", diagnostics);
 }
 
 fn read_updates(table: &toml::Table, updates: &mut Updates, diagnostics: &mut Vec<Diagnostic>) {
@@ -1939,6 +1950,15 @@ mod tests {
         assert_eq!(config.menu.hidden, vec!["Enviar para".to_string()]);
         assert!(!config.explorer.background_tabs);
         assert_eq!(diagnostics.len(), 1, "{diagnostics:?}");
+    }
+
+    // The settings page wrote `classic = true` and the reader called it an
+    // unknown key, so the switch never moved (06/11/2026).
+    #[test]
+    fn menu_classic_is_read() {
+        let (config, diagnostics) = Config::from_toml_str("[menu]\nclassic = true\n");
+        assert!(config.menu.classic);
+        assert!(diagnostics.is_empty(), "{diagnostics:?}");
     }
 
     #[test]

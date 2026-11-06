@@ -30,6 +30,7 @@ mod places;
 mod preview;
 pub(crate) mod preview_listing;
 mod quick_search;
+pub(crate) mod recycle_bin;
 mod search;
 mod state;
 pub(crate) mod thumbnails;

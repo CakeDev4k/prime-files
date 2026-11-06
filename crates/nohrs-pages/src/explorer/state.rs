@@ -46,6 +46,15 @@ pub struct ExplorerPane {
     pub(crate) listing_wait: std::time::Duration,
     /// A path to select once the pending read arrives.
     pub(crate) reveal_after_listing: Option<String>,
+    /// A folder just created, to be put in rename mode once the listing
+    /// that has it arrives (the listing is read off the UI thread).
+    pub(crate) rename_when_listed: Option<String>,
+    /// The pending rename of a click on the already selected item, as the
+    /// Explorer's "slow double click"; dropped by any other click.
+    pub(crate) slow_rename: Option<gpui::Task<()>>,
+    /// Closes the open menu when the window loses focus, as a native menu
+    /// does (issue #15); made on the first frame, which has the window.
+    pub(crate) activation_watch: Option<gpui::Subscription>,
     /// The folder the rows on screen were read from. A read of the same folder
     /// is a refresh and keeps what the user had open (`navigation::reload`).
     pub(crate) listed_cwd: Option<String>,
@@ -354,6 +363,12 @@ pub struct ExplorerPane {
     pub(crate) zoom_menu_flash: Option<gpui::Task<()>>,
     /// The mouse is on the zoom menu.
     pub(crate) zoom_menu_hovered: bool,
+    /// Wheel travel over the view switch not yet worth a whole view.
+    pub(crate) view_wheel_travel: f32,
+    /// The deepest folder reached along the path on screen: going up keeps
+    /// the folders below as dimmed crumbs to go back down by, as File Pilot
+    /// does. Another branch replaces it.
+    pub(crate) crumb_trail: String,
     /// The header's "open in another program" menu is open.
     pub(crate) open_in_menu: bool,
     /// The file `reveal` brought forward and when: it glows for a moment so
@@ -492,6 +507,9 @@ impl ExplorerPane {
             listing_tasks: Vec::new(),
             listing_wait: super::navigation::LISTING_WAIT,
             reveal_after_listing: None,
+            rename_when_listed: None,
+            slow_rename: None,
+            activation_watch: None,
             listed_cwd: None,
             default_sort_key: SortKey::Name,
             default_sort_asc: true,
@@ -622,6 +640,8 @@ impl ExplorerPane {
             zoom_menu_open: false,
             zoom_menu_flash: None,
             zoom_menu_hovered: false,
+            view_wheel_travel: 0.0,
+            crumb_trail: String::new(),
             open_in_menu: false,
             reveal_highlight: None,
             reveal_scroll: None,

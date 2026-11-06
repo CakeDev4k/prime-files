@@ -113,7 +113,7 @@ fn windows_caption_buttons(maximized: bool) -> impl IntoElement {
             .flex()
             .items_center()
             .justify_center()
-            .font_family("Segoe Fluent Icons")
+            .font_family(theme::icon_font())
             .text_size(px(10.0))
             .text_color(rgb(theme::fg()))
             .window_control_area(area)

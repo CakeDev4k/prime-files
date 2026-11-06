@@ -151,6 +151,8 @@ impl ExplorerPane {
     }
 
     fn start_drag_out(&mut self, paths: Vec<PathBuf>, from: DragFrom, window: &mut Window, cx: &mut Context<Self>) {
+        // A drag of the selected item is no click on it.
+        self.slow_rename = None;
         let Some(hwnd) = crate::ipc::window_hwnd(window) else {
             return;
         };

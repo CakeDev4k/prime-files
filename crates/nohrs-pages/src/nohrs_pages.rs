@@ -40,6 +40,10 @@ pub(crate) mod shell_menu;
 pub mod terminal;
 /// The welcome screen of the first run.
 pub mod welcome;
+/// Several explorer windows; the one other programs open folders in.
+pub mod windows;
+/// The chip that follows a dragged tab, over every window and monitor.
+pub(crate) mod drag_chip;
 
 pub use root::RootView;
 

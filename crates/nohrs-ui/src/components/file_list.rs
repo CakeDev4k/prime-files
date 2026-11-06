@@ -266,6 +266,7 @@ mod tests {
             kind: "file".into(),
             size: 0,
             modified: 0,
+            attributes: 0,
         }
     }
 

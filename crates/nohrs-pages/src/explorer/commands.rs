@@ -30,6 +30,19 @@ impl ExplorerPane {
     /// the page answers through gpui's actions (tabs, panes), so the key
     /// goes on to them.
     pub(crate) fn run_shortcut(&mut self, action: Action, window: &mut Window, cx: &mut Context<Self>) -> bool {
+        // In the Recycle Bin, Delete would send the items' own files to the
+        // Bin again, and Shift+Delete leave the Bin's records behind; both go
+        // through its menu, as Restore does.
+        if super::recycle_bin::is_recycle_bin(&self.cwd)
+            && matches!(action, Action::Trash | Action::DeletePermanently | Action::Rename | Action::Cut | Action::Paste)
+        {
+            self.set_status(
+                super::types::StatusLevel::Info,
+                nohrs_core::t!("Na Lixeira, use o botão direito: Restaurar ou Excluir para sempre.").to_string(),
+            );
+            cx.notify();
+            return true;
+        }
         match action {
             Action::Copy => self.copy_selection(cx),
             Action::CopyPath => self.copy_paths_as_text(cx),
@@ -46,6 +59,7 @@ impl ExplorerPane {
             Action::DeletePermanently => self.request_permanent_delete(window, cx),
             Action::NewFolder => self.create_new_folder(window, cx),
             Action::GoUp => self.go_up(window, cx),
+            Action::EditPath => self.begin_path_edit(window, cx),
             Action::SelectAll => {
                 self.select_all();
                 cx.notify();
@@ -138,6 +152,7 @@ impl ExplorerPane {
                 } else {
                     folder.as_os_str().to_owned()
                 };
+                crate::reveal::leave_next_explorer_window();
                 std::process::Command::new("explorer.exe").arg(target).spawn().map(drop)
             }
             OpenIn::CommandPrompt => console(std::process::Command::new("cmd.exe").arg("/K"), &folder),

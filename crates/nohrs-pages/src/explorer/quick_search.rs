@@ -209,6 +209,7 @@ fn walk(root: &str, pattern: &str, sender: &async_channel::Sender<Vec<FileEntryD
                     .and_then(|metadata| metadata.modified().ok())
                     .and_then(|time| time.duration_since(std::time::UNIX_EPOCH).ok())
                     .map_or(0, |duration| duration.as_secs()),
+                attributes: 0,
             });
             if batch.len() >= BATCH || last_flush.elapsed() >= FLUSH_EVERY {
                 sent += batch.len();

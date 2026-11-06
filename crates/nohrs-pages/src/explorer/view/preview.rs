@@ -47,13 +47,23 @@ pub(crate) fn fitted_picture(
     if page.preview_zoom > 1.0 || animated {
         return None;
     }
-    let edge = fitted_edge(
-        super::panels::preview_width(),
-        f32::from(window.viewport_size().height),
-        window.scale_factor(),
-    );
+    // Quick look shows the picture over the whole pane: decoded for the side
+    // panel's width, it was stretched there and looked blurred.
+    let width = if page.quick_look {
+        f32::from(window.viewport_size().width)
+    } else {
+        super::panels::preview_width()
+    };
+    let edge = fitted_edge(width, f32::from(window.viewport_size().height), window.scale_factor());
     // The file decoded at this size, sharp; the Shell's picture (or the grid
     // tile) only while that is being made, or if it cannot be.
+    // A file Windows' decoder could not read (a WebP or HEIC without its
+    // codec, say) is decoded whole, as a zoom past 100% does: the Shell's
+    // picture alone left a small tile stretched to the pane, blurred until
+    // the zoom went past 100%.
+    if page.preview_sharp.as_ref().is_some_and(|sharp| sharp.path == image_path && sharp.failed) {
+        return None;
+    }
     if let Some(sharp) = sharp_picture(page, image_path, edge, cx) {
         page.gif_cache = None;
         return Some(
@@ -89,6 +99,8 @@ pub(crate) struct SharpPicture {
     path: String,
     edge: u32,
     image: Option<std::sync::Arc<gpui::RenderImage>>,
+    // The decoder gave up on the file.
+    failed: bool,
     // The same file's picture at the size asked before, shown until this one
     // is made, so resizing the panel never falls back to the Shell's.
     previous: Option<std::sync::Arc<gpui::RenderImage>>,
@@ -124,8 +136,10 @@ fn sharp_picture(
                 Ok((width, height, pixels)) => {
                     sharp.image = crate::explorer::thumbnails::render_image(width, height, pixels).map(std::sync::Arc::new);
                 }
-                // The Shell's picture stays, as before.
-                Err(error) => tracing::debug!("could not decode {wanted} for the preview: {error}"),
+                Err(error) => {
+                    tracing::debug!("could not decode {wanted} for the preview: {error}");
+                    sharp.failed = true;
+                }
             }
             sharp._decode = None;
             cx.notify();
@@ -142,6 +156,7 @@ fn sharp_picture(
         path: path.to_string(),
         edge,
         image: None,
+        failed: false,
         previous: previous.clone(),
         _decode: Some(task),
     });
@@ -453,7 +468,7 @@ fn header_button(id: &'static str, glyph: &'static str) -> Stateful<Div> {
         .rounded(px(4.0))
         .cursor_pointer()
         .hover(|style| style.bg(rgb(theme::bg_hover())))
-        .font_family("Segoe Fluent Icons")
+        .font_family(theme::icon_font())
         .text_size(px(12.0))
         .text_color(rgb(theme::fg_secondary()))
         .child(glyph)
@@ -917,7 +932,7 @@ fn render_media(page: &ExplorerPane, cx: &mut Context<ExplorerPane>) -> AnyEleme
     // Glyphs from Segoe Fluent Icons, as the window's caption buttons use.
     let glyph = |text: &'static str| {
         div()
-            .font_family("Segoe Fluent Icons")
+            .font_family(theme::icon_font())
             .text_size(px(14.0))
             .text_color(rgb(theme::fg()))
             .child(text)

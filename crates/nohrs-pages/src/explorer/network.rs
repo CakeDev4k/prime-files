@@ -180,6 +180,7 @@ fn folder_row(name: String, path: String) -> FileEntryDto {
         kind: "dir".to_string(),
         size: 0,
         modified: 0,
+        attributes: 0,
     }
 }
 

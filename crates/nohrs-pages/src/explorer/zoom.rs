@@ -84,6 +84,18 @@ pub const MENU_STOPS: [(&str, f32); 6] = [
     (k!("Ícones XL"), 0.85),
 ];
 
+/// The next view of the zoom menu from `zoom`, up (`direction` > 0, bigger)
+/// or down: what one wheel notch over the view switch picks, as in File
+/// Pilot. A zoom between two views goes to the nearer one in that direction.
+pub fn next_stop(zoom: f32, direction: f32) -> f32 {
+    const EPSILON: f32 = 0.001;
+    if direction > 0.0 {
+        MENU_STOPS.iter().map(|(_, stop)| *stop).find(|stop| *stop > zoom + EPSILON).unwrap_or(zoom)
+    } else {
+        MENU_STOPS.iter().rev().map(|(_, stop)| *stop).find(|stop| *stop < zoom - EPSILON).unwrap_or(zoom)
+    }
+}
+
 /// The zoom menu's slider position (0..=100) for a zoom value. The menu's
 /// rows are evenly spaced, so each step between two rows is the same length
 /// on the slider, and the zoom between them is spread along it.

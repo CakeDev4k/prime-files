@@ -226,6 +226,10 @@ pub struct SettingsPage {
     focus_handle: FocusHandle,
     // The command whose new keys are being waited for.
     recording: Option<Action>,
+    // The content's scroll: back to the top on another section. Kept, a
+    // section opened scrolled to where the previous one was, and a short one
+    // looked empty or started halfway down.
+    scroll: gpui::ScrollHandle,
 }
 
 impl SettingsPage {
@@ -246,6 +250,7 @@ impl SettingsPage {
             updater,
             search: None,
             focus_handle: cx.focus_handle(),
+            scroll: gpui::ScrollHandle::new(),
             recording: None,
         };
         page.refresh_default_explorer(cx);
@@ -515,6 +520,9 @@ impl SettingsPage {
 
     /// Shows `section`, for the menu entries that lead to one directly.
     pub fn show_section(&mut self, section: SettingsSection, cx: &mut Context<Self>) {
+        if self.section != section {
+            self.scroll.set_offset(gpui::point(px(0.0), px(0.0)));
+        }
         self.section = section;
         self.confirm_reset = false;
         cx.notify();
@@ -772,6 +780,12 @@ impl SettingsPage {
         ];
         let mut groups = vec![
             Group::new(vec![
+                Row::hint(
+                    t!("Menu clássico do Windows"),
+                    t!("O botão direito abre direto o menu antigo do Windows, com Renomear, Copiar e Colar escritos, sem passar por \"Mostrar mais opções\". As opções abaixo valem só para o menu do Prime Files."),
+                    self.switch("menu-classic", menu.classic, ("menu", "classic"), cx),
+                )
+                .reset(("menu", "classic"), !menu.classic, "false"),
                 Row::hint(
                     t!("Estilo do menu"),
                     t!("Um ponto de partida; depois ajuste cada item abaixo."),
@@ -1106,9 +1120,8 @@ impl SettingsPage {
             )
             .reset(("compact", "enabled"), !enabled, "false"),
         ])];
-        if !enabled {
-            return groups;
-        }
+        // Always listed, even with the mode off: hidden behind the switch they
+        // looked removed, and they can be set up before turning the mode on.
         groups.push(Group::titled(
             t!("O que esconder"),
             vec![
@@ -1799,7 +1812,10 @@ impl SettingsPage {
             // that may shrink, in a parent that is itself a flex row. In a
             // block parent it was measured as two lines and drawn as one,
             // running past the card with an empty line under it.
-            .when(options.len() > 5, |this| this.flex_wrap().flex_1().min_w(px(0.0)))
+            // Toggles wrap too: their labels change width with the check, and
+            // in English the five bars did not fit, so "Preview" was squeezed
+            // under "Bottom bar".
+            .when(options.len() > 5 || toggles, |this| this.flex_wrap().flex_1().min_w(px(0.0)))
             .p(px(2.0))
             .gap(px(2.0))
             .rounded(px(7.0))
@@ -1812,6 +1828,7 @@ impl SettingsPage {
                 div()
                     .id(ElementId::NamedInteger(id.into(), ix as u64))
                     .h(px(26.0))
+                    .flex_shrink_0()
                     .px(px(11.0))
                     .flex()
                     .items_center()
@@ -2288,8 +2305,10 @@ impl Render for SettingsPage {
                         .id("settings-nav-row")
                         .w_full()
                         .flex()
+                        // Wrapped rather than scrolled sideways: cut at the
+                        // window's edge, the later sections looked missing.
+                        .flex_wrap()
                         .gap_1()
-                        .overflow_x_scroll()
                         .children(SettingsSection::ALL.into_iter().map(|section| self.render_nav_item(section, true, cx))),
                 )
         } else {
@@ -2318,25 +2337,58 @@ impl Render for SettingsPage {
             .track_focus(&self.focus_handle)
             .on_key_down(cx.listener(|page, event: &KeyDownEvent, _window, cx| page.record_key(event, cx)))
             .child(nav)
+            // The scroll area and its bar, always shown, beside each other in
+            // a relative box: the bar is drawn over the box's right edge, in
+            // the gutter the area's own padding leaves free.
             .child(
+                div()
+                    .relative()
+                    .flex_1()
+                    .min_w(px(0.0))
+                    .min_h(px(0.0))
+                    .flex()
+                    .flex_col()
+                    .child(self.render_content(narrow, status, body))
+                    .child(
+                        gpui_component::scroll::Scrollbar::vertical(&self.scroll)
+                            .id("settings-scrollbar")
+                            .scrollbar_show(gpui_component::scroll::ScrollbarShow::Always),
+                    ),
+            )
+    }
+}
+
+impl SettingsPage {
+    fn render_content(&self, narrow: bool, status: Option<Div>, body: Div) -> impl IntoElement + use<> {
                 div()
                     .id("settings-content")
                     .flex_1()
                     .min_w(px(0.0))
                     .min_h(px(0.0))
                     .overflow_y_scroll()
-                    .px(px(if narrow { 14.0 } else { 32.0 }))
-                    .py(px(24.0))
+                    .track_scroll(&self.scroll)
+                    .pl(px(if narrow { 14.0 } else { 32.0 }))
+                    // Room for the bar on the right, and below the last card
+                    // so it never ends glued to the window's edge.
+                    .pr(px(if narrow { 20.0 } else { 36.0 }))
+                    .pt(px(24.0))
+                    .pb(px(48.0))
+                    // Flex, so the column centres (by its auto margins) in a
+                    // wide window instead of hugging the side list. Not
+                    // `items_center`: under it `w_full` measures zero here.
+                    .flex()
+                    .flex_col()
                     .child(
                         div()
+                            .w_full()
                             .max_w(px(820.0))
+                            .mx_auto()
                             .flex()
                             .flex_col()
                             .gap_4()
                             .children(status)
                             .child(body),
-                    ),
-            )
+                    )
     }
 }
 

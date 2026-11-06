@@ -15,7 +15,7 @@ use std::net::{TcpListener, TcpStream};
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-use gpui::{AsyncWindowContext, Context, WeakEntity, Window};
+use gpui::{Context, WeakEntity, Window};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
@@ -191,17 +191,16 @@ pub fn serve(window: &mut Window, cx: &mut Context<RootView>) {
         return;
     }
 
-    cx.spawn_in(
-        window,
-        async move |this: WeakEntity<RootView>, cx: &mut AsyncWindowContext| {
-            while let Ok((request, reply)) = receiver.recv().await {
-                let answer = this
-                    .update_in(cx, |root, window, cx| root.handle_ipc(request, window, cx))
-                    .unwrap_or_else(|_| json!({ "ok": false, "error": "window closed" }));
-                reply.try_send(answer).ok();
-            }
-        },
-    )
+    // Each request goes to the window used last, not the one that opened the
+    // channel: "open this folder" from Listary or a second nohrs.exe lands
+    // as a tab where the person is working.
+    cx.spawn(async move |_this: WeakEntity<RootView>, cx: &mut gpui::AsyncApp| {
+        while let Ok((request, reply)) = receiver.recv().await {
+            let answer = crate::windows::with_target(cx, |root, window, cx| root.handle_ipc(request, window, cx))
+                .unwrap_or_else(|| json!({ "ok": false, "error": "window closed" }));
+            reply.try_send(answer).ok();
+        }
+    })
     .detach();
 }
 
@@ -274,10 +273,26 @@ fn new_token() -> String {
 impl RootView {
     /// Shows `path` as a just-started Nohrs was asked to on its command line.
     pub fn open_initial_path(&mut self, path: &Path, window: &mut Window, cx: &mut Context<Self>) {
+        self.open_start_path(path, false, window, cx);
+    }
+
+    /// Opens `path` in a window opened just for it: in its one tab, not in a
+    /// second one beside the default folder.
+    pub fn open_path_in_new_window(&mut self, path: &Path, window: &mut Window, cx: &mut Context<Self>) {
+        self.open_start_path(path, true, window, cx);
+    }
+
+    fn open_start_path(&mut self, path: &Path, in_place: bool, window: &mut Window, cx: &mut Context<Self>) {
         match folder_and_selection(path) {
             Some((folder, select)) => {
                 let explorer = self.explorer_entity();
-                explorer.update(cx, |page, cx| page.open_path(folder, select, window, cx));
+                explorer.update(cx, |page, cx| {
+                    if in_place {
+                        page.open_path_in_place(folder, select, window, cx)
+                    } else {
+                        page.open_path(folder, select, window, cx)
+                    }
+                });
             }
             None => tracing::warn!("cannot open {}: no such path", path.display()),
         }

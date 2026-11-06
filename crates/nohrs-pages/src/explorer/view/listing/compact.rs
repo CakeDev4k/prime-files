@@ -177,6 +177,8 @@ fn render_item(
                 this.record_click(ix, event.click_count);
                 let modifiers = event.modifiers;
                 let plain = !(modifiers.shift || modifiers.platform || modifiers.control);
+                let was_sole_selection = this.selection.len() == 1 && this.is_selected(ix);
+                this.arm_slow_rename(ix, event.click_count, plain, was_sole_selection, window, cx);
                 let keep_selection = this.press_entry(ix, event.position, plain);
                 if modifiers.shift {
                     this.select_range_to(ix);
@@ -227,6 +229,8 @@ fn render_item(
                         .whitespace_nowrap()
                         .child(crate::explorer::view::highlighted_name(&item.name, &highlight)),
                 )
+                .when_some(item.cloud_state(), |this, state| this.child(super::row::cloud_badge(state)))
+                .children(super::row::copy_progress(&item.path))
                 .when_some(page.hit_folder(&item.path), |this, folder| {
                     this.child(crate::explorer::view::hit_folder_label(folder))
                 })

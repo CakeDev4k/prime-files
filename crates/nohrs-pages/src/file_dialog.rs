@@ -9,7 +9,7 @@
 use std::sync::Mutex;
 use std::time::Duration;
 
-use gpui::{AsyncWindowContext, Context, WeakEntity, Window};
+use gpui::{Context, WeakEntity, Window};
 
 use crate::root::RootView;
 
@@ -59,14 +59,13 @@ pub fn cancel() {
 
 /// Starts watching for browser file dialogs. While one is open Nohrs is in
 /// picking mode; the banner and the poll that ends it run on the root view.
-pub fn watch(window: &mut Window, cx: &mut Context<RootView>) {
+pub fn watch(_window: &mut Window, cx: &mut Context<RootView>) {
     let (sender, receiver) = async_channel::unbounded::<Dialog>();
     if !platform::start_hook(sender) {
         return;
     }
-    cx.spawn_in(
-        window,
-        async move |this: WeakEntity<RootView>, cx: &mut AsyncWindowContext| {
+    cx.spawn(
+        async move |_this: WeakEntity<RootView>, cx: &mut gpui::AsyncApp| {
             loop {
                 // Either a dialog came up, or it is time to check that the one
                 // being picked for still exists: the user may have chosen in the
@@ -85,17 +84,18 @@ pub fn watch(window: &mut Window, cx: &mut Context<RootView>) {
                         _ => false,
                     },
                 };
-                if changed {
-                    let updated = this.update_in(cx, |root, window, cx| {
+                // In the window used last (`crate::windows`).
+                if changed
+                    && crate::windows::with_target(cx, |root, window, cx| {
                         root.show_explorer(cx);
                         if picking().is_some() {
                             window.activate_window();
                         }
                         cx.notify();
-                    });
-                    if updated.is_err() {
-                        return;
-                    }
+                    })
+                    .is_none()
+                {
+                    tracing::debug!("no explorer window to pick in");
                 }
             }
         },
@@ -106,7 +106,7 @@ pub fn watch(window: &mut Window, cx: &mut Context<RootView>) {
 // Waits for the next dialog, but no longer than the poll interval.
 async fn next_dialog_or_tick(
     receiver: &async_channel::Receiver<Dialog>,
-    cx: &mut AsyncWindowContext,
+    cx: &mut gpui::AsyncApp,
 ) -> Option<Dialog> {
     let timer = cx.background_executor().timer(Duration::from_millis(400));
     let next = receiver.recv();

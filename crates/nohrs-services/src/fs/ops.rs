@@ -14,6 +14,97 @@ use std::ffi::OsStr;
 use std::fs;
 use std::path::{Component, Path, PathBuf};
 
+/// The file copies under way in this process, so the interface can show how
+/// far each one is and keep a half-copied file from being opened.
+///
+/// A big file pasted from another drive is copied in the background, and the
+/// listing shows it at once (the copy creates it first). Opened before the
+/// copy ends, an archive program reads half of it and calls it corrupt — the
+/// same file opens fine a minute later. That was reported on 06/11/2026.
+pub mod transfers {
+    use std::collections::HashMap;
+    use std::path::{Path, PathBuf};
+    use std::sync::{LazyLock, Mutex, PoisonError};
+
+    static ACTIVE: LazyLock<Mutex<HashMap<PathBuf, (u64, u64)>>> = LazyLock::new(Default::default);
+
+    fn active() -> std::sync::MutexGuard<'static, HashMap<PathBuf, (u64, u64)>> {
+        ACTIVE.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+
+    /// One copy in progress; it leaves the list when dropped.
+    pub struct Transfer {
+        destination: PathBuf,
+    }
+
+    impl Transfer {
+        /// Lists the copy to `destination`.
+        pub fn start(destination: &Path) -> Self {
+            active().insert(destination.to_path_buf(), (0, 0));
+            Self { destination: destination.to_path_buf() }
+        }
+
+        /// Records how much of it is written.
+        pub fn update(&self, copied: u64, total: u64) {
+            if let Some(entry) = active().get_mut(&self.destination) {
+                *entry = (copied, total);
+            }
+        }
+    }
+
+    impl Drop for Transfer {
+        fn drop(&mut self) {
+            active().remove(&self.destination);
+        }
+    }
+
+    /// How far the copy to `path` is, as (written, total) bytes, while one
+    /// is under way. Paths compare without case, as Windows does.
+    pub fn progress(path: &Path) -> Option<(u64, u64)> {
+        let active = active();
+        if active.is_empty() {
+            return None;
+        }
+        active.get(path).copied().or_else(|| {
+            let wanted = path.to_string_lossy().to_lowercase();
+            active
+                .iter()
+                .find(|(destination, _)| destination.to_string_lossy().to_lowercase() == wanted)
+                .map(|(_, progress)| *progress)
+        })
+    }
+
+    /// The copies under way: how many, and their (written, total) bytes
+    /// summed.
+    pub fn summary() -> Option<(usize, u64, u64)> {
+        let active = active();
+        if active.is_empty() {
+            return None;
+        }
+        let (copied, total) = active
+            .values()
+            .fold((0u64, 0u64), |(copied, total), (one_copied, one_total)| {
+                (copied.saturating_add(*one_copied), total.saturating_add(*one_total))
+            });
+        Some((active.len(), copied, total))
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+
+        #[test]
+        fn a_transfer_is_listed_until_dropped() {
+            let path = Path::new(r"C:\destino\Grande.ZIP");
+            let transfer = Transfer::start(path);
+            transfer.update(50, 200);
+            assert_eq!(progress(Path::new(r"c:\destino\grande.zip")), Some((50, 200)));
+            drop(transfer);
+            assert_eq!(progress(path), None);
+        }
+    }
+}
+
 /// How a [`move_path`] operation was carried out.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MoveKind {
@@ -783,19 +874,44 @@ fn copy_file(from: &Path, to: &Path, existing: Existing) -> Result<()> {
 fn copy_file_claiming(from: &Path, to: &Path) -> ClaimResult<()> {
     use windows::Win32::Storage::FileSystem::{COPY_FILE_FAIL_IF_EXISTS, CopyFileExW};
     use windows::core::PCWSTR;
+    use windows::Win32::Foundation::HANDLE;
+    use windows::Win32::Storage::FileSystem::{
+        COPYPROGRESSROUTINE_PROGRESS, LPPROGRESS_ROUTINE_CALLBACK_REASON, PROGRESS_CONTINUE,
+    };
+
+    // Called by CopyFileExW after each chunk, on this same thread.
+    unsafe extern "system" fn progress(
+        total: i64,
+        transferred: i64,
+        _stream_size: i64,
+        _stream_transferred: i64,
+        _stream_number: u32,
+        _reason: LPPROGRESS_ROUTINE_CALLBACK_REASON,
+        _source: HANDLE,
+        _destination: HANDLE,
+        data: *const core::ffi::c_void,
+    ) -> COPYPROGRESSROUTINE_PROGRESS {
+        // SAFETY: `data` is the `Transfer` below, alive for the whole call.
+        let transfer = unsafe { &*data.cast::<transfers::Transfer>() };
+        transfer.update(transferred.max(0) as u64, total.max(0) as u64);
+        PROGRESS_CONTINUE
+    }
+
     let (source, destination) = (wide(from), wide(to));
-    // SAFETY: both buffers are NUL-terminated UTF-16 and outlive the call; no
-    // progress routine, data or cancel flag is passed.
+    let transfer = transfers::Transfer::start(to);
+    // SAFETY: both buffers are NUL-terminated UTF-16 and outlive the call, as
+    // does the `Transfer` the progress routine reads; no cancel flag is passed.
     let copied = unsafe {
         CopyFileExW(
             PCWSTR(source.as_ptr()),
             PCWSTR(destination.as_ptr()),
-            None,
-            None,
+            Some(progress),
+            Some((&raw const transfer).cast()),
             None,
             COPY_FILE_FAIL_IF_EXISTS,
         )
     };
+    drop(transfer);
     let Err(error) = copied.map_err(win32_io_error) else {
         return Ok(());
     };

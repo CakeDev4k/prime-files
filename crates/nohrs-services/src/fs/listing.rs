@@ -53,8 +53,10 @@ fn list_dir_impl(path: &str, limit: usize, cursor: Option<&str>) -> Result<ListR
     for entry in fs::read_dir(dir)? {
         let entry = entry?;
         let name = os_str_to_string(entry.file_name());
+        let mut attributes = 0;
         let (kind, size, modified) = match entry.metadata() {
             Ok(md) => {
+                attributes = file_attributes(&md);
                 let modified = md
                     .modified()
                     .ok()
@@ -89,6 +91,7 @@ fn list_dir_impl(path: &str, limit: usize, cursor: Option<&str>) -> Result<ListR
             kind: kind.to_string(),
             size,
             modified,
+            attributes: cloud_attributes(attributes, kind, &entry.path()),
         });
     }
     let total = entries.len();
@@ -120,6 +123,87 @@ fn list_dir_impl(path: &str, limit: usize, cursor: Option<&str>) -> Result<ListR
         entries,
         next_cursor,
     })
+}
+
+#[cfg(windows)]
+fn file_attributes(metadata: &fs::Metadata) -> u32 {
+    std::os::windows::fs::MetadataExt::file_attributes(metadata)
+}
+
+#[cfg(not(windows))]
+fn file_attributes(_metadata: &fs::Metadata) -> u32 {
+    0
+}
+
+const FILE_ATTRIBUTE_REPARSE_POINT: u32 = 0x400;
+const CLOUD_ATTRIBUTES: u32 = 0x1000 | 0x40000 | 0x80000 | 0x100000 | 0x400000;
+
+// The attributes kept on a row, for its cloud state (OneDrive and the like).
+// A reparse point that is not the Cloud Files filter's — a link shown as its
+// target, an app alias in WindowsApps, a deduplicated file — is dropped, so
+// it does not read as "on this device". Only files that carry no cloud
+// attribute of their own pay for the extra look at the tag.
+fn cloud_attributes(attributes: u32, kind: &str, path: &Path) -> u32 {
+    if attributes & FILE_ATTRIBUTE_REPARSE_POINT == 0 || attributes & CLOUD_ATTRIBUTES != 0 {
+        return attributes;
+    }
+    if kind != "symlink" && is_cloud_placeholder(path) {
+        attributes
+    } else {
+        attributes & !FILE_ATTRIBUTE_REPARSE_POINT
+    }
+}
+
+#[cfg(windows)]
+#[allow(unsafe_code)]
+fn is_cloud_placeholder(path: &Path) -> bool {
+    use std::os::windows::ffi::OsStrExt;
+    use windows::Win32::Foundation::CloseHandle;
+    use windows::Win32::Storage::FileSystem::{
+        CreateFileW, FILE_ATTRIBUTE_TAG_INFO, FILE_FLAG_BACKUP_SEMANTICS, FILE_FLAG_OPEN_REPARSE_POINT,
+        FILE_SHARE_DELETE, FILE_SHARE_READ, FILE_SHARE_WRITE, FileAttributeTagInfo,
+        GetFileInformationByHandleEx, OPEN_EXISTING,
+    };
+    use windows::core::PCWSTR;
+
+    // IO_REPARSE_TAG_CLOUD and its sixteen variants (0x9000001A, 0x9000101A…).
+    const CLOUD_TAG: u32 = 0x9000_001A;
+    const CLOUD_TAG_MASK: u32 = 0xFFFF_0FFF;
+
+    let wide: Vec<u16> = path.as_os_str().encode_wide().chain(Some(0)).collect();
+    // No access rights and the reparse point itself: nothing is read, so a
+    // placeholder is not downloaded by looking at it.
+    let Ok(handle) = (unsafe {
+        CreateFileW(
+            PCWSTR(wide.as_ptr()),
+            0,
+            FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+            None,
+            OPEN_EXISTING,
+            FILE_FLAG_OPEN_REPARSE_POINT | FILE_FLAG_BACKUP_SEMANTICS,
+            None,
+        )
+    }) else {
+        return false;
+    };
+    let mut info = FILE_ATTRIBUTE_TAG_INFO::default();
+    let read = unsafe {
+        GetFileInformationByHandleEx(
+            handle,
+            FileAttributeTagInfo,
+            (&raw mut info).cast(),
+            std::mem::size_of::<FILE_ATTRIBUTE_TAG_INFO>() as u32,
+        )
+    };
+    if let Err(error) = unsafe { CloseHandle(handle) } {
+        tracing::debug!("closing {}: {error}", path.display());
+    }
+    read.is_ok() && info.ReparseTag & CLOUD_TAG_MASK == CLOUD_TAG
+}
+
+#[cfg(not(windows))]
+fn is_cloud_placeholder(_path: &Path) -> bool {
+    false
 }
 
 fn os_str_to_string(s: impl AsRef<OsStr>) -> String {

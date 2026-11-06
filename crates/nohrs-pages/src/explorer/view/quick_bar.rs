@@ -357,6 +357,11 @@ fn render_zoom_switch(
                 .cursor_pointer()
                 .hover(|style| style.bg(rgb(theme::bg_hover())))
                 .when(open, |style| style.bg(rgb(theme::bg_hover())))
+                // The wheel over the switch walks the views without Ctrl, as
+                // File Pilot's does: up for bigger, down for smaller.
+                .on_scroll_wheel(cx.listener(|page, event: &ScrollWheelEvent, _, cx| {
+                    page.wheel_through_views(event, cx);
+                }))
                 .on_click(cx.listener(|page, _, _, cx| {
                     // A shown-for-a-moment menu clicked stays, as a clicked one.
                     page.zoom_menu_open = page.zoom_menu_flash.take().is_some() || !page.zoom_menu_open;
@@ -429,6 +434,9 @@ fn render_zoom_menu(
         }))
         .on_hover(cx.listener(|page, hovered: &bool, _, _cx| {
             page.zoom_menu_hovered = *hovered;
+        }))
+        .on_scroll_wheel(cx.listener(|page, event: &ScrollWheelEvent, _, cx| {
+            page.wheel_through_views(event, cx);
         }))
         .child(
             div()
@@ -679,5 +687,27 @@ mod tests {
         assert_eq!(super::short_count(7_600), "7.6K");
         assert_eq!(super::short_count(2_000), "2K");
         assert_eq!(super::short_count(1_250_000), "1.2M");
+    }
+}
+
+impl ExplorerPane {
+    // One view per wheel notch; a touchpad's pixels add up to a notch first.
+    fn wheel_through_views(&mut self, event: &ScrollWheelEvent, cx: &mut Context<Self>) {
+        cx.stop_propagation();
+        let travel = match event.delta {
+            ScrollDelta::Lines(lines) => lines.y.signum() * 60.0,
+            ScrollDelta::Pixels(pixels) => f32::from(pixels.y),
+        };
+        self.view_wheel_travel += travel;
+        if self.view_wheel_travel.abs() < 60.0 {
+            return;
+        }
+        let direction = self.view_wheel_travel.signum();
+        self.view_wheel_travel = 0.0;
+        let next = zoom::next_stop(self.zoom_target, direction);
+        if (next - self.zoom_target).abs() > f32::EPSILON {
+            self.zoom_to(next, cx);
+        }
+        cx.notify();
     }
 }

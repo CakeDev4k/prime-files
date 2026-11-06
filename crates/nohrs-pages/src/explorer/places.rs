@@ -81,6 +81,7 @@ pub fn open_in_explorer(parsing_name: &str) {
     } else {
         parsing_name.to_string()
     };
+    crate::reveal::leave_next_explorer_window();
     if let Err(error) = std::process::Command::new("explorer.exe").arg(target).spawn() {
         tracing::warn!("could not open {parsing_name} in Explorer: {error}");
     }
@@ -107,6 +108,7 @@ pub fn this_pc_entries() -> Vec<nohrs_services::fs::listing::FileEntryDto> {
                 kind: "dir".to_string(),
                 size: 0,
                 modified: 0,
+                attributes: 0,
             })
         })
         .collect()
@@ -236,12 +238,31 @@ impl ExplorerPane {
             None if place.parsing_name.eq_ignore_ascii_case(super::network::NETWORK) => {
                 self.change_dir(super::network::NETWORK.to_string(), window, cx)
             }
+            // The Recycle Bin opens here too (issue #4).
+            None if super::recycle_bin::is_recycle_bin(&place.parsing_name) => {
+                self.change_dir(super::recycle_bin::RECYCLE_BIN.to_string(), window, cx)
+            }
             // A server or a share found on the network.
             None if super::network::is_unc(&place.parsing_name) => {
                 self.change_dir(place.parsing_name.clone(), window, cx)
             }
             None => open_in_explorer(&place.parsing_name),
         }
+    }
+
+    /// The address a place opens at in Prime Files (its folder, This PC,
+    /// Network, a share, the Recycle Bin), for the middle click that opens it
+    /// in a new tab (issue #14). `None` for one only the Explorer opens.
+    pub(crate) fn place_address(place: &Place) -> Option<String> {
+        if let Some(path) = &place.path {
+            return Some(path.clone());
+        }
+        let name = place.parsing_name.as_str();
+        (name.eq_ignore_ascii_case(THIS_PC)
+            || name.eq_ignore_ascii_case(super::network::NETWORK)
+            || super::network::is_unc(name)
+            || super::recycle_bin::is_recycle_bin(name))
+        .then(|| if super::recycle_bin::is_recycle_bin(name) { super::recycle_bin::RECYCLE_BIN.to_string() } else { name.to_string() })
     }
 
     /// Opens a field in the sidebar for `purpose`, holding `text` selected.
@@ -329,6 +350,15 @@ impl ExplorerPane {
         }
         if let Some(id) = super::tags::tag_of_location(&self.cwd) {
             return Some(super::tags::Tags::get(id, cx).map(|tag| tag.name).unwrap_or_else(|| self.cwd.clone()));
+        }
+        if super::recycle_bin::is_recycle_bin(&self.cwd) {
+            let shell_name = self
+                .sidebar
+                .places
+                .as_ref()
+                .and_then(|places| places.other.iter().find(|place| super::recycle_bin::is_recycle_bin(&place.parsing_name)))
+                .map(|place| place.name.clone());
+            return Some(shell_name.unwrap_or_else(|| nohrs_core::i18n::tr(super::recycle_bin::RECYCLE_BIN_NAME).to_string()));
         }
         if !self.cwd.eq_ignore_ascii_case(THIS_PC) {
             return None;

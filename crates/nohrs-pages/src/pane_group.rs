@@ -189,6 +189,19 @@ impl<V: 'static> Clone for PaneGroupCallbacks<V> {
     }
 }
 
+thread_local! {
+    // The tab a drag started from, for the window to tear it off when it is
+    // let go outside (`take_dragged_tab`): gpui's drag ends without a drop
+    // there, and nothing else says which tab it was.
+    static DRAGGED_TAB: std::cell::Cell<Option<(usize, usize)>> = const { std::cell::Cell::new(None) };
+}
+
+/// The `(pane, tab)` a tab drag started from, if one is under way; taken, so
+/// the next release does not see it again.
+pub fn take_dragged_tab() -> Option<(usize, usize)> {
+    DRAGGED_TAB.take()
+}
+
 /// The drag payload for a tab reorder: identifies the tab being dragged by its
 /// `(pane, tab)` position. Matched by type at the drop site.
 #[derive(Clone)]
@@ -197,21 +210,14 @@ struct TabDrag {
     tab: usize,
 }
 
-/// The view rendered under the cursor while a tab is dragged.
-struct TabDragPreview {
-    title: SharedString,
-}
+/// gpui's view under the cursor while a tab is dragged: nothing, since the
+/// chip is a window of its own (`crate::drag_chip`) that goes past this
+/// window's edge; a second one drawn here would only show up to it.
+struct TabDragPreview;
 
 impl Render for TabDragPreview {
     fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
-        div()
-            .px(px(10.0))
-            .py(px(4.0))
-            .rounded(px(6.0))
-            .bg(rgb(theme::toolbar_active_bg()))
-            .text_color(rgb(theme::toolbar_active_text()))
-            .text_sm()
-            .child(self.title.clone())
+        div().size_0()
     }
 }
 
@@ -1126,10 +1132,11 @@ impl<T: PaneItem> PaneGroup<T> {
                             pane: pane_index,
                             tab: tab_index,
                         },
-                        move |_drag, _offset, _window, cx| {
-                            cx.new(|_cx| TabDragPreview {
-                                title: drag_title.clone(),
-                            })
+                        move |drag, _offset, _window, cx| {
+                            DRAGGED_TAB.set(Some((drag.pane, drag.tab)));
+                            let chip_title = drag_title.clone();
+                            cx.defer(move |cx| crate::drag_chip::show(chip_title, cx));
+                            cx.new(|_cx| TabDragPreview)
                         },
                     )
                     .on_drop(cx.listener(move |this, drag: &TabDrag, window, cx| {
@@ -1354,10 +1361,11 @@ impl<T: PaneItem> PaneGroup<T> {
                     pane: pane_index,
                     tab: tab_index,
                 },
-                move |_drag, _offset, _window, cx| {
-                    cx.new(|_cx| TabDragPreview {
-                        title: drag_title.clone(),
-                    })
+                move |drag, _offset, _window, cx| {
+                    DRAGGED_TAB.set(Some((drag.pane, drag.tab)));
+                    let chip_title = drag_title.clone();
+                    cx.defer(move |cx| crate::drag_chip::show(chip_title, cx));
+                    cx.new(|_cx| TabDragPreview)
                 },
             )
             // Only same-pane reorders are supported (§4 — reorder within the tab

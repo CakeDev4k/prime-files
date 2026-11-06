@@ -1,6 +1,3 @@
-// Only the real opening reports a failure; tests record the request instead.
-#[cfg(not(test))]
-use nohrs_core::tf;
 use nohrs_core::config;
 use nohrs_services::fs::listing::{FileEntryDto, ListParams, list_dir_sync};
 
@@ -55,7 +52,10 @@ struct RefreshExtras {
 /// This PC from a drive's root. `None` at This PC itself and at a root with
 /// nothing above it (a network share).
 pub(crate) fn parent_location(path: &str) -> Option<String> {
-    if path.eq_ignore_ascii_case(super::places::THIS_PC) || super::tags::tag_of_location(path).is_some() {
+    if path.eq_ignore_ascii_case(super::places::THIS_PC)
+        || super::tags::tag_of_location(path).is_some()
+        || super::recycle_bin::is_recycle_bin(path)
+    {
         return None;
     }
     if path.eq_ignore_ascii_case(super::network::NETWORK) {
@@ -75,6 +75,9 @@ fn read_folder(path: &str) -> Listing {
     // Not a folder on disk: the Shell says what it holds.
     if path.eq_ignore_ascii_case(super::places::THIS_PC) {
         return Ok(super::places::this_pc_entries());
+    }
+    if super::recycle_bin::is_recycle_bin(path) {
+        return super::recycle_bin::read_entries();
     }
     // A tag's items, wherever each is.
     if let Some(id) = super::tags::tag_of_location(path) {
@@ -454,7 +457,9 @@ impl ExplorerPane {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if item.kind == "dir" {
+        if super::recycle_bin::is_recycle_bin(&self.cwd) {
+            self.explain_recycle_bin_item(&item.path, cx);
+        } else if item.kind == "dir" {
             self.change_dir(item.path, window, cx);
         } else if crate::file_dialog::picking().is_some() {
             // A browser is waiting on its Open dialog: the file goes there. The
@@ -472,6 +477,16 @@ impl ExplorerPane {
             };
             crate::file_dialog::deliver(&paths);
             cx.notify();
+        } else if let Some((copied, total)) =
+            nohrs_services::fs::ops::transfers::progress(std::path::Path::new(&item.path))
+        {
+            // Half of it is on the disk: the program would call it corrupt.
+            let percent = if total > 0 { copied.saturating_mul(100) / total } else { 0 };
+            self.set_status(
+                StatusLevel::Warning,
+                nohrs_core::tf!("Este arquivo ainda está sendo copiado ({percent}%). Abra quando terminar.", percent = percent),
+            );
+            cx.notify();
         } else {
             self.open_with_default_app(&item.path);
         }
@@ -484,11 +499,64 @@ impl ExplorerPane {
         // open windows on the machine running them.
         #[cfg(test)]
         OPENED_WITH_DEFAULT_APP.with(|opened| opened.borrow_mut().push(path.to_owned()));
-        // `explorer.exe <file>` hands the file to its associated program
-        // without a shell in between to misread `&` or `^` in the name.
+        // The file's default verb, through the Shell, as the Explorer's
+        // double click: the program the user picked for the type. Until
+        // 06/11/2026 this ran `explorer.exe <file>`, and for a .zip the
+        // Explorer opened its own "compressed folder" instead of WinRAR or
+        // 7-Zip (issue #16) — which, on big archives, said the archive was
+        // invalid while the same file opened fine from the Explorer.
         #[cfg(not(test))]
-        if let Err(error) = std::process::Command::new("explorer.exe").arg(path).spawn() {
-            self.set_status(StatusLevel::Error, tf!("Não foi possível abrir {path}: {error}", path = path, error = error));
+        platform::open_default(path);
+    }
+}
+
+#[cfg(all(windows, not(test)))]
+mod platform {
+    /// Opens `path` with its default verb, on a thread of its own: the Shell
+    /// may take a moment (a program starting, a network path), and wants a
+    /// single-threaded COM apartment, which gpui's threads are not.
+    #[allow(unsafe_code)]
+    pub(super) fn open_default(path: &str) {
+        use std::os::windows::ffi::OsStrExt;
+        use windows::Win32::System::Com::{COINIT_APARTMENTTHREADED, COINIT_DISABLE_OLE1DDE, CoInitializeEx, CoUninitialize};
+        use windows::Win32::UI::Shell::{SEE_MASK_NOASYNC, SHELLEXECUTEINFOW, ShellExecuteExW};
+        use windows::Win32::UI::WindowsAndMessaging::SW_SHOWNORMAL;
+        use windows::core::PCWSTR;
+
+        let path = path.to_owned();
+        let spawned = std::thread::Builder::new().name("open-default".into()).spawn(move || {
+            let wide: Vec<u16> = std::ffi::OsStr::new(&path).encode_wide().chain(Some(0)).collect();
+            let initialized = unsafe { CoInitializeEx(None, COINIT_APARTMENTTHREADED | COINIT_DISABLE_OLE1DDE) }.is_ok();
+            let mut info = SHELLEXECUTEINFOW {
+                cbSize: std::mem::size_of::<SHELLEXECUTEINFOW>() as u32,
+                fMask: SEE_MASK_NOASYNC,
+                lpFile: PCWSTR(wide.as_ptr()),
+                nShow: SW_SHOWNORMAL.0,
+                ..Default::default()
+            };
+            if let Err(error) = unsafe { ShellExecuteExW(&mut info) } {
+                // "No program is associated" and the like: the Explorer's own
+                // answer to it is the "open with" dialog, which it shows.
+                tracing::warn!("ShellExecuteEx({path}) failed: {error}; asking the Explorer");
+                if let Err(error) = std::process::Command::new("explorer.exe").arg(&path).spawn() {
+                    tracing::error!("could not open {path}: {error}");
+                }
+            }
+            if initialized {
+                unsafe { CoUninitialize() };
+            }
+        });
+        if let Err(error) = spawned {
+            tracing::error!("could not start the thread that opens files: {error}");
+        }
+    }
+}
+
+#[cfg(all(not(windows), not(test)))]
+mod platform {
+    pub(super) fn open_default(path: &str) {
+        if let Err(error) = std::process::Command::new("xdg-open").arg(path).spawn() {
+            tracing::error!("could not open {path}: {error}");
         }
     }
 }

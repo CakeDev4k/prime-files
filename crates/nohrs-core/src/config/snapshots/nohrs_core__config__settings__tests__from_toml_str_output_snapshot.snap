@@ -68,6 +68,7 @@ expression: parsed
                 "customize",
             ],
             hidden: [],
+            classic: false,
         },
         updates: Updates {
             automatic: true,

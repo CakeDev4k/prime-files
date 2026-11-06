@@ -71,7 +71,7 @@ missing_docs = "warn"
 unwrap_used = "warn"
 expect_used = "warn"
 
-# The release build is what `iniciar-nohrs.bat` runs day to day (debug scrolls
+# The release build is what `iniciar-prime-files.bat` runs day to day (debug scrolls
 # too slowly through big folders), so it is tuned for rebuilding after an edit
 # rather than for shipping: incremental keeps the unchanged parts of a crate,
 # and more codegen units split the optimizer's work across the cores. The cost

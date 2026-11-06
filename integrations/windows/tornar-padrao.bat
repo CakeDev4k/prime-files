@@ -14,7 +14,7 @@ rem explorer.exe direto, e pastas especiais (Este Computador, Lixeira).
 for %%I in ("%~dp0..\..\target\release\nohrs.exe") do set "EXE=%%~fI"
 if not exist "%EXE%" (
   echo Nao achei %EXE%.
-  echo Rode iniciar-nohrs.bat uma vez para compilar.
+  echo Rode iniciar-prime-files.bat uma vez para compilar.
   pause
   exit /b 1
 )

@@ -1,8 +1,28 @@
-## Prime Files 0.3.4
+## Prime Files 0.3.5
 
 Explorador de arquivos para Windows, rápido, escrito em Rust.
 
-### Novidades
+### Novidades da 0.3.5
+
+- **Busca no Ctrl+T, como no Zen**: Ctrl+T (ou o botão "+") abre uma caixa no topo da janela. Ela lista as abas abertas, para ir direto a uma delas, e encontra qualquer arquivo ou pasta do computador pelo nome. Enter ou clique abre o resultado numa aba nova (um arquivo abre a pasta dele, já selecionado), e dá para arrastar o resultado para outro programa. Com a caixa vazia, Enter abre uma aba normal.
+- **Menu do botão direito do seu jeito**: em Configurações › Menu do botão direito, escolha os ícones do topo e os itens do menu, mude a ordem com as setas ou comece por um estilo (Minimalista, Padrão, Completo). Os itens do Windows podem sair do menu de uma vez, ou um por um com o botão direito em cima deles.
+- **Copiar como caminho**: ícone no topo do menu, item na lista e Ctrl+Shift+C.
+- **Botão do meio abre nova aba**: numa pasta, num arquivo ou num lugar da barra lateral. A aba abre ao fundo, como num navegador (dá para mudar em Configurações › Geral). "Abrir em nova aba" também está no menu.
+- **Desfazer exclusão**: Ctrl+Z, ou "Desfazer exclusão" no menu da pasta, devolve da Lixeira o que foi excluído por último.
+- **Árabe** entre os idiomas, com o texto na ordem certa, da direita para a esquerda.
+- **Barra lateral em cima ou embaixo, reorganizada**: os lugares ficam em colunas por grupo, e a roda do mouse rola a faixa de lado.
+- **Propriedades** pode ir para o menu ou para os ícones do topo.
+
+### Correções da 0.3.5
+
+- Pastas criadas com `mklink` (links de pasta e junções) abriam no Explorador do Windows. Agora abrem no Prime Files como qualquer pasta.
+- Com muitas abas, elas passavam por baixo dos botões de minimizar, maximizar e fechar. Agora a faixa de abas encolhe, rola e mostra sempre a aba atual.
+- O volume definido no Mixer de Volume do Windows voltava a 100% a cada abertura. Agora o Prime Files lembra dele, e o volume do visualizador é o mesmo em todas as abas.
+- O ícone do Explorador fixado na barra de tarefas ainda abria o Explorador com o Prime Files como explorador padrão. Agora abre o Prime Files.
+- Nomes em árabe apareciam com as letras invertidas ou como quadradinhos.
+- Uma linha já selecionada pode ser arrastada por qualquer coluna, não só pelo nome.
+
+### Novidades da 0.3.3
 
 - **Fotos nítidas no visualizador**: a imagem agora é lida do próprio arquivo, no tamanho do painel e na orientação em que a foto foi tirada. Antes vinha da miniatura guardada pelo Windows, que deixava fotos nítidas borradas e em blocos.
 - **Painéis em qualquer lado**: a barra lateral, o visualizador e o terminal podem ficar à esquerda, à direita, em cima ou embaixo da lista (Configurações › Geral › Layout). Arraste a borda para mudar o tamanho; puxada até o fim, ela esconde o painel, e a borda de um painel escondido o traz de volta.

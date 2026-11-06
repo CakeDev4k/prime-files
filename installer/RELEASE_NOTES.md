@@ -1,6 +1,10 @@
-## Prime Files 0.3.5
+## Prime Files 0.3.6
 
 Explorador de arquivos para Windows, rápido, escrito em Rust.
+
+### Correções da 0.3.6
+
+- Em Configurações, a lista de idiomas passava da borda do cartão e deixava um espaço vazio embaixo. Agora as opções quebram de linha dentro do cartão, em qualquer largura da janela.
 
 ### Novidades da 0.3.5
 

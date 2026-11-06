@@ -1,6 +1,37 @@
-## Prime Files 0.3.6
+## Prime Files 0.3.7
 
 Explorador de arquivos para Windows, rápido, escrito em Rust.
+
+### Novidades da 0.3.7
+
+- **Lixeira dentro do Prime Files**: a Lixeira abre aqui, com o nome original e a data de cada item. Botão direito: Restaurar, Excluir para sempre ou Esvaziar a Lixeira.
+- **OneDrive e outras nuvens**: cada arquivo de uma pasta sincronizada mostra se está só online (nuvem), neste dispositivo (check verde) ou sempre mantido aqui (check cheio), como no Explorador. Pastas no Google Drive para computador agora também se atualizam sozinhas.
+- **Caminho como no File Pilot**: depois de subir de pasta, as pastas de baixo continuam no caminho, mais claras, para voltar com um clique. Um clique no espaço livre da barra (ou Ctrl+L / Alt+D) abre o endereço completo, já selecionado para copiar.
+- **Trocar a visualização pela roda do mouse**: a roda sobre o botão de visualização da barra de baixo passa por Detalhes, Árvore, Lista e Ícones, sem precisar do Ctrl.
+- **Renomear com clique lento**: clicar de novo no nome de um item já selecionado renomeia, como no Windows. "Nova pasta" já abre a pasta nova selecionada e com o nome para digitar.
+- **Menu clássico do Windows** (opcional, em Configurações › Menu do botão direito): o botão direito abre direto o menu antigo, com Renomear, Copiar e Colar escritos.
+- **Ctrl+W na última aba** fecha a janela.
+- **Clique do meio** em Este Computador, Rede e Lixeira abre numa aba nova.
+- **Húngaro** entre os idiomas.
+- **Progresso da cópia**: colar arquivos grandes mostra a porcentagem na barra de baixo e ao lado do arquivo, e o arquivo só abre quando a cópia termina.
+- **Várias janelas**: arraste uma aba para fora da janela e ela abre numa janela própria, onde você soltar (a aba arrastada acompanha o mouse por cima de tudo, até em outro monitor). Pastas enviadas por outros programas (Premiere, navegador, Listary) abrem como aba nova na última janela em que você mexeu.
+- **O Prime Files lembra o tamanho e a posição da janela**, inclusive maximizada e no segundo monitor, e a largura da barra lateral e do visualizador.
+- **"Este Computador" no caminho virou um ícone de computador**, como no Explorador.
+- **Configurações mais fáceis de usar**: barra de rolagem, cada seção abre no topo, conteúdo centralizado, e em janela estreita as seções quebram em linhas em vez de sumir na borda.
+
+### Correções da 0.3.7
+
+- No Windows 10, os botões de minimizar, maximizar e fechar e os controles do player apareciam como quadradinhos.
+- Copiar ou recortar no Prime Files e colar na Área de Trabalho ou no Explorador não funcionava. Agora funciona nos dois sentidos, e recortar no Explorador e colar aqui move os arquivos (contribuição de FelyxArk).
+- Arquivos .zip e .rar abriam na "pasta compactada" do Explorador, que chamava arquivos grandes de corrompidos, em vez do programa escolhido no Windows (WinRAR, 7-Zip…). Agora todo arquivo abre no programa padrão dele.
+- Imagens às vezes apareciam borradas no visualizador até passar de 100% de zoom, e na visualização rápida (Espaço).
+- "Fixar no Acesso rápido" e "Fixar em Iniciar" pelo menu não tinham efeito.
+- Com o Prime Files como explorador padrão, pastas fixadas na lista de atalhos do Explorador (botão direito no ícone da barra de tarefas) abriam no Explorador.
+- O menu do botão direito não fechava ao clicar em outra janela.
+- O volume do Mixer do Windows começava em 100% por um instante a cada som, e o volume do visualizador voltava a 100% ao reabrir o Prime Files.
+- Em Configurações › Modo compacto, as opções do modo só apareciam com ele ligado.
+- O interruptor "Menu clássico do Windows" não ligava.
+- Na tela de Configurações, os botões de "O que esconder" se sobrepunham em algumas larguras.
 
 ### Correções da 0.3.6
 

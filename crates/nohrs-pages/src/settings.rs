@@ -1623,7 +1623,6 @@ impl SettingsPage {
                         div()
                             .flex()
                             .flex_col()
-                            .items_end()
                             .gap_2()
                             .child(div().text_xs().text_color(rgb(theme::fg_secondary())).child(path.display().to_string()))
                             .child(
@@ -1637,7 +1636,10 @@ impl SettingsPage {
                                         cx.listener(|page, _event, _window, cx| page.show_config_folder(cx)),
                                     )),
                             ),
-                    ),
+                    )
+                    // Under the text: beside it, the long path squeezed the
+                    // description to one letter per line.
+                    .wide(),
                     Row::hint(
                         t!("Restaurar padrão"),
                         t!("Troca o arquivo pelo padrão; o atual fica guardado ao lado."),
@@ -2373,21 +2375,23 @@ impl SettingsPage {
                     .pr(px(if narrow { 20.0 } else { 36.0 }))
                     .pt(px(24.0))
                     .pb(px(48.0))
-                    // Flex, so the column centres (by its auto margins) in a
-                    // wide window instead of hugging the side list. Not
-                    // `items_center`: under it `w_full` measures zero here.
-                    .flex()
-                    .flex_col()
+                    // A plain block: as a flex column, the scroll area fitted
+                    // its child to its own height, and the cards were spaced
+                    // out or stretched to fill it (06/11/2026). The column is
+                    // centred by a flex row inside it instead, where it grows
+                    // up to its maximum width.
                     .child(
-                        div()
-                            .w_full()
-                            .max_w(px(820.0))
-                            .mx_auto()
-                            .flex()
-                            .flex_col()
-                            .gap_4()
-                            .children(status)
-                            .child(body),
+                        div().w_full().flex().justify_center().child(
+                            div()
+                                .flex_1()
+                                .min_w(px(0.0))
+                                .max_w(px(820.0))
+                                .flex()
+                                .flex_col()
+                                .gap_4()
+                                .children(status)
+                                .child(body),
+                        ),
                     )
     }
 }

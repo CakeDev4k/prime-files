@@ -1620,11 +1620,13 @@ impl Render for ExplorerPage {
             .on_action(cx.listener(|this, _: &FocusPrevPane, window, cx| {
                 this.focus_prev(window, cx);
             }))
-            // Ctrl+T opens what `[ui] new_tab_mode` says, like the "+".
+            // Ctrl+T follows `[ui] new_tab_mode` and nothing else: the live
+            // modifier is read for the "+" click, not here, so a Shift chord
+            // rebound to this command still honours the folder mode. GoTo, and
+            // Shift+click on the "+", are the ways to ask.
             .on_action(cx.listener(|this, _: &NewTab, window, cx| {
                 let pane = this.group.active();
-                let ask = window.modifiers().shift;
-                this.new_tab_request(pane, ask, window, cx);
+                this.new_tab_request(pane, false, window, cx);
             }))
             // Ctrl+Shift+T opens the box that searches the computer or takes
             // a typed path.
@@ -1765,6 +1767,10 @@ impl ExplorerPage {
     /// Test entry points for the tab actions exercised without keybindings.
     pub(crate) fn test_set_new_tab_mode(&mut self, mode: NewTabMode) {
         self.ui.new_tab_mode = mode;
+    }
+
+    pub(crate) fn test_set_new_tab_path(&mut self, path: &str) {
+        self.ui.new_tab_path = path.to_string();
     }
 
     pub(crate) fn test_new_tab(

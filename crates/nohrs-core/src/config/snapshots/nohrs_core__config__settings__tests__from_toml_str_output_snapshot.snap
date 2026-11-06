@@ -22,6 +22,8 @@ expression: parsed
             welcome_done: false,
             hover_audio: true,
             hover_audio_delay_ms: 400,
+            new_tab_path: "",
+            new_tab_mode: Box,
         },
         explorer: Explorer {
             split_direction: Vertical,

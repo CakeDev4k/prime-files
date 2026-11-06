@@ -211,7 +211,10 @@ fn render_band(
         .into_any_element();
     sections.push((t!("Tags").to_string(), "icons/tag.svg", tags, Some(new_tag)));
 
-    let mut band = div().h_full().flex().items_start().px(px(6.0));
+    // Not shrunk to the band: as wide as its columns, so the band has
+    // something to scroll (in a block parent it took the band's width and
+    // the wheel moved nothing).
+    let mut band = div().h_full().flex_shrink_0().flex().items_start().px(px(6.0));
     let mut first = true;
     for (name, icon, items, extra) in sections {
         if items.is_empty() && extra.is_none() {
@@ -254,6 +257,7 @@ fn render_band(
         .size_full()
         .when(!page.framed.sidebar, |this| this.bg(rgb(theme::bg())))
         .py(px(BAND_PADDING))
+        .flex()
         .overflow_x_scroll()
         .child(band)
 }

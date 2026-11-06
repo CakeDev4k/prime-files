@@ -106,6 +106,11 @@ struct Pane<T: PaneItem> {
     /// The top edge's slide in compact mode: the tab row and the active
     /// tab's own top bar.
     reveal: Rc<Reveal>,
+    /// The tab strip's scroll, brought to the active tab when it changes:
+    /// a tab opened at the end of a long row would open out of sight.
+    tab_scroll: ScrollHandle,
+    // The tab the strip was last brought to, and how many tabs there were.
+    scrolled_to: Cell<(usize, usize)>,
 }
 
 impl<T: PaneItem> Pane<T> {
@@ -114,6 +119,8 @@ impl<T: PaneItem> Pane<T> {
             tabs: vec![tab],
             active_tab: 0,
             reveal: Rc::default(),
+            tab_scroll: ScrollHandle::new(),
+            scrolled_to: Cell::new((0, 1)),
         }
     }
 
@@ -924,6 +931,10 @@ impl<T: PaneItem> PaneGroup<T> {
 
         let on_new_tab = callbacks.on_new_tab.clone();
         let on_close_pane = callbacks.on_close_pane.clone();
+        if pane.scrolled_to.get() != (active_tab, tab_count) {
+            pane.scrolled_to.set((active_tab, tab_count));
+            pane.tab_scroll.scroll_to_item(active_tab);
+        }
 
         // Tabs sit on the bar's bottom edge and the active one takes the
         // content's colour, so it reads as the front of the folder below, as in
@@ -957,6 +968,7 @@ impl<T: PaneItem> PaneGroup<T> {
                     .min_w(px(0.0))
                     .flex_shrink()
                     .overflow_x_scroll()
+                    .track_scroll(&pane.tab_scroll)
                     .children(tabs),
             )
             // New-tab affordance (`Cmd/Ctrl+T`, §4 / §6).

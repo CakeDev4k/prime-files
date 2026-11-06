@@ -4,7 +4,7 @@
 //! whole-computer index. Enter or a click opens the hit in a new tab — a
 //! folder shows itself, a file its folder with it selected — and a hit can be
 //! dragged out like a file of the listing. With nothing typed, Enter opens a
-//! plain new tab, which is what Ctrl+T did before.
+//! plain new tab, which is what Ctrl+T and the "+" did before.
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -41,6 +41,10 @@ pub(crate) struct Palette {
     scroll: ScrollHandle,
     // The index generation the hits came from.
     generation: u64,
+    // Whether the arrows chose a row since the text last changed. With
+    // nothing typed and no row chosen, Enter makes a plain new tab rather
+    // than going to the first tab listed.
+    chose: bool,
 }
 
 #[derive(Clone)]
@@ -92,6 +96,7 @@ impl ExplorerPage {
             press: None,
             scroll: ScrollHandle::new(),
             generation: cx.try_global::<super::everything::Everything>().map_or(0, |state| state.generation),
+            chose: false,
         });
         self.palette_changed(cx);
     }
@@ -140,6 +145,7 @@ impl ExplorerPage {
         rows.extend(palette.rows.iter().filter(|row| matches!(row, Row::Hit { .. })).cloned());
         palette.rows = rows;
         palette.selected = 0;
+        palette.chose = false;
 
         palette.cancel.store(true, Ordering::Relaxed);
         if needle.is_empty() {
@@ -206,7 +212,15 @@ impl ExplorerPage {
             return;
         }
         let last = palette.rows.len() as isize - 1;
-        palette.selected = (palette.selected as isize + step).clamp(0, last) as usize;
+        palette.selected = if palette.chose {
+            (palette.selected as isize + step).clamp(0, last) as usize
+        } else if palette.query.trim().is_empty() {
+            // The first press lands on the first row, which showed unlit.
+            0
+        } else {
+            (palette.selected as isize + step).clamp(0, last) as usize
+        };
+        palette.chose = true;
         palette.scroll.scroll_to_item(palette.selected);
         cx.notify();
     }
@@ -216,8 +230,12 @@ impl ExplorerPage {
         let Some(palette) = self.palette.as_ref() else {
             return;
         };
-        let chosen = palette.rows.get(row.unwrap_or(palette.selected)).cloned();
         let empty = palette.query.trim().is_empty();
+        let chosen = match row {
+            Some(row) => palette.rows.get(row).cloned(),
+            None if empty && !palette.chose => None,
+            None => palette.rows.get(palette.selected).cloned(),
+        };
         self.close_palette(window, cx);
         match chosen {
             Some(Row::Tab { id, .. }) => {
@@ -292,7 +310,10 @@ impl ExplorerPage {
             .rows
             .iter()
             .enumerate()
-            .map(|(index, row)| render_row(row, index, index == palette.selected, cx))
+            .map(|(index, row)| {
+                let lit = index == palette.selected && (palette.chose || !palette.query.trim().is_empty());
+                render_row(row, index, lit, cx)
+            })
             .collect();
         let empty = rows.is_empty();
         let searching = !palette.query.trim().is_empty() && palette.rows.iter().all(|row| !matches!(row, Row::Hit { .. }));

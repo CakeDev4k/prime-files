@@ -957,8 +957,13 @@ impl ExplorerPage {
             on_close_pane: Rc::new(|this: &mut Self, pane, window, cx| {
                 this.close_pane(pane, window, cx)
             }),
+            // The "+" opens the search box, as Ctrl+T does; Enter with
+            // nothing typed there makes the plain new tab.
             on_new_tab: Rc::new(|this: &mut Self, pane, window, cx| {
-                this.new_tab_in_pane(pane, window, cx)
+                this.set_active(pane, window, cx);
+                if this.palette.is_none() {
+                    this.toggle_palette(window, cx);
+                }
             }),
             on_activate_tab: Rc::new(|this: &mut Self, pane, tab, window, cx| {
                 this.activate_tab(pane, tab, window, cx)

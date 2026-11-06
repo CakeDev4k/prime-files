@@ -148,6 +148,13 @@ pub fn render(
             }),
         )
         .on_mouse_down(
+                gpui::MouseButton::Middle,
+                cx.listener(move |this, _: &gpui::MouseDownEvent, _window, cx| {
+                    cx.stop_propagation();
+                    this.open_entry_in_new_tab(ix, cx);
+                }),
+            )
+        .on_mouse_down(
                 gpui::MouseButton::Right,
                 cx.listener(move |this, event: &gpui::MouseDownEvent, window, cx| {
                     // The rows sit inside the listing, whose own right click is

@@ -1447,7 +1447,7 @@ impl IDWriteTextRenderer_Impl for TextRenderer_Impl {
     fn DrawGlyphRun(
         &self,
         clientdrawingcontext: *const ::core::ffi::c_void,
-        _baselineoriginx: f32,
+        baselineoriginx: f32,
         _baselineoriginy: f32,
         _measuringmode: DWRITE_MEASURING_MODE,
         glyphrun: *const DWRITE_GLYPH_RUN,
@@ -1495,6 +1495,14 @@ impl IDWriteTextRenderer_Impl for TextRenderer_Impl {
         let mut utf16_idx = desc.textPosition as usize;
         let mut glyph_idx = 0;
         let mut glyphs = Vec::with_capacity(glyph_count);
+        // NOHRS: placed from DirectWrite's own origin for the run, so the
+        // bidi order it worked out survives. A right-to-left run (Arabic)
+        // starts at its right edge and its glyphs, in logical order, go left;
+        // laid end to end from the left they read backwards.
+        let right_to_left = glyphrun.bidiLevel % 2 == 1;
+        let run_advance: f32 = glyph_advances.iter().sum();
+        let run_left = if right_to_left { baselineoriginx - run_advance } else { baselineoriginx };
+        let mut pen = baselineoriginx;
         for (cluster_utf16_len, cluster_glyph_count) in cluster_analyzer {
             context.index_converter.advance_to_utf16_ix(utf16_idx);
             utf16_idx += cluster_utf16_len;
@@ -1507,19 +1515,26 @@ impl IDWriteTextRenderer_Impl for TextRenderer_Impl {
                 let is_emoji = color_font
                     && is_color_glyph(font_face, id, &context.text_system.components.factory);
                 let this_glyph_idx = glyph_idx + cluster_glyph_idx;
+                let advance = glyph_advances[this_glyph_idx];
+                let offset = glyph_offsets[this_glyph_idx].advanceOffset;
+                let x = if right_to_left {
+                    pen -= advance;
+                    pen - offset
+                } else {
+                    let x = pen + offset;
+                    pen += advance;
+                    x
+                };
                 glyphs.push(ShapedGlyph {
                     id,
-                    position: point(
-                        px(context.width + glyph_offsets[this_glyph_idx].advanceOffset),
-                        px(0.0),
-                    ),
+                    position: point(px(x), px(0.0)),
                     index: context.index_converter.utf8_ix,
                     is_emoji,
                 });
-                context.width += glyph_advances[this_glyph_idx];
             }
             glyph_idx += cluster_glyph_count;
         }
+        context.width = context.width.max(run_left + run_advance);
         context.runs.push(ShapedRun { font_id, glyphs });
         Ok(())
     }
@@ -1597,6 +1612,12 @@ impl<'a> StringIndexConverter<'a> {
     }
 
     fn advance_to_utf16_ix(&mut self, utf16_target: usize) {
+        // NOHRS: runs come in visual order, so with right-to-left text a run
+        // can start before the one drawn just ahead of it.
+        if utf16_target < self.utf16_ix {
+            self.utf8_ix = 0;
+            self.utf16_ix = 0;
+        }
         for (ix, c) in self.text[self.utf8_ix..].char_indices() {
             if self.utf16_ix >= utf16_target {
                 self.utf8_ix += ix;

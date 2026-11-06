@@ -57,10 +57,14 @@ enum Command {
     RenameTag,
     DeleteTag,
     RemoveNetworkPlace,
+    CopyPath,
+    OpenInNewTab,
+    Properties,
+    Customize,
 }
 
 impl Command {
-    const ALL: [Command; 40] = [
+    const ALL: [Command; 44] = [
         Command::ViewList,
         Command::ViewGrid,
         Command::ViewTree,
@@ -101,6 +105,10 @@ impl Command {
         Command::RenameTag,
         Command::DeleteTag,
         Command::RemoveNetworkPlace,
+        Command::CopyPath,
+        Command::OpenInNewTab,
+        Command::Properties,
+        Command::Customize,
     ];
 
     fn from_id(id: u32) -> Option<Self> {
@@ -122,6 +130,39 @@ pub(crate) fn note_theme_mode(mode: ThemeMode) {
 
 fn theme_mode() -> ThemeMode {
     THEME_MODE.lock().map_or(ThemeMode::Dark, |mode| *mode)
+}
+
+// The file menu as `[menu]` arranges it, as last applied by the root view.
+static MENU: Mutex<Option<config::Menu>> = Mutex::new(None);
+
+/// Records how the file menu is arranged.
+pub(crate) fn note_menu(menu: &config::Menu) {
+    if let Ok(mut current) = MENU.lock() {
+        *current = Some(menu.clone());
+    }
+}
+
+fn menu_config() -> config::Menu {
+    MENU.lock().ok().and_then(|menu| menu.clone()).unwrap_or_default()
+}
+
+/// The label and icon of an id `[menu]` may hold, for the menu and for the
+/// settings page that arranges it. `None` for an id this build does not know.
+pub(crate) fn menu_entry_info(id: &str) -> Option<(&'static str, &'static str)> {
+    Some(match id {
+        "cut" => (t!("Recortar"), "icons/scissors.svg"),
+        "copy" => (t!("Copiar"), "icons/copy.svg"),
+        "copy_path" => (t!("Copiar como caminho"), "icons/link.svg"),
+        "rename" => (t!("Renomear"), "icons/pencil.svg"),
+        "delete" => (t!("Excluir"), "icons/trash-2.svg"),
+        "new_tab" => (t!("Abrir em nova aba"), "icons/plus.svg"),
+        "properties" => (t!("Propriedades"), "icons/info.svg"),
+        "tags" => (t!("Tags"), "icons/tag.svg"),
+        "windows" => (t!("Itens do Windows"), "icons/app-window.svg"),
+        "more_options" => (t!("Mostrar mais opções"), "icons/ellipsis.svg"),
+        "customize" => (t!("Personalizar este menu…"), "icons/settings.svg"),
+        _ => return None,
+    })
 }
 
 /// Which Shell verbs the explorer runs itself. Copy and Cut go through Nohrs's
@@ -184,7 +225,6 @@ const TAG_IDS: u32 = 0x400;
 // A colour in a tag's menu: this plus its place in `tags::COLORS`.
 const FIRST_TAG_COLOR: u32 = 0x8F0;
 
-const SHELL_HIDDEN_FOR_ITEMS: &[&str] = &["paste", "cut", "copy", "rename", "delete"];
 
 impl ExplorerPane {
     /// Opens the right-click menu: for the row `row` (selecting it first if
@@ -222,13 +262,15 @@ impl ExplorerPane {
             one_folder,
             extended,
         };
-        let own = self.listing_entries(&purpose, cx);
-        self.show_menu(purpose, own, hwnd, window, cx);
+        let (before, own, windows) = self.listing_entries(&purpose, cx);
+        self.show_menu_with(purpose, before, own, windows, hwnd, window, cx);
     }
 
-    // Nohrs's entries for a listing menu: the view and sort submenus on the
-    // folder's empty space, "Show more options" on files.
-    fn listing_entries(&self, purpose: &MenuPurpose, cx: &mut Context<Self>) -> Vec<Entry> {
+    // Nohrs's entries for a listing menu, as (above the Windows entries,
+    // below them, whether the Windows entries are shown at all): the view and
+    // sort submenus on the folder's empty space; on files, what `[menu]`
+    // lists, in its order.
+    fn listing_entries(&self, purpose: &MenuPurpose, cx: &mut Context<Self>) -> (Vec<Entry>, Vec<Entry>, bool) {
         let more = Entry::command(Command::MoreOptions as u32, t!("Mostrar mais opções"))
             .with_icon("icons/ellipsis.svg")
             .with_shortcut("Shift+F10");
@@ -237,28 +279,58 @@ impl ExplorerPane {
                 let mut entries = self.background_entries(cx);
                 entries.push(Entry::Separator);
                 entries.push(more);
-                entries
+                (Vec::new(), entries, true)
             }
             MenuPurpose::Listing { target: Target::Items(paths), .. } => {
-                // Ticked when every selected item has it; a click puts it on
-                // all of them, or takes it off all of them.
-                let mut tags: Vec<Entry> = super::tags::Tags::all(cx)
-                    .into_iter()
-                    .filter(|tag| tag.id < TAG_IDS)
-                    .map(|tag| {
-                        Entry::check(FIRST_TAG + tag.id, &tag.name, super::tags::Tags::all_have(paths, tag.id, cx))
-                    })
-                    .collect();
-                tags.push(Entry::Separator);
-                tags.push(Entry::command(Command::NewTag as u32, t!("Nova tag…")).with_icon("icons/plus.svg"));
-                vec![Entry::submenu(t!("Tags"), tags).with_icon("icons/tag.svg"), Entry::Separator, more]
+                let menu = menu_config();
+                let mut before = Vec::new();
+                let mut after = Vec::new();
+                let mut windows = false;
+                for id in &menu.items {
+                    let entry = match id.as_str() {
+                        "windows" => {
+                            windows = true;
+                            continue;
+                        }
+                        "new_tab" => Entry::command(Command::OpenInNewTab as u32, t!("Abrir em nova aba"))
+                            .with_icon("icons/plus.svg")
+                            .with_shortcut(t!("Botão do meio")),
+                        "copy_path" => Entry::command(Command::CopyPath as u32, t!("Copiar como caminho"))
+                            .with_icon("icons/link.svg")
+                            .with_shortcut(keys_of(Action::CopyPath)),
+                        "properties" => Entry::command(Command::Properties as u32, t!("Propriedades"))
+                            .with_icon("icons/info.svg"),
+                        "tags" => {
+                            // Ticked when every selected item has it; a click
+                            // puts it on all of them, or takes it off all.
+                            let mut tags: Vec<Entry> = super::tags::Tags::all(cx)
+                                .into_iter()
+                                .filter(|tag| tag.id < TAG_IDS)
+                                .map(|tag| {
+                                    Entry::check(FIRST_TAG + tag.id, &tag.name, super::tags::Tags::all_have(paths, tag.id, cx))
+                                })
+                                .collect();
+                            tags.push(Entry::Separator);
+                            tags.push(Entry::command(Command::NewTag as u32, t!("Nova tag…")).with_icon("icons/plus.svg"));
+                            Entry::submenu(t!("Tags"), tags).with_icon("icons/tag.svg")
+                        }
+                        "more_options" => more.clone(),
+                        "customize" => Entry::command(Command::Customize as u32, t!("Personalizar este menu…"))
+                            .with_icon("icons/settings.svg"),
+                        _ => continue,
+                    };
+                    if windows {
+                        after.push(entry);
+                    } else {
+                        before.push(entry);
+                    }
+                }
+                (before, after, windows)
             }
-            _ => vec![more],
+            _ => (Vec::new(), vec![more], true),
         }
     }
 
-    // Reads the menu for `purpose` and opens it at the pointer. The Shell is
-    // asked between updates, as its extensions may pump messages.
     fn show_menu(
         &mut self,
         purpose: MenuPurpose,
@@ -267,7 +339,39 @@ impl ExplorerPane {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        self.show_menu_with(purpose, Vec::new(), own, true, hwnd, window, cx);
+    }
+
+    // Reads the menu for `purpose` and opens it at the pointer. The Shell is
+    // asked between updates, as its extensions may pump messages. Without
+    // `windows` it is not asked at all: the menu is only Nohrs's.
+    #[allow(clippy::too_many_arguments)]
+    fn show_menu_with(
+        &mut self,
+        purpose: MenuPurpose,
+        before: Vec<Entry>,
+        own: Vec<Entry>,
+        windows: bool,
+        hwnd: i64,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         let position = window.mouse_position();
+        let menu = menu_config();
+        let own_labels: Vec<String> = before
+            .iter()
+            .chain(own.iter())
+            .filter_map(|entry| entry.label().map(str::to_string))
+            .collect();
+        // A Windows verb leaves the list only while the row above has it: take
+        // Cut out of the row and Windows' Cut comes back.
+        let shell_hidden: Vec<&'static str> = std::iter::once("paste")
+            .chain(["cut", "copy", "rename", "delete"].into_iter().filter(|verb| menu.quick.iter().any(|id| id == verb)))
+            // Windows 11 has its own "Copy as path"; ours stands for it.
+            .chain(
+                (menu.quick.iter().chain(menu.items.iter()).any(|id| id == "copy_path")).then_some("copyaspath"),
+            )
+            .collect();
         cx.spawn_in(
             window,
             async move |this: WeakEntity<Self>, cx: &mut AsyncWindowContext| {
@@ -279,9 +383,9 @@ impl ExplorerPane {
                             !files,
                             *extended,
                             intercepted(*one_folder).to_vec(),
-                            // Paste is Nohrs's own; on files the four in the
+                            // Paste is Nohrs's own; on files the ones in the
                             // row above replace the Shell's.
-                            if files { SHELL_HIDDEN_FOR_ITEMS } else { &["paste"][..] },
+                            if files { &shell_hidden[..] } else { &["paste"][..] },
                             files,
                         )
                     }
@@ -297,20 +401,30 @@ impl ExplorerPane {
                         (Target::None, true, false, Vec::new(), &[][..], false)
                     }
                 };
-                let prepared = shell_menu::prepare(&Request {
+                let target = if windows { target } else { Target::None };
+                let mut prepared = shell_menu::prepare(&Request {
                     hwnd: hwnd as isize,
                     target: &target,
                     own: &own,
+                    before: &before,
                     own_first,
                     extended,
                     dark: true,
                     intercept: &intercept,
                     hide,
                 });
+                // Windows entries the person hid, by the label the menu shows.
+                for item in &mut prepared.items {
+                    item.from_windows = is_windows_entry(item, &own_labels);
+                }
+                prepared
+                    .items
+                    .retain(|item| !(item.from_windows && menu.hidden.iter().any(|hidden| *hidden == item.label)));
+                let items = shell_menu::tidy(prepared.items);
                 this.update(cx, |pane, cx| {
                     pane.context_menu = Some(OpenMenu {
-                        items: prepared.items,
-                        quick: if quick { quick_actions() } else { Vec::new() },
+                        items,
+                        quick: if quick { quick_actions(&menu.quick) } else { Vec::new() },
                         position,
                         open_path: Vec::new(),
                         session: Some(prepared.session),
@@ -348,6 +462,32 @@ impl ExplorerPane {
             menu.open_path = wanted;
             cx.notify();
         }
+    }
+
+    /// Hides a Windows entry of the open menu, now and in every menu after:
+    /// its label goes to `[menu] hidden`, which Settings › Menu lists to
+    /// bring it back.
+    pub(crate) fn hide_menu_entry(&mut self, label: String, cx: &mut Context<Self>) {
+        if let Some(menu) = self.context_menu.as_mut() {
+            menu.items.retain(|item| !(item.from_windows && item.label == label));
+            menu.items = shell_menu::tidy(std::mem::take(&mut menu.items));
+            menu.open_path.clear();
+        }
+        let mut hidden = menu_config().hidden;
+        if !hidden.contains(&label) {
+            hidden.push(label.clone());
+        }
+        // Applied here at once; the watcher brings the file's copy back.
+        if let Ok(mut current) = MENU.lock() {
+            let mut menu = current.clone().unwrap_or_default();
+            menu.hidden = hidden.clone();
+            *current = Some(menu);
+        }
+        let quoted: Vec<String> =
+            hidden.iter().map(|label| format!("\"{}\"", label.replace('\\', "\\\\").replace('"', "\\\""))).collect();
+        self.write_config("menu", "hidden", format!("[{}]", quoted.join(", ")), cx);
+        self.set_status(StatusLevel::Info, tf!("\"{label}\" escondido do menu. Volte com ele em Configurações › Menu.", label = label));
+        cx.notify();
     }
 
     /// Runs entry `id` of the open menu and closes it.
@@ -474,6 +614,7 @@ impl ExplorerPane {
                     hwnd: hwnd as isize,
                     target: &target,
                     own: &own,
+                    before: &[],
                     own_first: matches!(target, Target::Background(_)),
                     extended,
                     dark,
@@ -810,6 +951,15 @@ impl ExplorerPane {
             | Command::DeleteTag
             | Command::RemoveNetworkPlace
             | Command::MoreOptions => {}
+            Command::CopyPath => self.copy_paths_as_text(cx),
+            Command::OpenInNewTab => self.open_selection_in_new_tab(cx),
+            Command::Properties => self.show_selection_properties(cx),
+            Command::Customize => window.dispatch_action(
+                nohrs_ui::components::layout::unified_toolbar::AccountMenuAction::boxed(
+                    nohrs_ui::components::layout::unified_toolbar::AccountMenuCommand::Menu,
+                ),
+                cx,
+            ),
             Command::OpenCommandPrompt => self.open_in(OpenIn::CommandPrompt, cx),
             Command::OpenPowerShell => self.open_in(OpenIn::PowerShell, cx),
             Command::OpenWindowsTerminal => self.open_in(OpenIn::WindowsTerminal, cx),
@@ -841,13 +991,35 @@ fn labelled(label: &str, action: Action) -> &'static str {
     interned(nohrs_core::shortcuts::with_keys(label, action))
 }
 
-fn quick_actions() -> Vec<QuickAction> {
-    vec![
-        QuickAction { id: Command::Cut as u32, icon: "icons/scissors.svg", label: labelled(t!("Recortar"), Action::Cut) },
-        QuickAction { id: Command::Copy as u32, icon: "icons/copy.svg", label: labelled(t!("Copiar"), Action::Copy) },
-        QuickAction { id: Command::Rename as u32, icon: "icons/pencil.svg", label: labelled(t!("Renomear"), Action::Rename) },
-        QuickAction { id: Command::Delete as u32, icon: "icons/trash-2.svg", label: labelled(t!("Excluir"), Action::Trash) },
-    ]
+// The row on top of a file's menu, in the order `[menu] quick` lists it.
+fn quick_actions(ids: &[String]) -> Vec<QuickAction> {
+    ids.iter()
+        .filter_map(|id| {
+            let (_, icon) = menu_entry_info(id)?;
+            let (command, label) = match id.as_str() {
+                "cut" => (Command::Cut, labelled(t!("Recortar"), Action::Cut)),
+                "copy" => (Command::Copy, labelled(t!("Copiar"), Action::Copy)),
+                "copy_path" => (Command::CopyPath, labelled(t!("Copiar como caminho"), Action::CopyPath)),
+                "rename" => (Command::Rename, labelled(t!("Renomear"), Action::Rename)),
+                "delete" => (Command::Delete, labelled(t!("Excluir"), Action::Trash)),
+                "new_tab" => (Command::OpenInNewTab, t!("Abrir em nova aba")),
+                "properties" => (Command::Properties, t!("Propriedades")),
+                _ => return None,
+            };
+            Some(QuickAction { id: command as u32, icon, label })
+        })
+        .collect()
+}
+
+// Whether a drawn entry came from Windows (or a program's Shell extension)
+// rather than from Nohrs: those are the ones a person may hide. Submenus
+// carry no id, so Nohrs's own are told apart by their labels.
+fn is_windows_entry(item: &MenuItem, own_labels: &[String]) -> bool {
+    match item.kind {
+        shell_menu::ItemKind::Separator => false,
+        shell_menu::ItemKind::Submenu(_) => !own_labels.iter().any(|label| *label == item.label),
+        _ => item.id >= 0x1000,
+    }
 }
 
 #[cfg(test)]

@@ -57,6 +57,8 @@ pub struct Config {
     pub compact: Compact,
     /// Where the sidebar, preview and terminal dock, and the tabs' layout.
     pub layout: Layout,
+    /// What a file's right-click menu shows, and in which order.
+    pub menu: Menu,
     /// Automatic updates from the project's releases.
     pub updates: Updates,
     /// Keybinding overrides (draft; full support in P3). Empty means the
@@ -83,6 +85,7 @@ impl Default for Config {
             explorer: Explorer::default(),
             compact: Compact::default(),
             layout: Layout::default(),
+            menu: Menu::default(),
             updates: Updates::default(),
             keybindings: Keybindings::default(),
             plugins: Plugins::default(),
@@ -121,7 +124,7 @@ impl Default for Theme {
 pub struct Ui {
     /// Interface language: `"auto"` follows the Windows regional format
     /// (then the country), or one of `"pt-BR"`, `"en"`, `"es"`, `"fr"`, `"de"`,
-    /// `"it"`, `"ru"`, `"ja"`, `"zh-CN"`.
+    /// `"it"`, `"ru"`, `"ja"`, `"zh-CN"`, `"ar"`.
     pub language: String,
     /// Column the listing is sorted by on load.
     pub default_sort: SortOrder,
@@ -182,6 +185,9 @@ pub struct Explorer {
     /// Whether "show in folder" from other programs (Premiere's Reveal in
     /// Explorer, a browser's Show in folder) opens here instead of Explorer.
     pub reveal_from_other_apps: bool,
+    /// Whether a tab opened with the middle button (or "Open in new tab")
+    /// stays behind the current one, as in a browser, instead of being shown.
+    pub background_tabs: bool,
 }
 
 impl Default for Explorer {
@@ -191,6 +197,44 @@ impl Default for Explorer {
             synced_panes: false,
             restore_tabs: true,
             reveal_from_other_apps: true,
+            background_tabs: false,
+        }
+    }
+}
+
+/// A file's right-click menu, as the person arranged it. Ids the build does
+/// not know are dropped when the menu is drawn, so an older build reading a
+/// newer file still shows a menu.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(default)]
+pub struct Menu {
+    /// The icons in the row on top, in order: `cut`, `copy`, `copy_path`,
+    /// `rename`, `delete`, `new_tab`, `properties`.
+    pub quick: Vec<String>,
+    /// The entries under the row, in order: `new_tab`, `copy_path`, `tags`,
+    /// `windows` (every entry Windows and its programs add), `more_options`,
+    /// `customize`. Leaving `windows` out gives a short menu of Prime Files'
+    /// own entries.
+    pub items: Vec<String>,
+    /// Windows entries hidden by their label, as the menu shows it.
+    pub hidden: Vec<String>,
+}
+
+/// The icons the menu's row can hold, in the order of a fresh config.
+pub const MENU_QUICK_DEFAULT: &[&str] = &["cut", "copy", "copy_path", "rename", "delete"];
+/// The menu's entries, in the order of a fresh config.
+pub const MENU_ITEMS_DEFAULT: &[&str] = &["new_tab", "windows", "copy_path", "tags", "more_options", "customize"];
+/// Every id `quick` may hold.
+pub const MENU_QUICK_ALL: &[&str] = &["cut", "copy", "copy_path", "rename", "delete", "new_tab", "properties"];
+/// Every id `items` may hold.
+pub const MENU_ITEMS_ALL: &[&str] = &["new_tab", "windows", "copy_path", "tags", "more_options", "customize", "properties"];
+
+impl Default for Menu {
+    fn default() -> Self {
+        Self {
+            quick: MENU_QUICK_DEFAULT.iter().map(|id| id.to_string()).collect(),
+            items: MENU_ITEMS_DEFAULT.iter().map(|id| id.to_string()).collect(),
+            hidden: Vec::new(),
         }
     }
 }
@@ -760,6 +804,12 @@ impl Config {
                 None => diagnostics.push(Diagnostic::warn("[layout] is not a table; ignoring")),
             }
         }
+        if let Some(value) = table.get("menu") {
+            match value.as_table() {
+                Some(menu) => read_menu(menu, &mut config.menu, &mut diagnostics),
+                None => diagnostics.push(Diagnostic::warn("[menu] is not a table; ignoring")),
+            }
+        }
         if let Some(value) = table.get("keybindings") {
             match value.as_table() {
                 Some(keys) => read_keybindings(keys, &mut config.keybindings, &mut diagnostics),
@@ -810,6 +860,7 @@ impl Config {
                 "explorer",
                 "compact",
                 "layout",
+                "menu",
                 "updates",
                 "keybindings",
                 "plugins",
@@ -843,7 +894,7 @@ impl Config {
              accent = \"orange\"   # \"orange\" | \"blue\" | \"teal\" | \"green\" | \"purple\" | \"pink\" | \"red\" | hex\n\
              \n\
              [ui]\n\
-             language = \"auto\"   # \"auto\" (Windows region) | \"pt-BR\" | \"en\" | \"es\" | \"fr\" | \"de\" | \"it\" | \"ru\" | \"ja\" | \"zh-CN\"\n\
+             language = \"auto\"   # \"auto\" (Windows region) | \"pt-BR\" | \"en\" | \"es\" | \"fr\" | \"de\" | \"it\" | \"ru\" | \"ja\" | \"zh-CN\" | \"ar\"\n\
              default_sort =\"name\"   # \"name\" | \"modified\" | \"size\" | \"kind\"\n\
              default_sort_descending = false  # true = Z to A, largest or newest first\n\
              show_hidden = false\n\
@@ -1098,12 +1149,35 @@ fn read_explorer(table: &toml::Table, explorer: &mut Explorer, diagnostics: &mut
             ))),
         }
     }
+    if let Some(value) = table.get("background_tabs") {
+        match value.as_bool() {
+            Some(flag) => explorer.background_tabs = flag,
+            None => diagnostics.push(Diagnostic::warn(format!(
+                "invalid explorer.background_tabs {value}; using {}",
+                explorer.background_tabs
+            ))),
+        }
+    }
     warn_unknown_keys(
         table,
-        &["split_direction", "synced_panes", "restore_tabs", "reveal_from_other_apps"],
+        &["split_direction", "synced_panes", "restore_tabs", "reveal_from_other_apps", "background_tabs"],
         "explorer.",
         diagnostics,
     );
+}
+
+fn read_menu(table: &toml::Table, menu: &mut Menu, diagnostics: &mut Vec<Diagnostic>) {
+    for (key, slot) in [("quick", &mut menu.quick), ("items", &mut menu.items), ("hidden", &mut menu.hidden)] {
+        let Some(value) = table.get(key) else { continue };
+        let strings: Option<Vec<String>> = value
+            .as_array()
+            .and_then(|array| array.iter().map(|item| item.as_str().map(str::to_string)).collect());
+        match strings {
+            Some(strings) => *slot = strings,
+            None => diagnostics.push(Diagnostic::warn(format!("invalid menu.{key} {value}; expected a list of strings"))),
+        }
+    }
+    warn_unknown_keys(table, &["quick", "items", "hidden"], "menu.", diagnostics);
 }
 
 fn read_updates(table: &toml::Table, updates: &mut Updates, diagnostics: &mut Vec<Diagnostic>) {
@@ -1846,6 +1920,24 @@ mod tests {
         "#;
         let parsed = Config::from_toml_str(toml);
         insta::assert_debug_snapshot!(parsed);
+    }
+
+    #[test]
+    fn menu_section_reads_lists_and_rejects_other_values() {
+        let toml = r#"
+            [menu]
+            quick = ["copy_path", "delete"]
+            items = "windows"
+            hidden = ["Enviar para"]
+            [explorer]
+            background_tabs = true
+        "#;
+        let (config, diagnostics) = Config::from_toml_str(toml);
+        assert_eq!(config.menu.quick, vec!["copy_path".to_string(), "delete".to_string()]);
+        assert_eq!(config.menu.items, Menu::default().items, "a string is not a list");
+        assert_eq!(config.menu.hidden, vec!["Enviar para".to_string()]);
+        assert!(config.explorer.background_tabs);
+        assert_eq!(diagnostics.len(), 1, "{diagnostics:?}");
     }
 
     #[test]

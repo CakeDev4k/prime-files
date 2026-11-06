@@ -107,4 +107,10 @@ pub enum PaneEvent {
         side: nohrs_core::config::DockSide,
         size: f32,
     },
+    /// Open a tab on `folder`, selecting `select` in it: the middle button
+    /// or "Open in new tab" on an item.
+    OpenInNewTab {
+        folder: String,
+        select: Option<String>,
+    },
 }

@@ -78,121 +78,194 @@ pub fn render(
         .into_any_element()
 }
 
-// The sidebar as a band: Quick access, the drives and the other places, each
-// a wrapping line of chips under its name.
+// What a cell of the band opens.
+#[derive(Clone)]
+enum BandTarget {
+    Place(Place),
+    Folder(String),
+}
+
+// One cell of the band, already decided: what it shows and what it opens.
+struct BandItem {
+    id: SharedString,
+    icon: AnyElement,
+    name: String,
+    active: bool,
+    target: BandTarget,
+    // How full a drive is, drawn under its name.
+    space: Option<crate::explorer::drives::Space>,
+    // Right click: the place's Windows menu, or a tag's menu.
+    menu: Option<BandMenu>,
+    // Shown after the name, muted: a tag's item count.
+    note: Option<String>,
+    // The cell is a field instead: the tag being named.
+    editing: Option<Entity<gpui_component::input::InputState>>,
+}
+
+#[derive(Clone)]
+enum BandMenu {
+    Place(Place),
+    Tag(u32),
+    NetworkPlace(String),
+}
+
+const BAND_CELL_WIDTH: f32 = 176.0;
+const BAND_ROW: f32 = 30.0;
+const BAND_HEADER: f32 = 24.0;
+const BAND_PADDING: f32 = 8.0;
+
+// The sidebar docked above or below the listing. A wide, short space: the
+// places run in columns, top to bottom and then to the next column, as
+// Explorer's List view lays out files, each group under its name and apart
+// from the next by a line. The wheel slides the band sideways. A taller band
+// simply fits more rows in each column, so nothing wraps into a heap of
+// chips.
 fn render_band(
     page: &mut ExplorerPane,
     places: &crate::explorer::places::Places,
     icon_px: u32,
     cx: &mut Context<ExplorerPane>,
 ) -> impl IntoElement + use<> {
+    let height = super::panels::sidebar_band_height();
+    let rows = (((height - BAND_PADDING * 2.0 - BAND_HEADER) / BAND_ROW).floor() as usize).max(1);
+
+    let place_items = |page: &mut ExplorerPane, members: &[Place], group: &str, cx: &mut Context<ExplorerPane>| {
+        members
+            .iter()
+            .map(|place| band_place(page, place, group, icon_px, cx))
+            .collect::<Vec<_>>()
+    };
+
     let pc_name = places
         .this_pc
         .as_ref()
         .map(|place| place.name.clone())
         .unwrap_or_else(|| t!("Este Computador").to_string());
-    let groups: [(String, Vec<Place>); 3] = [
-        (t!("Acesso rápido").to_string(), places.quick_access.clone()),
-        (pc_name, places.drives.clone()),
-        (String::new(), places.other.clone()),
-    ];
-    let mut band = div().flex().flex_col().gap(px(6.0)).px(px(10.0));
-    for (index, (name, members)) in groups.into_iter().enumerate() {
-        if members.is_empty() {
+    let mut sections: Vec<(String, &'static str, Vec<BandItem>, Option<AnyElement>)> = Vec::new();
+    let quick = place_items(page, &places.quick_access, "quick", cx);
+    sections.push((t!("Acesso rápido").to_string(), "icons/star.svg", quick, None));
+    let mut drives = Vec::new();
+    if let Some(this_pc) = &places.this_pc {
+        drives.push(band_place(page, this_pc, "pc", icon_px, cx));
+    }
+    drives.extend(place_items(page, &places.drives, "drive", cx));
+    sections.push((pc_name, "icons/app-window.svg", drives, None));
+
+    let mut other = place_items(page, &places.other, "other", cx);
+    for address in crate::explorer::network::NetworkPlaces::all(cx) {
+        let active = crate::explorer::same_path(&address, &page.cwd);
+        other.push(BandItem {
+            id: SharedString::from(format!("band-network-{address}")),
+            icon: Icon::new(Icon::empty()).path("icons/server.svg").size_4().text_color(rgb(theme::muted())).into_any_element(),
+            name: crate::explorer::network::display_name(&address),
+            active,
+            target: BandTarget::Folder(address.clone()),
+            space: None,
+            menu: Some(BandMenu::NetworkPlace(address)),
+            note: None,
+            editing: None,
+        });
+    }
+    sections.push((t!("Locais").to_string(), "icons/folder.svg", other, None));
+
+    let counts = Tags::counts(cx);
+    let tags: Vec<BandItem> = Tags::all(cx)
+        .into_iter()
+        .map(|tag| {
+            let location = crate::explorer::tags::location(tag.id);
+            BandItem {
+                id: SharedString::from(format!("band-tag-{}", tag.id)),
+                icon: div().size(px(10.0)).mx(px(3.0)).rounded_full().bg(rgb(tag.color)).into_any_element(),
+                name: tag.name,
+                active: page.cwd == location,
+                target: BandTarget::Folder(location),
+                space: None,
+                menu: Some(BandMenu::Tag(tag.id)),
+                note: counts.get(&tag.id).filter(|count| **count > 0).map(|count| count.to_string()),
+                editing: page
+                    .sidebar
+                    .input
+                    .as_ref()
+                    .filter(|field| field.purpose == SidebarInputPurpose::RenameTag(tag.id))
+                    .map(|field| field.input.clone()),
+            }
+        })
+        .collect();
+    let new_tag = div()
+        .id("band-tag-new")
+        .size(px(18.0))
+        .flex()
+        .items_center()
+        .justify_center()
+        .rounded(px(4.0))
+        .cursor_pointer()
+        .text_color(rgb(theme::muted()))
+        .hover(|style| style.bg(rgb(theme::bg_hover())).text_color(rgb(theme::fg())))
+        .tooltip(|window, cx| gpui_component::tooltip::Tooltip::new(t!("Nova tag")).build(window, cx))
+        .on_click(cx.listener(|this, _, window, cx| {
+            let name = t!("Nova tag").to_string();
+            let id = Tags::create(name.clone(), &[], cx);
+            this.begin_sidebar_input(SidebarInputPurpose::RenameTag(id), name, window, cx);
+        }))
+        .child(Icon::new(IconName::Plus).size_3())
+        .into_any_element();
+    sections.push((t!("Tags").to_string(), "icons/tag.svg", tags, Some(new_tag)));
+
+    let mut band = div().h_full().flex().items_start().px(px(6.0));
+    let mut first = true;
+    for (name, icon, items, extra) in sections {
+        if items.is_empty() && extra.is_none() {
             continue;
         }
-        let chips: Vec<AnyElement> = members
-            .iter()
-            .map(|place| chip(page, place, index, icon_px, cx).into_any_element())
-            .collect();
+        if !first {
+            band = band.child(div().w(px(1.0)).h_full().mx(px(6.0)).flex_shrink_0().bg(rgb(theme::border())));
+        }
+        first = false;
+        let mut columns = div().flex().items_start();
+        let mut items = items.into_iter().peekable();
+        while items.peek().is_some() {
+            let column: Vec<AnyElement> = items.by_ref().take(rows).map(|item| band_cell(item, cx)).collect();
+            columns = columns.child(div().w(px(BAND_CELL_WIDTH)).flex_shrink_0().flex().flex_col().children(column));
+        }
         band = band.child(
             div()
+                .flex_shrink_0()
                 .flex()
-                .items_start()
-                .gap(px(8.0))
+                .flex_col()
                 .child(
                     div()
-                        .w(px(110.0))
-                        .flex_shrink_0()
-                        .pt(px(6.0))
+                        .h(px(BAND_HEADER))
+                        .px(px(8.0))
+                        .flex()
+                        .items_center()
+                        .gap(px(6.0))
                         .text_xs()
+                        .font_weight(FontWeight::SEMIBOLD)
                         .text_color(rgb(theme::muted()))
-                        .overflow_hidden()
-                        .text_ellipsis()
-                        .whitespace_nowrap()
-                        .child(name),
+                        .child(Icon::new(Icon::empty()).path(icon).size_3())
+                        .child(div().whitespace_nowrap().child(name))
+                        .children(extra),
                 )
-                .child(div().flex_1().min_w(px(0.0)).flex().flex_wrap().gap(px(4.0)).children(chips)),
-        );
-    }
-    let tags = Tags::all(cx);
-    if !tags.is_empty() {
-        let chips: Vec<AnyElement> = tags
-            .into_iter()
-            .map(|tag| {
-                let location = crate::explorer::tags::location(tag.id);
-                let active = page.cwd == location;
-                let id = tag.id;
-                div()
-                    .id(SharedString::from(format!("tag-chip-{}", tag.id)))
-                    .h(px(ROW_HEIGHT))
-                    .flex()
-                    .items_center()
-                    .gap(px(6.0))
-                    .px(px(8.0))
-                    .rounded(px(6.0))
-                    .border_1()
-                    .border_color(rgb(theme::border()))
-                    .cursor_pointer()
-                    .when(active, |this| this.bg(rgb(theme::accent_subtle())))
-                    .when(!active, |this| this.hover(|this| this.bg(rgb(theme::bg_hover()))))
-                    .on_click(cx.listener(move |this, _, window, cx| this.change_dir(location.clone(), window, cx)))
-                    .on_mouse_down(
-                        MouseButton::Right,
-                        cx.listener(move |this, _, window, cx| {
-                            cx.stop_propagation();
-                            this.open_tag_menu(id, window, cx);
-                        }),
-                    )
-                    .child(div().size(px(10.0)).rounded_full().bg(rgb(tag.color)))
-                    .child(div().text_sm().whitespace_nowrap().text_color(rgb(theme::fg())).child(tag.name))
-                    .into_any_element()
-            })
-            .collect();
-        band = band.child(
-            div()
-                .flex()
-                .items_start()
-                .gap(px(8.0))
-                .child(
-                    div()
-                        .w(px(110.0))
-                        .flex_shrink_0()
-                        .pt(px(6.0))
-                        .text_xs()
-                        .text_color(rgb(theme::muted()))
-                        .child(t!("Tags")),
-                )
-                .child(div().flex_1().min_w(px(0.0)).flex().flex_wrap().gap(px(4.0)).children(chips)),
+                .child(columns),
         );
     }
     div()
         .id("sidebar")
         .size_full()
         .when(!page.framed.sidebar, |this| this.bg(rgb(theme::bg())))
-        .py(px(8.0))
-        .overflow_y_scroll()
+        .py(px(BAND_PADDING))
+        .overflow_x_scroll()
         .child(band)
 }
 
-// One place as a chip of the band: its icon and name, a click opens it.
-fn chip(
+// A place of the Shell as a cell of the band.
+fn band_place(
     page: &mut ExplorerPane,
     place: &Place,
-    group: usize,
+    group: &str,
     icon_px: u32,
     cx: &mut Context<ExplorerPane>,
-) -> impl IntoElement + use<> {
+) -> BandItem {
     let active = place
         .path
         .as_deref()
@@ -201,41 +274,104 @@ fn chip(
         Some(image) => img(ImageSource::Render(image)).size(px(ICON_SIZE)).flex_shrink_0().into_any_element(),
         None => Icon::new(IconName::Folder).size_4().text_color(rgb(theme::gray_500())).into_any_element(),
     };
-    let opened = place.clone();
-    let menu = place.clone();
+    BandItem {
+        id: SharedString::from(format!("band-{group}-{}", place.parsing_name)),
+        icon,
+        name: place.name.clone(),
+        active,
+        target: BandTarget::Place(place.clone()),
+        space: place.path.as_deref().and_then(|path| crate::explorer::drives::space(path, cx)),
+        menu: Some(BandMenu::Place(place.clone())),
+        note: None,
+        editing: None,
+    }
+}
+
+fn band_cell(item: BandItem, cx: &mut Context<ExplorerPane>) -> AnyElement {
+    if let Some(input) = item.editing {
+        return div()
+            .h(px(BAND_ROW))
+            .mx(px(2.0))
+            .flex()
+            .items_center()
+            .child(gpui_component::input::Input::new(&input).small())
+            .into_any_element();
+    }
+    let opened = item.target.clone();
+    let in_tab = item.target.clone();
+    let menu = item.menu.clone();
+    let tip = item.name.clone();
+    let name = div()
+        .min_w(px(0.0))
+        .text_sm()
+        .overflow_hidden()
+        .text_ellipsis()
+        .whitespace_nowrap()
+        .text_color(rgb(theme::fg()))
+        .child(item.name);
     div()
-        .id(SharedString::from(format!("chip-{group}-{}", place.parsing_name)))
-        .h(px(ROW_HEIGHT))
-        .max_w(px(220.0))
+        .id(item.id)
+        .h(px(BAND_ROW))
+        .mx(px(2.0))
+        .px(px(8.0))
         .flex()
         .items_center()
-        .gap(px(6.0))
-        .px(px(8.0))
+        .gap(px(8.0))
         .rounded(px(6.0))
-        .border_1()
-        .border_color(rgb(theme::border()))
         .cursor_pointer()
-        .when(active, |this| this.bg(rgb(theme::accent_subtle())))
-        .when(!active, |this| this.hover(|this| this.bg(rgb(theme::bg_hover()))))
-        .on_click(cx.listener(move |this, _, window, cx| this.open_place(&opened, window, cx)))
+        .when(item.active, |this| this.bg(rgb(theme::accent_subtle())))
+        .when(!item.active, |this| this.hover(|this| this.bg(rgb(theme::bg_hover()))))
+        .tooltip(move |window, cx| gpui_component::tooltip::Tooltip::new(tip.clone()).build(window, cx))
+        .on_click(cx.listener(move |this, _, window, cx| match &opened {
+            BandTarget::Place(place) => this.open_place(place, window, cx),
+            BandTarget::Folder(folder) => this.change_dir(folder.clone(), window, cx),
+        }))
         .on_mouse_down(
-            MouseButton::Right,
-            cx.listener(move |this, _, window, cx| {
+            MouseButton::Middle,
+            cx.listener(move |this, _, _, cx| {
                 cx.stop_propagation();
-                this.open_place_menu(menu.clone(), window, cx);
+                match &in_tab {
+                    BandTarget::Place(place) => {
+                        if let Some(path) = &place.path {
+                            this.open_path_in_new_tab(path, true, cx);
+                        }
+                    }
+                    BandTarget::Folder(folder) => this.open_path_in_new_tab(folder, true, cx),
+                }
             }),
         )
-        .child(icon)
-        .child(
-            div()
-                .min_w(px(0.0))
-                .text_sm()
-                .overflow_hidden()
-                .text_ellipsis()
-                .whitespace_nowrap()
-                .text_color(rgb(theme::fg()))
-                .child(place.name.clone()),
-        )
+        .when_some(menu, |this, menu| {
+            this.on_mouse_down(
+                MouseButton::Right,
+                cx.listener(move |this, _, window, cx| {
+                    cx.stop_propagation();
+                    match &menu {
+                        BandMenu::Place(place) => this.open_place_menu(place.clone(), window, cx),
+                        BandMenu::Tag(tag) => this.open_tag_menu(*tag, window, cx),
+                        BandMenu::NetworkPlace(address) => this.open_network_place_menu(address.clone(), window, cx),
+                    }
+                }),
+            )
+        })
+        .child(div().flex_shrink_0().child(item.icon))
+        .child(div().flex_1().min_w(px(0.0)).flex().child(name))
+        // A drive: how full it is, under its name, as This PC's cards. Placed
+        // on the cell rather than in a column with the name: text in a flex
+        // column is measured at its narrowest and came out as "…".
+        .when_some(item.space, |this, space| {
+            this.relative().pb(px(6.0)).child(
+                div()
+                    .absolute()
+                    .left(px(32.0))
+                    .right(px(10.0))
+                    .bottom(px(3.0))
+                    .child(crate::explorer::view::listing::usage_bar(Some(space), 3.0)),
+            )
+        })
+        .when_some(item.note, |this, note| {
+            this.child(div().flex_shrink_0().text_xs().text_color(rgb(theme::muted())).child(note))
+        })
+        .into_any_element()
 }
 
 // The places added by hand, then the row (or field) to add another.
@@ -506,6 +642,15 @@ fn row(
         .when(active, |this| this.bg(rgb(theme::accent_subtle())))
         .when(!active, |this| this.hover(|this| this.bg(rgb(theme::bg_hover()))))
         .on_click(cx.listener(move |this, _, window, cx| this.open_place(&opened, window, cx)))
+        .when_some(place.path.clone(), |this, path| {
+            this.on_mouse_down(
+                MouseButton::Middle,
+                cx.listener(move |this, _, _, cx| {
+                    cx.stop_propagation();
+                    this.open_path_in_new_tab(&path, true, cx);
+                }),
+            )
+        })
         .on_mouse_down(
             MouseButton::Right,
             cx.listener(move |this, _, window, cx| {

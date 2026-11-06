@@ -161,6 +161,13 @@ pub(crate) fn sidebar_width() -> f32 {
     ARRANGEMENT.get().sizes[Panel::Sidebar.index()][0].clamp(min, max)
 }
 
+/// The height the sidebar has as a band, which decides how many rows of
+/// places each of its columns holds.
+pub(crate) fn sidebar_band_height() -> f32 {
+    let (min, max) = Panel::Sidebar.range(false);
+    ARRANGEMENT.get().sizes[Panel::Sidebar.index()][1].clamp(min, max)
+}
+
 /// What a drag out of an edge can open there, each offered as a bubble.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Opening {

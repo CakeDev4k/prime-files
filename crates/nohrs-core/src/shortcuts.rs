@@ -19,6 +19,7 @@ use std::sync::{OnceLock, RwLock};
 #[allow(missing_docs)]
 pub enum Action {
     Copy,
+    CopyPath,
     Cut,
     Paste,
     Rename,
@@ -77,6 +78,7 @@ const OPEN: &str = crate::k!("Abrir em outro programa");
 /// Every command, in the order the settings page lists them.
 pub const ACTIONS: &[ActionInfo] = &[
     info(Action::Copy, "copy", FILES, crate::k!("Copiar"), &["ctrl-c"]),
+    info(Action::CopyPath, "copy_path", FILES, crate::k!("Copiar como caminho"), &["ctrl-shift-c"]),
     info(Action::Cut, "cut", FILES, crate::k!("Recortar"), &["ctrl-x"]),
     info(Action::Paste, "paste", FILES, crate::k!("Colar"), &["ctrl-v"]),
     info(Action::Rename, "rename", FILES, crate::k!("Renomear"), &["f2"]),
@@ -405,6 +407,7 @@ mod tests {
         assert_eq!(resolve(false, false, false, "delete"), Some(Action::Trash));
         // `+` with the Shift the layout needs for it.
         assert_eq!(resolve(true, false, true, "+"), Some(Action::ZoomIn));
-        assert_eq!(resolve(true, false, true, "c"), None);
+        assert_eq!(resolve(true, false, true, "c"), Some(Action::CopyPath));
+        assert_eq!(resolve(true, true, false, "c"), None);
     }
 }

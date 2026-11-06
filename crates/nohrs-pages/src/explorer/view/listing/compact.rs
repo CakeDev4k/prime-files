@@ -158,6 +158,13 @@ fn render_item(
         .when(selected, |this| this.bg(rgb(theme::accent_subtle())))
         .when(!selected, |this| this.hover(|this| this.bg(rgb(theme::bg_hover()))))
         .on_mouse_down(
+            gpui::MouseButton::Middle,
+            cx.listener(move |this, _: &gpui::MouseDownEvent, _window, cx| {
+                cx.stop_propagation();
+                this.open_entry_in_new_tab(ix, cx);
+            }),
+        )
+        .on_mouse_down(
             MouseButton::Right,
             cx.listener(move |this, event: &MouseDownEvent, window, cx| {
                 cx.stop_propagation();

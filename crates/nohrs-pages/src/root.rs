@@ -195,6 +195,7 @@ impl RootView {
             config::ThemeMode::System => GpuiThemeMode::from(window.appearance()),
         };
         crate::explorer::note_theme_mode(config.theme.mode);
+        crate::explorer::context_menu::note_menu(&config.menu);
         // Every view reads the language while it renders, so a change only
         // needs all windows to draw again (the settings page, the menus, the
         // title bar — not only the explorer this function updates).
@@ -558,6 +559,7 @@ impl RootView {
             AccountMenuCommand::Settings => SettingsSection::General,
             AccountMenuCommand::Keymap => SettingsSection::Shortcuts,
             AccountMenuCommand::Themes => SettingsSection::Appearance,
+            AccountMenuCommand::Menu => SettingsSection::Menu,
         };
         self.settings.update(cx, |page, cx| page.show_section(section, cx));
         self.set_page(PageKind::Settings, cx);

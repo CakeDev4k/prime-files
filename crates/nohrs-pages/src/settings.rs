@@ -37,6 +37,8 @@ pub enum SettingsSection {
     Compact,
     /// What a folder shows and in which order.
     Files,
+    /// The file menu: what it shows and in which order.
+    Menu,
     /// Sounds and videos: hover playback, preview, waveforms.
     Media,
     /// The whole-computer search.
@@ -50,11 +52,12 @@ pub enum SettingsSection {
 }
 
 impl SettingsSection {
-    const ALL: [Self; 9] = [
+    const ALL: [Self; 10] = [
         Self::General,
         Self::Appearance,
         Self::Compact,
         Self::Files,
+        Self::Menu,
         Self::Media,
         Self::Search,
         Self::Integrations,
@@ -68,6 +71,7 @@ impl SettingsSection {
             Self::Appearance => t!("Aparência"),
             Self::Compact => t!("Modo compacto"),
             Self::Files => t!("Arquivos e pastas"),
+            Self::Menu => t!("Menu do botão direito"),
             Self::Media => t!("Mídia"),
             Self::Search => t!("Busca"),
             Self::Integrations => t!("Integração com o Windows"),
@@ -82,6 +86,7 @@ impl SettingsSection {
             Self::Appearance => t!("Tema, cores e como a lista se move."),
             Self::Compact => t!("Esconda as barras e deixe só os arquivos na tela."),
             Self::Files => t!("O que aparece em cada pasta e em que ordem."),
+            Self::Menu => t!("Escolha o que aparece ao clicar com o botão direito num arquivo, e em que ordem."),
             Self::Media => t!("Áudio e vídeo: ouvir passando o mouse, tocar no visualizador e ver a forma de onda."),
             Self::Search => t!("Encontrar qualquer arquivo do computador pelo nome."),
             Self::Integrations => t!("Abrir no Prime Files as pastas do Windows e de outros programas."),
@@ -98,6 +103,7 @@ impl SettingsSection {
             Self::Appearance => "icons/palette.svg",
             Self::Compact => "icons/layout-dashboard.svg",
             Self::Files => "icons/folder-open.svg",
+            Self::Menu => "icons/menu-square.svg",
             Self::Media => "icons/music.svg",
             Self::Search => "icons/search.svg",
             Self::Integrations => "icons/app-window.svg",
@@ -142,6 +148,8 @@ enum Pick {
     ResetAllShortcuts,
     // Starts Prime Files minimized at sign-in, or stops it.
     StartWithWindows(bool),
+    // Writes a whole file-menu arrangement: its row of icons and its items.
+    MenuPreset(Vec<&'static str>, Vec<&'static str>),
 }
 
 // One setting: its name, what it does, and the control that changes it.
@@ -382,6 +390,26 @@ impl SettingsPage {
                 self.edit_keybindings(vec![(shortcuts::info_of(action).id, None)], None, cx);
             }
             Pick::StartWithWindows(enable) => self.set_start_with_windows(enable, cx),
+            Pick::MenuPreset(quick, items) => {
+                let quick: Vec<String> = quick.iter().map(|id| id.to_string()).collect();
+                let items: Vec<String> = items.iter().map(|id| id.to_string()).collect();
+                // One after the other: each write reads and rewrites the file.
+                let path = config::paths::config_file();
+                let write = cx.background_spawn(async move {
+                    config::set_value(&path, "menu", "quick", &toml_list(&quick))?;
+                    config::set_value(&path, "menu", "items", &toml_list(&items))
+                });
+                cx.spawn(async move |this: gpui::WeakEntity<Self>, cx| {
+                    if let Err(error) = write.await {
+                        this.update(cx, |page, cx| {
+                            page.status = Some((tf!("Não foi possível salvar {section}.{key}: {error}", section = "menu", key = "items", error = error), true));
+                            cx.notify();
+                        })
+                        .log_err();
+                    }
+                })
+                .detach();
+            }
             Pick::ResetAllShortcuts => {
                 self.recording = None;
                 let edits = shortcuts::ACTIONS.iter().map(|info| (info.id, None)).collect();
@@ -576,6 +604,7 @@ impl SettingsPage {
             SettingsSection::Appearance => self.appearance(cx),
             SettingsSection::Compact => self.compact(cx),
             SettingsSection::Files => self.files(cx),
+            SettingsSection::Menu => self.menu(cx),
             SettingsSection::Media => self.media(cx),
             SettingsSection::Search => self.search_section(cx),
             SettingsSection::Integrations => self.integrations(cx),
@@ -612,6 +641,12 @@ impl SettingsPage {
                         ),
                     )
                     .reset(("explorer", "split_direction"), explorer.split_direction == SplitDirection::Vertical, "\"vertical\""),
+                    Row::hint(
+                        t!("Abas novas ao fundo"),
+                        t!("O botão do meio e \"Abrir em nova aba\" abrem a aba sem sair da atual, como num navegador."),
+                        self.switch("background-tabs", explorer.background_tabs, ("explorer", "background_tabs"), cx),
+                    )
+                    .reset(("explorer", "background_tabs"), !explorer.background_tabs, "false"),
                     Row::hint(
                         t!("Painéis sincronizados"),
                         t!("Navegar num painel leva o outro para a mesma pasta."),
@@ -709,6 +744,231 @@ impl SettingsPage {
         )
         .wide()
         .reset(("ui", "language"), chosen.is_none(), "\"auto\"")
+    }
+
+    fn menu(&self, cx: &mut Context<Self>) -> Vec<Group> {
+        let menu = &self.config.menu;
+        let default = config::Menu::default();
+        let minimal = (
+            vec!["copy", "copy_path", "rename", "delete"],
+            vec!["new_tab", "more_options", "customize"],
+        );
+        let complete = (config::MENU_QUICK_ALL.to_vec(), vec![
+            "new_tab", "windows", "copy_path", "properties", "tags", "more_options", "customize",
+        ]);
+        let is = |quick: &[&str], items: &[&str]| {
+            menu.quick.iter().map(String::as_str).eq(quick.iter().copied())
+                && menu.items.iter().map(String::as_str).eq(items.iter().copied())
+        };
+        let presets: Vec<(&'static str, bool, Pick)> = vec![
+            (t!("Minimalista"), is(&minimal.0, &minimal.1), Pick::MenuPreset(minimal.0.clone(), minimal.1.clone())),
+            (t!("Padrão"), *menu == default || is(config::MENU_QUICK_DEFAULT, config::MENU_ITEMS_DEFAULT), Pick::MenuPreset(config::MENU_QUICK_DEFAULT.to_vec(), config::MENU_ITEMS_DEFAULT.to_vec())),
+            (t!("Completo"), is(&complete.0, &complete.1), Pick::MenuPreset(complete.0.clone(), complete.1.clone())),
+        ];
+        let mut groups = vec![
+            Group::new(vec![
+                Row::hint(
+                    t!("Estilo do menu"),
+                    t!("Um ponto de partida; depois ajuste cada item abaixo."),
+                    self.chips("menu-preset", &presets, false, cx),
+                ),
+            ]),
+            Group::titled(
+                t!("Ícones no topo"),
+                vec![
+                    Row::hint(
+                        t!("Botões rápidos"),
+                        t!("A fileira de ícones em cima do menu. Ligue, desligue e use as setas para mudar a ordem."),
+                        self.order_editor("menu-quick", "quick", &menu.quick, config::MENU_QUICK_ALL, cx),
+                    )
+                    .wide()
+                    .reset(("menu", "quick"), menu.quick == default.quick, "[\"cut\", \"copy\", \"copy_path\", \"rename\", \"delete\"]"),
+                ],
+            ),
+            Group::titled(
+                t!("Itens"),
+                vec![
+                    Row::hint(
+                        t!("Itens do menu"),
+                        t!("\"Itens do Windows\" são os do Windows e dos programas instalados (Abrir com, Enviar para, 7-Zip…). Desligue para um menu curto, só com o que está aqui."),
+                        self.order_editor("menu-items", "items", &menu.items, config::MENU_ITEMS_ALL, cx),
+                    )
+                    .wide()
+                    .reset(
+                        ("menu", "items"),
+                        menu.items == default.items,
+                        "[\"new_tab\", \"windows\", \"copy_path\", \"tags\", \"more_options\", \"customize\"]",
+                    ),
+                ],
+            ),
+        ];
+        let hidden = if menu.hidden.is_empty() {
+            div()
+                .text_xs()
+                .text_color(rgb(theme::muted()))
+                .child(t!("Nenhum. Clique com o botão direito num item do Windows, no menu, para escondê-lo."))
+                .into_any_element()
+        } else {
+            div()
+                .flex()
+                .flex_wrap()
+                .gap(px(6.0))
+                .children(menu.hidden.iter().enumerate().map(|(ix, label)| {
+                    let rest: Vec<String> =
+                        menu.hidden.iter().enumerate().filter(|(other, _)| *other != ix).map(|(_, label)| label.clone()).collect();
+                    let pick = Pick::Config("menu", "hidden", SharedString::from(toml_list(&rest)));
+                    div()
+                        .id(ElementId::NamedInteger("menu-hidden".into(), ix as u64))
+                        .h(px(26.0))
+                        .pl(px(10.0))
+                        .pr(px(6.0))
+                        .flex()
+                        .items_center()
+                        .gap(px(6.0))
+                        .rounded(px(6.0))
+                        .border_1()
+                        .border_color(rgb(theme::border()))
+                        .text_sm()
+                        .text_color(rgb(theme::fg_secondary()))
+                        .cursor_pointer()
+                        .hover(|style| style.bg(rgb(theme::bg_hover())).text_color(rgb(theme::fg())))
+                        .tooltip(|window, cx| gpui_component::tooltip::Tooltip::new(t!("Mostrar de novo")).build(window, cx))
+                        .on_click(cx.listener(move |page, _event, _window, cx| page.pick(pick.clone(), cx)))
+                        .child(label.clone())
+                        .child(Icon::new(Icon::empty()).path("icons/close.svg").size_3())
+                }))
+                .into_any_element()
+        };
+        groups.push(Group::titled(
+            t!("Itens do Windows escondidos"),
+            vec![Row::hint(
+                t!("Escondidos"),
+                t!("Clique com o botão direito num item do Windows, no menu, para escondê-lo. Clique aqui para trazê-lo de volta."),
+                hidden,
+            )
+            .wide()],
+        ));
+        groups
+    }
+
+    // A list of every id `all` knows: the chosen ones first, in their order,
+    // each with a switch and arrows; the rest after them, off. Every change
+    // writes the whole list to `[menu] key`.
+    fn order_editor(&self, id: &'static str, key: &'static str, chosen: &[String], all: &[&str], cx: &mut Context<Self>) -> Div {
+        let chosen: Vec<String> = chosen
+            .iter()
+            .filter(|item| all.contains(&item.as_str()))
+            .fold(Vec::new(), |mut seen, item| {
+                if !seen.contains(item) {
+                    seen.push(item.clone());
+                }
+                seen
+            });
+        let rest: Vec<String> = all.iter().filter(|item| !chosen.iter().any(|on| on == *item)).map(|item| item.to_string()).collect();
+        let write = move |list: Vec<String>| Pick::Config("menu", key, SharedString::from(toml_list(&list)));
+        let count = chosen.len();
+        let mut rows: Vec<AnyElement> = Vec::new();
+        for (ix, item) in chosen.iter().chain(rest.iter()).enumerate() {
+            let on = ix < count;
+            let Some((label, icon)) = crate::explorer::context_menu::menu_entry_info(item) else {
+                continue;
+            };
+            let toggled = if on {
+                chosen.iter().filter(|other| *other != item).cloned().collect()
+            } else {
+                let mut list = chosen.clone();
+                list.push(item.clone());
+                list
+            };
+            let arrow = |direction: i32, cx: &mut Context<Self>| -> AnyElement {
+                let target = ix as i32 + direction;
+                let usable = on && target >= 0 && (target as usize) < count;
+                let mut moved = chosen.clone();
+                if usable {
+                    moved.swap(ix, target as usize);
+                }
+                let pick = write(moved);
+                div()
+                    .id(ElementId::NamedInteger(SharedString::from(format!("{id}-{}", if direction < 0 { "up" } else { "down" })), ix as u64))
+                    .size(px(24.0))
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .rounded(px(5.0))
+                    .text_color(rgb(if usable { theme::fg_secondary() } else { theme::border() }))
+                    .when(usable, |this| {
+                        this.cursor_pointer()
+                            .hover(|style| style.bg(rgb(theme::bg_hover())).text_color(rgb(theme::fg())))
+                            .on_click(cx.listener(move |page, _event, _window, cx| page.pick(pick.clone(), cx)))
+                    })
+                    .child(
+                        Icon::new(Icon::empty())
+                            .path(if direction < 0 { "icons/chevron-up.svg" } else { "icons/chevron-down.svg" })
+                            .size_4(),
+                    )
+                    .into_any_element()
+            };
+            let up = arrow(-1, cx);
+            let down = arrow(1, cx);
+            let pick = write(toggled);
+            rows.push(
+                div()
+                    .h(px(34.0))
+                    .px(px(8.0))
+                    .flex()
+                    .items_center()
+                    .gap(px(10.0))
+                    .rounded(px(6.0))
+                    .when(ix + 1 < count + rest.len(), |this| this.border_b_1().border_color(rgb(theme::border())))
+                    .child(
+                        div()
+                            .id(ElementId::NamedInteger(SharedString::from(format!("{id}-toggle")), ix as u64))
+                            .size(px(18.0))
+                            .flex()
+                            .flex_shrink_0()
+                            .items_center()
+                            .justify_center()
+                            .rounded(px(4.0))
+                            .border_1()
+                            .cursor_pointer()
+                            .map(|this| {
+                                if on {
+                                    this.bg(rgb(theme::accent())).border_color(rgb(theme::accent())).text_color(rgb(theme::accent_fg()))
+                                } else {
+                                    this.border_color(rgb(theme::border_hover()))
+                                }
+                            })
+                            .on_click(cx.listener(move |page, _event, _window, cx| page.pick(pick.clone(), cx)))
+                            .when(on, |this| this.child(Icon::new(Icon::empty()).path("icons/check.svg").size_3())),
+                    )
+                    .child(
+                        Icon::new(Icon::empty())
+                            .path(icon)
+                            .size_4()
+                            .text_color(rgb(if on { theme::fg() } else { theme::muted() })),
+                    )
+                    .child(
+                        div()
+                            .flex_1()
+                            .min_w(px(0.0))
+                            .text_sm()
+                            .text_color(rgb(if on { theme::fg() } else { theme::muted() }))
+                            .child(label),
+                    )
+                    .when(on, |this| this.child(up).child(down))
+                    .into_any_element(),
+            );
+        }
+        div()
+            .flex()
+            .flex_col()
+            .max_w(px(460.0))
+            .p(px(4.0))
+            .rounded(px(8.0))
+            .bg(rgb(theme::bg()))
+            .border_1()
+            .border_color(rgb(theme::border()))
+            .children(rows)
     }
 
     fn appearance(&self, cx: &mut Context<Self>) -> Vec<Group> {
@@ -1879,6 +2139,15 @@ impl SettingsPage {
 
 // Lowercase without accents, so "audio" finds "Áudio" and "configuracao"
 // finds "configuração".
+// A list of strings in TOML: `["a", "b"]`.
+fn toml_list(items: &[String]) -> String {
+    let quoted: Vec<String> = items
+        .iter()
+        .map(|item| format!("\"{}\"", item.replace('\\', "\\\\").replace('"', "\\\"")))
+        .collect();
+    format!("[{}]", quoted.join(", "))
+}
+
 fn fold(text: &str) -> String {
     text.to_lowercase()
         .chars()

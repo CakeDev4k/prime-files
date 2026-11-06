@@ -12,6 +12,7 @@
 //! The language is a process-wide setting read at render time, so changing
 //! it only needs the windows to repaint.
 
+mod arabic;
 mod extra;
 mod strings;
 
@@ -40,12 +41,14 @@ pub enum Lang {
     Ja,
     /// 简体中文.
     Zh,
+    /// العربية — written right to left; the text system orders each line.
+    Ar,
 }
 
 impl Lang {
     /// Every language, in the order the settings page lists them.
-    pub const ALL: [Lang; 9] =
-        [Lang::Pt, Lang::En, Lang::Es, Lang::Fr, Lang::De, Lang::It, Lang::Ru, Lang::Ja, Lang::Zh];
+    pub const ALL: [Lang; 10] =
+        [Lang::Pt, Lang::En, Lang::Es, Lang::Fr, Lang::De, Lang::It, Lang::Ru, Lang::Ja, Lang::Zh, Lang::Ar];
 
     /// The value `ui.language` stores for this language.
     pub fn code(self) -> &'static str {
@@ -59,6 +62,7 @@ impl Lang {
             Lang::Ru => "ru",
             Lang::Ja => "ja",
             Lang::Zh => "zh-CN",
+            Lang::Ar => "ar",
         }
     }
 
@@ -75,6 +79,7 @@ impl Lang {
             Lang::Ru => "Русский",
             Lang::Ja => "日本語",
             Lang::Zh => "简体中文",
+            Lang::Ar => "العربية",
         }
     }
 
@@ -93,6 +98,7 @@ impl Lang {
             "ru" => Some(Lang::Ru),
             "ja" => Some(Lang::Ja),
             "zh" => Some(Lang::Zh),
+            "ar" => Some(Lang::Ar),
             _ => None,
         }
     }
@@ -112,6 +118,10 @@ impl Lang {
         const RUSSIAN: &[&str] = &["RU", "BY", "KZ", "KG"];
         const JAPANESE: &[&str] = &["JP"];
         const CHINESE: &[&str] = &["CN", "SG"];
+        const ARABIC: &[&str] = &[
+            "SA", "AE", "EG", "MA", "DZ", "TN", "LY", "IQ", "JO", "LB", "SY", "KW", "QA", "BH", "OM", "YE",
+            "SD", "PS", "MR",
+        ];
         let country = country.trim().to_ascii_uppercase();
         let country = country.as_str();
         [
@@ -123,6 +133,7 @@ impl Lang {
             (RUSSIAN, Lang::Ru),
             (JAPANESE, Lang::Ja),
             (CHINESE, Lang::Zh),
+            (ARABIC, Lang::Ar),
         ]
         .into_iter()
         .find(|(countries, _)| countries.contains(&country))
@@ -146,7 +157,7 @@ impl Lang {
             Lang::Ru => Some(3),
             Lang::Ja => Some(4),
             Lang::Zh => Some(5),
-            Lang::Pt | Lang::En | Lang::Es => None,
+            Lang::Pt | Lang::En | Lang::Es | Lang::Ar => None,
         }
     }
 }
@@ -206,6 +217,11 @@ fn extra_table() -> &'static HashMap<&'static str, &'static [&'static str; 6]> {
     TABLE.get_or_init(|| extra::EXTRA.iter().map(|(pt, row)| (*pt, row)).collect())
 }
 
+fn arabic_table() -> &'static HashMap<&'static str, &'static str> {
+    static TABLE: OnceLock<HashMap<&'static str, &'static str>> = OnceLock::new();
+    TABLE.get_or_init(|| arabic::ARABIC.iter().copied().collect())
+}
+
 /// `key` in a given language. A language missing the row falls back to
 /// English, which more people read than Portuguese.
 pub fn tr_in(lang: Lang, key: &'static str) -> &'static str {
@@ -213,6 +229,10 @@ pub fn tr_in(lang: Lang, key: &'static str) -> &'static str {
         Lang::Pt => key,
         Lang::En => table().get(key).map_or(key, |row| row.0),
         Lang::Es => table().get(key).map_or(key, |row| row.1),
+        Lang::Ar => match arabic_table().get(key) {
+            Some(text) => text,
+            None => tr_in(Lang::En, key),
+        },
         other => match other.extra_column().and_then(|column| extra_table().get(key)?.get(column)) {
             Some(text) => text,
             None => tr_in(Lang::En, key),
@@ -395,6 +415,27 @@ mod tests {
     }
 
     #[test]
+    fn every_row_has_arabic_with_its_placeholders() {
+        let arabic: std::collections::HashMap<&str, &str> = arabic::ARABIC.iter().copied().collect();
+        assert_eq!(arabic.len(), arabic::ARABIC.len(), "duplicated row in i18n/arabic.rs");
+        let mut missing = Vec::new();
+        for &(pt, _, _) in strings::STRINGS {
+            match arabic.get(pt) {
+                Some(text) => {
+                    assert!(!text.trim().is_empty(), "empty Arabic for {pt:?}");
+                    assert_eq!(placeholders(pt), placeholders(text), "placeholders differ: {pt:?} -> {text:?}");
+                }
+                None => missing.push(pt),
+            }
+        }
+        assert!(missing.is_empty(), "no row in i18n/arabic.rs for:
+{missing:#?}");
+        for (pt, _) in arabic::ARABIC {
+            assert!(strings::STRINGS.iter().any(|row| row.0 == *pt), "row in arabic.rs without one in strings.rs: {pt:?}");
+        }
+    }
+
+    #[test]
     fn languages_round_trip_through_their_stored_number() {
         for lang in Lang::ALL {
             assert_eq!(Lang::from_u8(lang.as_u8()), lang);
@@ -432,6 +473,8 @@ mod tests {
         assert_eq!(Lang::for_country("br"), Some(Lang::Pt));
         assert_eq!(Lang::for_country("AR"), Some(Lang::Es));
         assert_eq!(Lang::for_country("US"), None);
+        assert_eq!(Lang::parse("ar-SA"), Some(Lang::Ar));
+        assert_eq!(Lang::for_country("EG"), Some(Lang::Ar));
     }
 
     #[test]

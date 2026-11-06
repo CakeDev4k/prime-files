@@ -136,6 +136,11 @@
     "Explorer": {
       "description": "Split-view and pane settings (see `docs/explorer-essentials.md` §3).",
       "properties": {
+        "background_tabs": {
+          "default": false,
+          "description": "Whether a tab opened with the middle button (or \"Open in new tab\")\nstays behind the current one, as in a browser, instead of being shown.",
+          "type": "boolean"
+        },
         "restore_tabs": {
           "default": true,
           "description": "When enabled, the previous session's tabs are restored on restart (§4).",
@@ -270,6 +275,49 @@
           "default": false,
           "description": "Tabs in a column down the left of the window, as in Zen Browser,\ninstead of a row along the top.",
           "type": "boolean"
+        }
+      },
+      "type": "object"
+    },
+    "Menu": {
+      "description": "A file's right-click menu, as the person arranged it. Ids the build does\nnot know are dropped when the menu is drawn, so an older build reading a\nnewer file still shows a menu.",
+      "properties": {
+        "hidden": {
+          "default": [],
+          "description": "Windows entries hidden by their label, as the menu shows it.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "items": {
+          "default": [
+            "new_tab",
+            "windows",
+            "copy_path",
+            "tags",
+            "more_options",
+            "customize"
+          ],
+          "description": "The entries under the row, in order: `new_tab`, `copy_path`, `tags`,\n`windows` (every entry Windows and its programs add), `more_options`,\n`customize`. Leaving `windows` out gives a short menu of Prime Files'\nown entries.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "quick": {
+          "default": [
+            "cut",
+            "copy",
+            "copy_path",
+            "rename",
+            "delete"
+          ],
+          "description": "The icons in the row on top, in order: `cut`, `copy`, `copy_path`,\n`rename`, `delete`, `new_tab`, `properties`.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
         }
       },
       "type": "object"
@@ -439,7 +487,7 @@
         },
         "language": {
           "default": "auto",
-          "description": "Interface language: `\"auto\"` follows the Windows regional format\n(then the country), or one of `\"pt-BR\"`, `\"en\"`, `\"es\"`, `\"fr\"`, `\"de\"`,\n`\"it\"`, `\"ru\"`, `\"ja\"`, `\"zh-CN\"`.",
+          "description": "Interface language: `\"auto\"` follows the Windows regional format\n(then the country), or one of `\"pt-BR\"`, `\"en\"`, `\"es\"`, `\"fr\"`, `\"de\"`,\n`\"it\"`, `\"ru\"`, `\"ja\"`, `\"zh-CN\"`, `\"ar\"`.",
           "type": "string"
         },
         "name_lines": {
@@ -519,6 +567,7 @@
     "explorer": {
       "$ref": "#/$defs/Explorer",
       "default": {
+        "background_tabs": false,
         "restore_tabs": true,
         "reveal_from_other_apps": true,
         "split_direction": "vertical",
@@ -560,6 +609,28 @@
         "vertical_tabs": false
       },
       "description": "Where the sidebar, preview and terminal dock, and the tabs' layout."
+    },
+    "menu": {
+      "$ref": "#/$defs/Menu",
+      "default": {
+        "hidden": [],
+        "items": [
+          "new_tab",
+          "windows",
+          "copy_path",
+          "tags",
+          "more_options",
+          "customize"
+        ],
+        "quick": [
+          "cut",
+          "copy",
+          "copy_path",
+          "rename",
+          "delete"
+        ]
+      },
+      "description": "What a file's right-click menu shows, and in which order."
     },
     "plugins": {
       "$ref": "#/$defs/Plugins",

@@ -28,6 +28,7 @@ expression: parsed
             synced_panes: false,
             restore_tabs: true,
             reveal_from_other_apps: true,
+            background_tabs: false,
         },
         compact: Compact {
             enabled: false,
@@ -49,6 +50,24 @@ expression: parsed
             terminal: Bottom,
             vertical_tabs: false,
             move_grips: false,
+        },
+        menu: Menu {
+            quick: [
+                "cut",
+                "copy",
+                "copy_path",
+                "rename",
+                "delete",
+            ],
+            items: [
+                "new_tab",
+                "windows",
+                "copy_path",
+                "tags",
+                "more_options",
+                "customize",
+            ],
+            hidden: [],
         },
         updates: Updates {
             automatic: true,

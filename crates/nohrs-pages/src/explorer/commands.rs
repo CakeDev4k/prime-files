@@ -32,6 +32,7 @@ impl ExplorerPane {
     pub(crate) fn run_shortcut(&mut self, action: Action, window: &mut Window, cx: &mut Context<Self>) -> bool {
         match action {
             Action::Copy => self.copy_selection(cx),
+            Action::CopyPath => self.copy_paths_as_text(cx),
             Action::Cut => self.cut_selection(cx),
             Action::Paste => self.paste_into_cwd(window, cx),
             Action::Rename => {

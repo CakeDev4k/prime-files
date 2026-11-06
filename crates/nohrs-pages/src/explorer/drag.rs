@@ -264,6 +264,36 @@ mod platform {
     };
     use windows::core::HSTRING;
 
+    /// The Properties window Explorer opens for these items: one file's, or
+    /// the combined one for several.
+    pub fn properties(paths: &[PathBuf]) -> windows::core::Result<()> {
+        with_data_object(paths, |data| unsafe { windows::Win32::UI::Shell::SHMultiFileProperties(data, 0) })
+    }
+
+    fn with_data_object(
+        paths: &[PathBuf],
+        run: impl FnOnce(&IDataObject) -> windows::core::Result<()>,
+    ) -> windows::core::Result<()> {
+        let mut pidls: Vec<*mut ITEMIDLIST> = Vec::with_capacity(paths.len());
+        let result = (|| {
+            for path in paths {
+                let mut pidl = std::ptr::null_mut();
+                unsafe { SHParseDisplayName(&HSTRING::from(path.as_os_str()), None, &mut pidl, 0, None)? };
+                pidls.push(pidl);
+            }
+            let items: Vec<*const ITEMIDLIST> = pidls.iter().map(|pidl| pidl.cast_const()).collect();
+            let data: IDataObject = unsafe {
+                let array = SHCreateShellItemArrayFromIDLists(&items)?;
+                array.BindToHandler(None, &BHID_DataObject)?
+            };
+            run(&data)
+        })();
+        for pidl in pidls {
+            unsafe { ILFree(Some(pidl.cast_const())) };
+        }
+        result
+    }
+
     pub fn drag(hwnd: i64, paths: &[PathBuf]) -> windows::core::Result<()> {
         let mut pidls: Vec<*mut ITEMIDLIST> = Vec::with_capacity(paths.len());
         let result = (|| {
@@ -301,6 +331,10 @@ mod platform {
     pub fn drag(_hwnd: i64, _paths: &[PathBuf]) -> Result<(), std::io::Error> {
         Ok(())
     }
+
+    pub fn properties(_paths: &[PathBuf]) -> Result<(), std::io::Error> {
+        Ok(())
+    }
 }
 
 #[cfg(test)]
@@ -314,4 +348,9 @@ mod tests {
         assert!(!same_volume(Path::new(r"C:\a"), Path::new(r"D:\a")));
         assert!(!same_volume(Path::new(r"I:\Meu Drive\a.mp4"), Path::new(r"C:\Users")));
     }
+}
+
+/// Opens Explorer's Properties window for `paths` (several share one).
+pub(crate) fn show_properties(paths: &[PathBuf]) -> Result<(), String> {
+    platform::properties(paths).map_err(|error| error.to_string())
 }

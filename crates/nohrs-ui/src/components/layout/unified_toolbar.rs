@@ -152,6 +152,8 @@ pub enum AccountMenuCommand {
     Keymap,
     /// Open the settings page on the appearance section.
     Themes,
+    /// Open the settings page where the file menu is arranged.
+    Menu,
 }
 
 impl AccountMenuCommand {
@@ -170,6 +172,7 @@ impl AccountMenuCommand {
             "settings" => Some(Self::Settings),
             "keymap" => Some(Self::Keymap),
             "themes" => Some(Self::Themes),
+            "menu" => Some(Self::Menu),
             _ => None,
         }
     }
@@ -219,6 +222,7 @@ impl Action for AccountMenuAction {
             AccountMenuCommand::Settings => "account-menu.settings",
             AccountMenuCommand::Keymap => "account-menu.keymap",
             AccountMenuCommand::Themes => "account-menu.themes",
+            AccountMenuCommand::Menu => "account-menu.menu",
         }
     }
 

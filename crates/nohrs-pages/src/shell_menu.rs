@@ -28,6 +28,7 @@ pub enum Target {
 }
 
 /// One of Nohrs's own menu entries.
+#[derive(Clone)]
 pub enum Entry {
     Command {
         id: u32,
@@ -50,6 +51,14 @@ pub enum Entry {
 }
 
 impl Entry {
+    /// The text it shows; `None` for a separator.
+    pub fn label(&self) -> Option<&str> {
+        match self {
+            Self::Command { label, .. } | Self::Submenu { label, .. } => Some(label),
+            Self::Separator => None,
+        }
+    }
+
     pub fn command(id: u32, label: &str) -> Self {
         Self::Command {
             id,
@@ -143,6 +152,8 @@ pub struct MenuItem {
     /// The default command (what a double click does), drawn in bold.
     pub bold: bool,
     pub kind: ItemKind,
+    /// Put there by Windows or a program, not by Nohrs: one a person may hide.
+    pub from_windows: bool,
 }
 
 #[derive(Clone)]
@@ -163,6 +174,7 @@ impl MenuItem {
             checked: false,
             radio: false,
             bold: false,
+            from_windows: false,
             kind: ItemKind::Separator,
         }
     }
@@ -187,6 +199,7 @@ fn own_items(entries: &[Entry]) -> Vec<MenuItem> {
                 checked: *checked,
                 radio: *radio,
                 bold: false,
+                from_windows: false,
                 kind: ItemKind::Command,
             },
             Entry::Submenu { label, entries, icon } => MenuItem {
@@ -198,6 +211,7 @@ fn own_items(entries: &[Entry]) -> Vec<MenuItem> {
                 checked: false,
                 radio: false,
                 bold: false,
+                from_windows: false,
                 kind: ItemKind::Submenu(own_items(entries)),
             },
         })
@@ -206,7 +220,7 @@ fn own_items(entries: &[Entry]) -> Vec<MenuItem> {
 
 // No separator first, last, or twice in a row, at any depth: joining two
 // menus and hiding verbs leaves them.
-fn tidy(items: Vec<MenuItem>) -> Vec<MenuItem> {
+pub fn tidy(items: Vec<MenuItem>) -> Vec<MenuItem> {
     let mut out: Vec<MenuItem> = Vec::with_capacity(items.len());
     for mut item in items {
         if let ItemKind::Submenu(children) = item.kind {
@@ -247,7 +261,10 @@ pub fn prepare(request: &Request) -> Prepared {
         },
     };
     let own = own_items(request.own);
-    let mut items = Vec::new();
+    let mut items = own_items(request.before);
+    if !items.is_empty() {
+        items.push(MenuItem::separator());
+    }
     if request.own_first {
         items.extend(own);
         items.push(MenuItem::separator());
@@ -296,6 +313,10 @@ pub struct Request<'a> {
     pub hwnd: isize,
     pub target: &'a Target,
     pub own: &'a [Entry],
+    /// Nohrs's entries above everything else, whatever `own_first` says:
+    /// the ones a person put before the Windows entries in a file's menu.
+    /// Only the drawn menu has them; the classic one is Windows' own.
+    pub before: &'a [Entry],
     /// Nohrs's entries above the Shell's (the folder background, where they
     /// are the point of the menu) or below them (files, where Open comes
     /// first).
@@ -594,6 +615,7 @@ mod platform {
                 checked: full.fState.contains(MFS_CHECKED),
                 radio: full.fType.contains(MFT_RADIOCHECK),
                 bold: full.fState.contains(MFS_DEFAULT),
+                from_windows: false,
                 kind,
             });
         }
@@ -966,6 +988,7 @@ mod tests {
                 hwnd: 0,
                 target: &target,
                 own: &[],
+                before: &[],
                 own_first: false,
                 extended: false,
                 dark: true,

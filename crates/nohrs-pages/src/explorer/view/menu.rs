@@ -260,6 +260,16 @@ fn entry(
             }
         }))
         .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+        .when(item.from_windows, |row| {
+            let label = item.label.clone();
+            row.on_mouse_down(
+                MouseButton::Right,
+                cx.listener(move |page, _, _, cx| {
+                    cx.stop_propagation();
+                    page.hide_menu_entry(label.clone(), cx);
+                }),
+            )
+        })
         .when(enabled && !submenu, |row| {
             row.on_click(cx.listener(move |page, _, window, cx| page.choose_menu_item(id, window, cx)))
         })

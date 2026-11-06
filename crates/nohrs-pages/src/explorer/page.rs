@@ -198,6 +198,8 @@ pub struct ExplorerPage {
     tab_subscriptions: HashMap<EntityId, Subscription>,
     /// Whether navigation in one pane mirrors into the others (§3.2).
     synced_panes: bool,
+    // `[explorer] background_tabs`: a tab opened from an item stays behind.
+    background_tabs: bool,
     // Last-applied `[ui]` settings, replayed onto tabs opened later so they match
     // config rather than reverting to pane defaults.
     ui: Ui,
@@ -275,6 +277,7 @@ impl ExplorerPage {
             group,
             tab_subscriptions: HashMap::new(),
             synced_panes: false,
+            background_tabs: false,
             ui: Ui::default(),
             store,
             save_task: None,
@@ -485,6 +488,10 @@ impl ExplorerPage {
                 self.open_terminal_at(*side, *size, cx);
                 return;
             }
+            PaneEvent::OpenInNewTab { folder, select } => {
+                self.open_in_new_tab_later(folder.clone(), select.clone(), cx);
+                return;
+            }
         };
         // A tab changed directory: persist the new session (a tab's cwd is part
         // of the snapshot), regardless of whether syncing is on.
@@ -660,6 +667,7 @@ impl ExplorerPage {
         }
         let enabling = explorer.synced_panes && !self.synced_panes;
         self.synced_panes = explorer.synced_panes;
+        self.background_tabs = explorer.background_tabs;
         if enabling {
             let active_id = self.group.active_pane().entity_id();
             let path = self.group.active_pane().read(cx).cwd.clone();
@@ -770,6 +778,60 @@ impl ExplorerPage {
         self.group.focus_active(window, cx);
         self.schedule_save(cx);
         cx.notify();
+    }
+
+    /// Opens a tab beside the active one on `folder`, selecting `select` in
+    /// it, from an item's middle click or its menu. Unlike [`Self::open_path`]
+    /// it always makes a tab, and it stays behind when `[explorer]
+    /// background_tabs` asks for that, as a browser's middle click does.
+    pub fn open_in_new_tab(
+        &mut self,
+        folder: String,
+        select: Option<String>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let pane_index = self.group.active();
+        let current = self.group.active_pane().clone();
+        let sidebar_visible = current.read(cx).sidebar_visible;
+        let Some(tab) = self.group.add_tab(pane_index, window, cx) else {
+            return;
+        };
+        self.subscribe_tab(&tab, cx);
+        self.configure_tab(&tab, Some(folder), sidebar_visible, cx);
+        tab.update(cx, |pane, cx| {
+            pane.ensure_loaded(cx);
+            if let Some(select) = &select {
+                pane.reveal(select);
+            }
+        });
+        if self.background_tabs {
+            // `add_tab` activated the new tab; the one clicked in comes back.
+            if let Some((pane, index)) = self.group.locate_tab(current.entity_id()) {
+                self.group.set_active_tab(pane, index, window, cx);
+            }
+        }
+        self.group.set_active(pane_index, window, cx);
+        self.group.focus_active(window, cx);
+        self.schedule_save(cx);
+        cx.notify();
+    }
+
+    // The event arrives inside the pane's update, and a tab is built with the
+    // window, which is reached from a task of its own (as for a split).
+    fn open_in_new_tab_later(&mut self, folder: String, select: Option<String>, cx: &mut Context<Self>) {
+        let Some(window) = cx.windows().into_iter().next() else {
+            return;
+        };
+        let this = cx.entity().downgrade();
+        cx.spawn(async move |_, cx| {
+            window
+                .update(cx, |_, window, cx| {
+                    this.update(cx, |page, cx| page.open_in_new_tab(folder, select, window, cx)).log_err();
+                })
+                .log_err();
+        })
+        .detach();
     }
 
     /// Points the tab with entity id `tab_id` at `folder`, selecting `select`

@@ -21,7 +21,7 @@ use nohrs_core::errors::{Error, Result};
 use nohrs_services::fs::ops::{self, ConflictResolution};
 
 use super::state::ExplorerPane;
-use super::types::StatusLevel;
+use super::types::{PaneEvent, StatusLevel};
 
 /// Whether a clipboard entry should be duplicated (copy) or relocated (cut) when
 /// pasted.
@@ -1538,5 +1538,78 @@ mod rename_selection_tests {
         assert_eq!(rename_selection_end("日本語.txt", false), 3);
         // Astral-plane characters take two UTF-16 units each.
         assert_eq!(rename_selection_end("🎉🎉.txt", false), 4);
+    }
+}
+
+impl ExplorerPane {
+    /// "Copy as path": the selection's full paths as text, each in quotes and
+    /// on its own line, as Explorer's Ctrl+Shift+C puts them. With nothing
+    /// selected, the folder on screen.
+    pub(crate) fn copy_paths_as_text(&mut self, cx: &mut Context<Self>) {
+        let mut paths = self.selected_paths();
+        if paths.is_empty() && std::path::Path::new(&self.cwd).is_absolute() {
+            paths.push(self.cwd.clone());
+        }
+        if paths.is_empty() {
+            return;
+        }
+        let text = paths.iter().map(|path| format!("\"{path}\"")).collect::<Vec<_>>().join("\r\n");
+        cx.write_to_clipboard(ClipboardItem::new_string(text));
+        let message = i18n::plural(paths.len(), k!("Caminho copiado"), k!("{n} caminhos copiados"));
+        self.set_status(StatusLevel::Info, message);
+        cx.notify();
+    }
+
+    /// Opens each selected item in a tab of its own: a folder shows itself, a
+    /// file shows its folder with it selected (and previewed).
+    pub(crate) fn open_selection_in_new_tab(&mut self, cx: &mut Context<Self>) {
+        let selected = self.selected_paths();
+        for path in selected {
+            let is_dir = self
+                .filtered_entries
+                .iter()
+                .find(|entry| entry.path == path)
+                .is_some_and(|entry| entry.kind == "dir");
+            self.open_path_in_new_tab(&path, is_dir, cx);
+        }
+    }
+
+    /// Asks the page for a new tab on `path` (a folder), or on the folder
+    /// holding it with it selected.
+    pub(crate) fn open_path_in_new_tab(&mut self, path: &str, is_dir: bool, cx: &mut Context<Self>) {
+        let event = if is_dir {
+            PaneEvent::OpenInNewTab { folder: path.to_string(), select: None }
+        } else {
+            let Some(parent) = std::path::Path::new(path).parent() else {
+                return;
+            };
+            PaneEvent::OpenInNewTab {
+                folder: parent.to_string_lossy().into_owned(),
+                select: Some(path.to_string()),
+            }
+        };
+        cx.emit(event);
+    }
+
+    /// The middle button on the item at `ix`: a tab of its own, as in a
+    /// browser.
+    pub(crate) fn open_entry_in_new_tab(&mut self, ix: usize, cx: &mut Context<Self>) {
+        let Some(entry) = self.filtered_entries.get(ix) else {
+            return;
+        };
+        let (path, is_dir) = (entry.path.clone(), entry.kind == "dir");
+        self.open_path_in_new_tab(&path, is_dir, cx);
+    }
+
+    /// Explorer's Properties window for the selection.
+    pub(crate) fn show_selection_properties(&mut self, cx: &mut Context<Self>) {
+        let paths: Vec<PathBuf> = self.selected_paths().into_iter().map(PathBuf::from).collect();
+        if paths.is_empty() {
+            return;
+        }
+        if let Err(error) = super::drag::show_properties(&paths) {
+            self.set_status(StatusLevel::Error, tf!("Não foi possível abrir as propriedades: {error}", error = error));
+            cx.notify();
+        }
     }
 }

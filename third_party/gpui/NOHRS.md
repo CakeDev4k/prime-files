@@ -38,3 +38,17 @@ an error (rust-lang/rust#154024). Upstream may already have fixed it.
 When gpui is upgraded: check whether a caption or caption-button press, or a
 caption-button release, still returns `Some(0)` when the dispatch was
 "handled" (the lines are marked `NOHRS`).
+
+## Right-to-left text (05/11/2026)
+
+`src/platform/windows/direct_write.rs`, `DrawGlyphRun`: glyphs are placed
+from the `baselineOriginX` DirectWrite hands each run, and a run with an odd
+`bidiLevel` is laid from its right edge leftwards. The original laid every
+run end to end from the left in logical order, so Arabic (added as an
+interface language) came out with its letters reversed. `StringIndexConverter`
+rewinds when a run starts before the previous one, which visual order makes
+possible. The paragraph stays left to right: the text box is infinitely wide,
+and a right-to-left paragraph would be aligned to its far end.
+
+When gpui is upgraded: check whether `DrawGlyphRun` still ignores the origin
+and the bidi level.

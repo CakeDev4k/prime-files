@@ -444,34 +444,58 @@ impl ExplorerPage {
         }
     }
 
-    /// Opens a new tab in `pane_index`, at `[ui] new_tab_path` when it is a
-    /// folder that exists, and at home otherwise.
+    /// Opens a new tab beside the one the request was made from, at
+    /// `[ui] new_tab_path` when it is a folder that exists, and at home
+    /// otherwise.
     ///
     /// The existence check is a filesystem call, and a configured path can be a
     /// network share that is asleep: asking for it on the UI thread would freeze
     /// the window for as long as the share takes to time out. So the check runs
     /// on the background executor and the tab opens when the answer arrives. An
     /// empty path skips the check and opens at home at once.
+    ///
+    /// The request is held by the id of the tab it was made beside, not by the
+    /// pane's index: a pane can be closed or the split flipped while the check
+    /// is in flight, and the new tab must not land in whatever pane took that
+    /// index. If that tab is gone, the request is dropped.
     pub(crate) fn new_tab_in_pane(&mut self, pane_index: usize, window: &mut Window, cx: &mut Context<Self>) {
-        let configured = self.ui.new_tab_path.trim().to_string();
-        if configured.is_empty() {
+        let Some(anchor) = self
+            .group
+            .tab(pane_index, self.group.active_tab(pane_index))
+            .map(|tab| tab.entity_id())
+        else {
+            // A pane always holds a tab; be safe rather than silent if that
+            // invariant is ever broken.
             self.add_tab_at(pane_index, home_dir(), window, cx);
             return;
+        };
+        let configured = self.ui.new_tab_path.trim().to_string();
+        if configured.is_empty() {
+            self.add_tab_beside(anchor, home_dir(), window, cx);
+            return;
         }
-        let check = cx.background_spawn(async move {
-            std::path::Path::new(&configured).is_dir().then_some(configured)
-        });
+        let check = cx
+            .background_spawn(async move { std::path::Path::new(&configured).is_dir().then_some(configured) });
         cx.spawn_in(
             window,
             async move |this: gpui::WeakEntity<Self>, cx: &mut gpui::AsyncWindowContext| {
                 let found = check.await;
                 this.update_in(cx, |this, window, cx| {
-                    this.add_tab_at(pane_index, found.unwrap_or_else(home_dir), window, cx);
+                    this.add_tab_beside(anchor, found.unwrap_or_else(home_dir), window, cx);
                 })
                 .ok();
             },
         )
         .detach();
+    }
+
+    /// Adds a tab beside `anchor`, unless that tab (and with it the pane) is
+    /// gone by now.
+    fn add_tab_beside(&mut self, anchor: gpui::EntityId, start: String, window: &mut Window, cx: &mut Context<Self>) {
+        let Some((pane_index, _)) = self.group.locate_tab(anchor) else {
+            return;
+        };
+        self.add_tab_at(pane_index, start, window, cx);
     }
 
     /// Adds a tab in `pane_index` at `start`, then activates and focuses it.
@@ -1802,6 +1826,13 @@ impl ExplorerPage {
     /// Sets `[ui] new_tab_path` for a test, as the config would.
     pub(crate) fn test_set_new_tab_path(&mut self, path: &str) {
         self.ui.new_tab_path = path.to_string();
+    }
+
+    /// Presses the tab strip's `+` for a test, through the same callback the
+    /// button calls.
+    pub(crate) fn test_press_plus(&mut self, pane_index: usize, window: &mut Window, cx: &mut Context<Self>) {
+        let callbacks = Self::pane_callbacks();
+        (callbacks.on_new_tab)(self, pane_index, window, cx);
     }
 
     pub(crate) fn test_new_tab(

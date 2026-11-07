@@ -1075,6 +1075,30 @@ async fn new_tab_opens_the_configured_folder(cx: &mut TestAppContext) {
         .unwrap();
 }
 
+/// The tab strip's own `+` callback opens a tab in folder mode. The box branch
+/// needs a real renderer (the overlay panics headless), so it is not asserted
+/// here; `new_tab_asks` covers the decision that picks between them.
+#[gpui::test]
+async fn the_plus_button_opens_a_tab_in_folder_mode(cx: &mut TestAppContext) {
+    use nohrs_core::config::NewTabMode;
+    let window = new_explorer_page(cx);
+    window
+        .update(cx, |page, window, cx| {
+            page.test_set_new_tab_mode(NewTabMode::Folder);
+            page.test_set_new_tab_path("");
+            page.test_press_plus(0, window, cx);
+        })
+        .unwrap();
+    cx.run_until_parked();
+    window
+        .read_with(cx, |page, cx| {
+            assert_eq!(page.tab_count(0), 2, "the + opens a tab");
+            let home = super::page::home_dir();
+            assert_eq!(page.tab_cwd(0, 1, cx).as_deref(), Some(home.as_str()));
+        })
+        .unwrap();
+}
+
 #[gpui::test]
 async fn new_tab_appends_and_activates(cx: &mut TestAppContext) {
     let window = new_explorer_page(cx);

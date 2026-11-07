@@ -654,7 +654,8 @@ impl SettingsPage {
                             ("ui", "new_tab_mode"),
                             cx,
                         ),
-                    ),
+                    )
+                    .reset(("ui", "new_tab_mode"), self.config.ui.new_tab_mode == NewTabMode::Box, "\"box\""),
                     Row::hint(
                         t!("Reabrir as abas ao iniciar"),
                         t!("Volta com as abas da última vez. Vale na próxima vez que o Prime Files abrir."),

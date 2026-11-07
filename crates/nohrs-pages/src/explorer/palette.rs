@@ -442,8 +442,14 @@ impl ExplorerPage {
     // to read) or Windows' icon. The caches are the page's own: the page
     // draws the box, and what arrives redraws the page.
     fn palette_media(&mut self, row: &Row, icon: f32, scale: f32, cx: &mut Context<Self>) -> Media {
-        let Some((path, dir)) = row.path() else {
-            return Media::None;
+        // A tab shows the icon of the folder it is on, as the folder would
+        // show in the listing.
+        let (path, dir) = match row {
+            Row::Tab { folder, .. } => (folder.as_str(), true),
+            _ => match row.path() {
+                Some(found) => found,
+                None => return Media::None,
+            },
         };
         let pixels = ((icon * scale).round() as u32).max(16);
         if let Row::Hit { size, modified, .. } = row
@@ -524,7 +530,8 @@ impl ExplorerPage {
             }
             let lit = lit_any && index == selected;
             line_of[index] = lines.len();
-            lines.push(render_row(&rows[index], index, lit, Media::None, PLAIN_ROW, 16.0, inner, cx));
+            let media = self.palette_media(&rows[index], 16.0, scale, cx);
+            lines.push(render_row(&rows[index], index, lit, media, PLAIN_ROW, 16.0, inner, cx));
             index += 1;
         }
         if hit_count > 0 {
@@ -821,8 +828,9 @@ fn media_square(row: &Row, media: Media, icon: f32, selected: bool) -> AnyElemen
             .into_any_element(),
         Media::None => {
             let (path, color) = match row {
-                Row::Tab { .. } => ("icons/app-window.svg", theme::accent()),
-                Row::Typed { dir: true, .. } | Row::Hit { dir: true, .. } => ("icons/folder.svg", theme::accent()),
+                Row::Tab { .. } | Row::Typed { dir: true, .. } | Row::Hit { dir: true, .. } => {
+                    ("icons/folder.svg", theme::accent())
+                }
                 _ => ("icons/file.svg", theme::fg_secondary()),
             };
             square

@@ -277,6 +277,10 @@ impl ExplorerPane {
         };
         self.quick_look = true;
         self.preview_follow = None;
+        // The neighbours are decoded for the size they now open in: the quick
+        // look covers the whole window, a bigger decode than the side panel's.
+        let edge = super::view::preview::fitted_edge_for(self, window);
+        super::view::preview::prefetch_neighbours(self, &path, edge, cx);
         // A hidden side panel has not been reading the rows it passed.
         if self.preview_path.as_deref() != Some(path.as_str()) {
             self.open_preview(path, window, cx);
@@ -310,6 +314,11 @@ impl ExplorerPane {
             self.preview_follow = None;
             return;
         };
+        // Decode the photos next to the active row while it is being chosen,
+        // so the preview has them ready whichever way the keys go. Neighbours
+        // are prefetched at the size they open in, quick look included.
+        let edge = super::view::preview::fitted_edge_for(self, window);
+        super::view::preview::prefetch_neighbours(self, &path, edge, cx);
         if self.preview_path.as_deref() == Some(path.as_str()) {
             self.preview_follow = None;
             return;
@@ -431,11 +440,11 @@ impl ExplorerPane {
 
         let show_hidden = self.show_hidden;
         // A picture decoded here is decoded at the size the panel shows.
-        let edge = super::view::preview::fitted_edge(
-            super::view::panels::preview_width(),
-            f32::from(window.viewport_size().height),
-            window.scale_factor(),
-        );
+        let edge = super::view::preview::fitted_edge_for(self, window);
+        if is_binary_image_path(&path) {
+            super::view::preview::warm_sharp_picture(self, &path, edge, cx);
+        }
+        super::view::preview::prefetch_neighbours(self, &path, edge, cx);
         let read_task = cx.background_spawn({
             let path = path.clone();
             async move { read_preview(&path, show_hidden, edge) }

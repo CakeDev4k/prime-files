@@ -142,6 +142,7 @@ async fn apply_config_ui_reflects_ui_section(cx: &mut TestAppContext) {
                 icon_pack: "default".to_string(),
                 name_lines: 0,
                 scroll_smoothness: 50,
+                infinite_scroll: true,
                 audio_waveforms: false,
                 preview_autoplay: false,
                 welcome_done: false,
@@ -191,6 +192,7 @@ async fn config_reload_keeps_a_sort_chosen_in_the_session(cx: &mut TestAppContex
                 icon_pack: "default".to_string(),
                 name_lines: 0,
                 scroll_smoothness: 50,
+                infinite_scroll: true,
                 audio_waveforms: false,
                 preview_autoplay: false,
                 welcome_done: false,
@@ -425,7 +427,10 @@ async fn a_fitted_image_is_not_decoded_whole(cx: &mut TestAppContext) {
             let photo = r"C:\nao-existe\foto.jpg";
             assert!(fitted_picture(page, photo, window, cx).is_some(), "fitted: the Shell's picture");
             page.preview_zoom = 2.0;
-            assert!(fitted_picture(page, photo, window, cx).is_none(), "zoomed in: the whole file");
+            // Zooming in keeps the fitted decode, at a bigger edge; the file
+            // is not handed to the whole decode (the `image` crate's JPEG
+            // decode left streaks on some photos at zoom).
+            assert!(fitted_picture(page, photo, window, cx).is_some(), "zoomed in: still fitted");
             page.preview_zoom = 1.0;
             assert!(
                 fitted_picture(page, r"C:\nao-existe\anima.gif", window, cx).is_none(),
@@ -439,11 +444,18 @@ async fn a_fitted_image_is_not_decoded_whole(cx: &mut TestAppContext) {
 fn a_fitted_image_is_asked_for_in_steps_that_cover_the_pane() {
     use super::view::preview::fitted_edge;
     // The pane's longer side in device pixels, rounded up to a step.
-    assert_eq!(fitted_edge(340.0, 400.0, 1.0), 512);
-    assert_eq!(fitted_edge(340.0, 789.0, 1.0), 1024);
-    assert_eq!(fitted_edge(340.0, 789.0, 1.5), 2048);
+    assert_eq!(fitted_edge(340.0, 400.0, 1.0, 1.0), 512);
+    assert_eq!(fitted_edge(340.0, 789.0, 1.0, 1.0), 1024);
+    assert_eq!(fitted_edge(340.0, 789.0, 1.5, 1.0), 2048);
+    // At 100% the fit decode still stops at 2048, however big the pane.
+    assert_eq!(fitted_edge(340.0, 2160.0, 2.0, 1.0), 2048);
+    // The zoom asks for a bigger step, so a zoomed picture stays sharp; below
+    // 100% the fit size is what the pane shows.
+    assert_eq!(fitted_edge(340.0, 400.0, 1.0, 0.5), 512);
+    assert_eq!(fitted_edge(340.0, 400.0, 1.0, 10.0), 4096);
+    assert_eq!(fitted_edge(340.0, 789.0, 1.5, 4.0), 8192);
     // Past the top step, the top step.
-    assert_eq!(fitted_edge(340.0, 2160.0, 2.0), 2048);
+    assert_eq!(fitted_edge(340.0, 2160.0, 2.0, 8.0), 8192);
 }
 
 #[gpui::test]
@@ -896,6 +908,7 @@ async fn split_pane_inherits_applied_ui_config(cx: &mut TestAppContext) {
                 icon_pack: "default".to_string(),
                 name_lines: 0,
                 scroll_smoothness: 50,
+                infinite_scroll: true,
                 audio_waveforms: false,
                 preview_autoplay: false,
                 welcome_done: false,
@@ -1241,6 +1254,8 @@ async fn selection_all_clear_and_arrow_navigation(cx: &mut TestAppContext) {
                 file("b", "file", 2),
                 file("c", "file", 3),
             ];
+            // This test is about clamping; the wrap has its own below.
+            page.infinite_scroll = false;
 
             page.select_all();
             assert_eq!(page.selection.len(), 3);
@@ -1263,6 +1278,39 @@ async fn selection_all_clear_and_arrow_navigation(cx: &mut TestAppContext) {
             page.select_single(0);
             page.move_active(-1, false);
             assert_eq!(page.active_row(), Some(0));
+        })
+        .unwrap();
+}
+
+// Continuous scrolling: with the setting on, stepping past an end lands on
+// the other one instead of stopping, and Shift keeps the plain clamp so a
+// range never wraps across the two ends.
+#[gpui::test]
+async fn infinite_scroll_wraps_around_the_ends(cx: &mut TestAppContext) {
+    let window = new_explorer(cx);
+    window
+        .update(cx, |page, _window, _cx| {
+            page.filtered_entries = vec![
+                file("a", "file", 1),
+                file("b", "file", 2),
+                file("c", "file", 3),
+            ];
+            page.infinite_scroll = true;
+
+            // Down past the last row lands on the first.
+            page.select_single(2);
+            page.move_active(1, false);
+            assert_eq!(page.active_row(), Some(0));
+            assert_eq!(page.selected_paths(), vec!["/tmp/a"]);
+
+            // Up past the first lands on the last.
+            page.move_active(-1, false);
+            assert_eq!(page.active_row(), Some(2));
+
+            // Shift+down is still clamped at the last row, not wrapped.
+            page.select_single(2);
+            page.move_active(1, true);
+            assert_eq!(page.active_row(), Some(2), "Shift keeps the clamp");
         })
         .unwrap();
 }
@@ -2739,6 +2787,7 @@ async fn each_folder_opens_with_the_zoom_and_sort_it_was_left_with(cx: &mut Test
                 icon_pack: "default".to_string(),
                 name_lines: 0,
                 scroll_smoothness: 50,
+                infinite_scroll: true,
                 audio_waveforms: false,
                 preview_autoplay: false,
                 welcome_done: false,

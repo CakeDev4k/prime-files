@@ -90,6 +90,8 @@ pub struct ExplorerPane {
     pub(crate) name_lines: u32,
     /// How long a wheel glide takes, 0 = none; driven by `ui.scroll_smoothness`.
     pub(crate) scroll_smoothness: u32,
+    /// Whether stepping past one end of a listing continues from the other.
+    pub(crate) infinite_scroll: bool,
     /// Whole size of the listing on screen, for its scrollbar.
     pub(crate) listing_extent: gpui::Size<gpui::Pixels>,
     /// The wheel glide under way in the listing.
@@ -238,6 +240,15 @@ pub struct ExplorerPane {
     /// The image in the preview decoded from its file at the panel's size
     /// (`picture.rs`), replacing the Shell's lower-quality thumbnail.
     pub(crate) preview_sharp: Option<super::view::preview::SharpPicture>,
+    /// Fitted decodes of the photos next to the active one, kept so that
+    /// arrowing onto one of them draws it at once instead of waiting for its
+    /// decode. Keyed by path, with the edge each was decoded at.
+    pub(crate) preview_prefetched:
+        std::collections::HashMap<String, (u32, std::sync::Arc<gpui::RenderImage>)>,
+    /// The panel size `preview_prefetched` was decoded for; a resize drops it.
+    pub(crate) preview_prefetch_edge: u32,
+    /// Paths whose prefetch decode is running, so each is asked for once.
+    pub(crate) preview_prefetching: std::collections::HashSet<String>,
     /// The 3D model in the preview, turned by dragging.
     pub(crate) preview_model: Option<super::model3d::ModelPreview>,
     /// What the preview showed before an item of a folder listing was
@@ -524,6 +535,7 @@ impl ExplorerPane {
             icon_pack: "default".to_string(),
             name_lines: 0,
             scroll_smoothness: nohrs_core::config::Ui::default().scroll_smoothness,
+            infinite_scroll: nohrs_core::config::Ui::default().infinite_scroll,
             smooth_scroll: None,
             listing_extent: Default::default(),
             search_query: String::new(),
@@ -591,6 +603,9 @@ impl ExplorerPane {
             terminal_shown: false,
             preview_pdf_bounds: Default::default(),
             preview_sharp: None,
+            preview_prefetched: std::collections::HashMap::new(),
+            preview_prefetch_edge: 0,
+            preview_prefetching: std::collections::HashSet::new(),
             preview_model: None,
             preview_back: Vec::new(),
             preview_zoom: 1.0,
@@ -1051,7 +1066,18 @@ impl ExplorerPane {
             return;
         }
         let next = match self.active_row() {
-            Some(current) => (current as isize + delta).clamp(0, len as isize - 1) as usize,
+            Some(current) => {
+                let moved = current as isize + delta;
+                // Continuous scrolling: passing the last entry lands on the
+                // first, and passing the first lands on the last, so the
+                // arrows never dead-end. Shift-extend keeps the clamp: a
+                // wrapped selection would be a range across two ends.
+                if self.infinite_scroll && !extend {
+                    moved.rem_euclid(len as isize) as usize
+                } else {
+                    moved.clamp(0, len as isize - 1) as usize
+                }
+            }
             None => 0,
         };
         if extend {
@@ -1059,17 +1085,7 @@ impl ExplorerPane {
         } else {
             self.select_single(next);
         }
-        if self.view_mode == ViewMode::Grid {
-            let (_, row) = self.visual_rows_of(next);
-            self.grid_scroll_handle
-                .scroll_to_item(row, gpui::ScrollStrategy::Center);
-        }
-        if self.view_mode == ViewMode::Compact {
-            self.compact_scroll_handle.scroll_to_item(
-                next / self.compact_rows.max(1),
-                gpui::ScrollStrategy::Center,
-            );
-        }
+        self.scroll_entry_into_view(next);
     }
 
     /// Paths of the currently selected rows, in row order. Used by file
@@ -1246,6 +1262,7 @@ impl ExplorerPane {
             changed = true;
         }
         self.scroll_smoothness = ui.scroll_smoothness;
+        self.infinite_scroll = ui.infinite_scroll;
         self.preview_autoplay = ui.preview_autoplay;
         self.hover_audio_delay_ms = ui.hover_audio_delay_ms;
         if self.hover_audio_enabled != ui.hover_audio {

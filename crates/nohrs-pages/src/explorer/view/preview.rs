@@ -202,15 +202,22 @@ fn neighbours_to_prefetch(
 /// first, so the neighbours right next to the selection survive a fast scroll.
 /// A path no longer in the listing counts as furthest.
 fn trim_prefetch(page: &mut ExplorerPane, active: usize, keep: usize, cx: &mut Context<ExplorerPane>) {
+    if page.preview_prefetched.len() <= keep {
+        return;
+    }
+    // One pass over the listing, not one per cached path: a folder can hold
+    // 100k entries and the cache six paths.
+    let rows: std::collections::HashMap<&str, usize> = page
+        .filtered_entries
+        .iter()
+        .enumerate()
+        .map(|(row, entry)| (entry.path.as_str(), row))
+        .collect();
     while page.preview_prefetched.len() > keep {
         let keys: Vec<String> = page.preview_prefetched.keys().cloned().collect();
         let mut furthest: Option<(String, usize)> = None;
         for path in keys {
-            let distance = page
-                .filtered_entries
-                .iter()
-                .position(|entry| entry.path == path)
-                .map_or(usize::MAX, |row| row.abs_diff(active));
+            let distance = rows.get(path.as_str()).map_or(usize::MAX, |row| row.abs_diff(active));
             if furthest.as_ref().is_none_or(|(_, best)| distance >= *best) {
                 furthest = Some((path, distance));
             }
@@ -373,6 +380,9 @@ fn sharp_picture(
                 Err(error) => {
                     tracing::debug!("could not decode {wanted} for the preview: {error}");
                     sharp.failed = true;
+                    // The whole-file decode takes over; the smaller picture it
+                    // would have replaced is not drawn any more.
+                    sharp.previous = None;
                 }
             }
             sharp._decode = None;

@@ -444,8 +444,38 @@ impl ExplorerPage {
         }
     }
 
-    /// Opens a new tab in `pane_index`, rooted at home (§4), and activates it.
+    /// Opens a new tab in `pane_index`, at `[ui] new_tab_path` when it is a
+    /// folder that exists, and at home otherwise.
+    ///
+    /// The existence check is a filesystem call, and a configured path can be a
+    /// network share that is asleep: asking for it on the UI thread would freeze
+    /// the window for as long as the share takes to time out. So the check runs
+    /// on the background executor and the tab opens when the answer arrives. An
+    /// empty path skips the check and opens at home at once.
     pub(crate) fn new_tab_in_pane(&mut self, pane_index: usize, window: &mut Window, cx: &mut Context<Self>) {
+        let configured = self.ui.new_tab_path.trim().to_string();
+        if configured.is_empty() {
+            self.add_tab_at(pane_index, home_dir(), window, cx);
+            return;
+        }
+        let check = cx.background_spawn(async move {
+            std::path::Path::new(&configured).is_dir().then_some(configured)
+        });
+        cx.spawn_in(
+            window,
+            async move |this: gpui::WeakEntity<Self>, cx: &mut gpui::AsyncWindowContext| {
+                let found = check.await;
+                this.update_in(cx, |this, window, cx| {
+                    this.add_tab_at(pane_index, found.unwrap_or_else(home_dir), window, cx);
+                })
+                .ok();
+            },
+        )
+        .detach();
+    }
+
+    /// Adds a tab in `pane_index` at `start`, then activates and focuses it.
+    fn add_tab_at(&mut self, pane_index: usize, start: String, window: &mut Window, cx: &mut Context<Self>) {
         // Inherit the sidebar visibility of the pane's currently active tab so the
         // new tab looks continuous with what the user was just seeing.
         let sidebar_visible = self
@@ -457,14 +487,6 @@ impl ExplorerPage {
             return;
         };
         self.subscribe_tab(&tab, cx);
-        // `[ui] new_tab_path`: the folder every new tab starts in. Empty, or a
-        // folder that is gone, falls back to home.
-        let configured = self.ui.new_tab_path.trim();
-        let start = if configured.is_empty() || !std::path::Path::new(configured).is_dir() {
-            home_dir()
-        } else {
-            configured.to_string()
-        };
         self.configure_tab(&tab, Some(start), sidebar_visible, cx);
         // Make the pane active and focus its new (now active) tab.
         self.group.set_active(pane_index, window, cx);
@@ -1772,10 +1794,12 @@ impl ExplorerPage {
     }
 
     /// Test entry points for the tab actions exercised without keybindings.
+    /// Sets `[ui] new_tab_mode` for a test, as the config would.
     pub(crate) fn test_set_new_tab_mode(&mut self, mode: NewTabMode) {
         self.ui.new_tab_mode = mode;
     }
 
+    /// Sets `[ui] new_tab_path` for a test, as the config would.
     pub(crate) fn test_set_new_tab_path(&mut self, path: &str) {
         self.ui.new_tab_path = path.to_string();
     }

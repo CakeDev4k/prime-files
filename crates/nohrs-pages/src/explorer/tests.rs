@@ -1021,8 +1021,9 @@ async fn close_pane_keeps_subscriptions_aligned(cx: &mut TestAppContext) {
         .unwrap();
 }
 
-// The configured folder is where the tab lands, trimmed, and a folder that is
-// gone falls back to home rather than erroring.
+/// The configured folder is where the tab lands, trimmed, with a folder that is
+/// gone falling back to home. The existence check runs off the UI thread, so the
+/// test parks the executor before asserting, as the async work needs a turn.
 #[gpui::test]
 async fn new_tab_opens_the_configured_folder(cx: &mut TestAppContext) {
     use nohrs_core::config::NewTabMode;
@@ -1034,20 +1035,35 @@ async fn new_tab_opens_the_configured_folder(cx: &mut TestAppContext) {
     let configured = format!("  {inner}  ");
     let gone = format!("{inner}\\gone");
     let window = new_explorer_page(cx);
+
     window
         .update(cx, |page, window, cx| {
             page.test_set_new_tab_mode(NewTabMode::Folder);
             page.test_set_new_tab_path(&configured);
             page.new_tab_request(0, false, window, cx);
+        })
+        .unwrap();
+    cx.run_until_parked();
+    window
+        .read_with(cx, |page, cx| {
             assert_eq!(page.tab_count(0), 2);
             assert_eq!(
                 page.tab_cwd(0, 1, cx).as_deref(),
                 Some(inner.as_str()),
                 "the tab opens the configured folder, trimmed"
             );
+        })
+        .unwrap();
 
+    window
+        .update(cx, |page, window, cx| {
             page.test_set_new_tab_path(&gone);
             page.new_tab_request(0, false, window, cx);
+        })
+        .unwrap();
+    cx.run_until_parked();
+    window
+        .read_with(cx, |page, cx| {
             assert_eq!(page.tab_count(0), 3);
             let home = super::page::home_dir();
             assert_eq!(

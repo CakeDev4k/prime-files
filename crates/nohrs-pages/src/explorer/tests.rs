@@ -447,13 +447,15 @@ fn a_fitted_image_is_asked_for_in_steps_that_cover_the_pane() {
     assert_eq!(fitted_edge(340.0, 400.0, 1.0, 1.0), 512);
     assert_eq!(fitted_edge(340.0, 789.0, 1.0, 1.0), 1024);
     assert_eq!(fitted_edge(340.0, 789.0, 1.5, 1.0), 2048);
+    // At 100% the fit decode still stops at 2048, however big the pane.
+    assert_eq!(fitted_edge(340.0, 2160.0, 2.0, 1.0), 2048);
     // The zoom asks for a bigger step, so a zoomed picture stays sharp; below
     // 100% the fit size is what the pane shows.
     assert_eq!(fitted_edge(340.0, 400.0, 1.0, 0.5), 512);
     assert_eq!(fitted_edge(340.0, 400.0, 1.0, 10.0), 4096);
     assert_eq!(fitted_edge(340.0, 789.0, 1.5, 4.0), 8192);
     // Past the top step, the top step.
-    assert_eq!(fitted_edge(340.0, 2160.0, 2.0, 8.0), 12288);
+    assert_eq!(fitted_edge(340.0, 2160.0, 2.0, 8.0), 8192);
 }
 
 #[gpui::test]

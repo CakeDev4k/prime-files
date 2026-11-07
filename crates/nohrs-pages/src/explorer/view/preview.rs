@@ -15,16 +15,49 @@ const PREVIEW_THUMBNAIL_SIZE: u32 = 512;
 /// again at every pixel; the first ones cover a full-height pane at 100%, and
 /// the larger ones a zoomed-in picture, whose decode stays with Windows' codec
 /// (the `image` crate's JPEG decoder left streaks on some photos at zoom).
-const FITTED_EDGES: [u32; 6] = [512, 1024, 2048, 4096, 8192, 12288];
+const FITTED_EDGES: [u32; 5] = [512, 1024, 2048, 4096, 8192];
 
-/// The edge to ask for so an image fitted in the preview — at its `zoom` — is
+/// At 100% the fit decode stops at 2048, where it always did, so a big
+/// high-DPI pane does not start decoding more than before; only a zoom asks
+/// past it, up to [`ZOOM_CAP`].
+const FITTED_CAP: u32 = 2048;
+/// The most a zoomed decode asks for. 8192 is a 256 MiB buffer; past it the
+/// pane would show fewer pixels than the decode holds anyway.
+const ZOOM_CAP: u32 = 8192;
+
+/// The edge to ask for so an image fitted in the preview, at its `zoom`, is
 /// drawn from at least as many pixels as it covers.
 pub(crate) fn fitted_edge(preview_width: f32, window_height: f32, scale: f32, zoom: f32) -> u32 {
-    let needed = (preview_width.max(window_height) * scale * zoom.max(1.0)).ceil();
+    let zoom = zoom.max(1.0);
+    let needed = (preview_width.max(window_height) * scale * zoom).ceil();
+    let cap = if zoom > 1.0 { ZOOM_CAP } else { FITTED_CAP };
     FITTED_EDGES
         .into_iter()
         .find(|&edge| edge as f32 >= needed)
-        .unwrap_or(FITTED_EDGES[FITTED_EDGES.len() - 1])
+        .unwrap_or(cap)
+        .min(cap)
+}
+
+/// The width the preview draws at: the quick look covers the whole window, the
+/// side panel its own width.
+fn display_width(page: &ExplorerPane, window: &Window) -> f32 {
+    if page.quick_look {
+        f32::from(window.viewport_size().width)
+    } else {
+        super::panels::preview_width()
+    }
+}
+
+/// The edge the fitted image is decoded at for the mode `page` shows at 100%:
+/// what the early decode and the prefetch use, and what a quick look, which
+/// covers the whole window, needs.
+pub(crate) fn fitted_edge_for(page: &ExplorerPane, window: &Window) -> u32 {
+    fitted_edge(
+        display_width(page, window),
+        f32::from(window.viewport_size().height),
+        window.scale_factor(),
+        1.0,
+    )
 }
 
 /// An image fitted in the preview, drawn from the Shell's picture at the
@@ -52,13 +85,8 @@ pub(crate) fn fitted_picture(
     }
     // Quick look shows the picture over the whole pane: decoded for the side
     // panel's width, it was stretched there and looked blurred.
-    let width = if page.quick_look {
-        f32::from(window.viewport_size().width)
-    } else {
-        super::panels::preview_width()
-    };
     let edge = fitted_edge(
-        width,
+        display_width(page, window),
         f32::from(window.viewport_size().height),
         window.scale_factor(),
         page.preview_zoom,
@@ -134,24 +162,66 @@ fn prefetchable_image(path: &str) -> bool {
     matches!(extension.as_str(), "png" | "jpg" | "jpeg" | "bmp" | "webp")
 }
 
-/// The photos next to `row` in `entries`, nearest first, wrapping like the
-/// arrows do, so a folder's ends prefetch each other.
-fn neighbours_to_prefetch(entries: &[nohrs_services::fs::listing::FileEntryDto], row: usize) -> Vec<String> {
+/// The photos next to `row` in `entries`, nearest first. With `wrap` the ends
+/// prefetch each other, as the arrows do with continuous scrolling; without it
+/// the listing has ends and a photo across one is not reachable to prefetch.
+fn neighbours_to_prefetch(
+    entries: &[nohrs_services::fs::listing::FileEntryDto],
+    row: usize,
+    wrap: bool,
+) -> Vec<String> {
     let len = entries.len();
     if len < 2 {
         return Vec::new();
     }
     let mut wanted = Vec::new();
     for delta in [1isize, -1, 2, -2] {
-        let index = (row as isize + delta).rem_euclid(len as isize) as usize;
+        let index = row as isize + delta;
+        let index = if wrap {
+            index.rem_euclid(len as isize)
+        } else if index < 0 || index >= len as isize {
+            continue;
+        } else {
+            index
+        } as usize;
+        // A folder of two photos: +-2 lands back on the active one.
+        if index == row {
+            continue;
+        }
         let Some(entry) = entries.get(index) else {
             continue;
         };
-        if entry.kind == "file" && prefetchable_image(&entry.path) {
+        if entry.kind == "file" && prefetchable_image(&entry.path) && !wanted.contains(&entry.path) {
             wanted.push(entry.path.clone());
         }
     }
     wanted
+}
+
+/// Drops kept decodes until `keep` remain, the ones furthest from `active`
+/// first, so the neighbours right next to the selection survive a fast scroll.
+/// A path no longer in the listing counts as furthest.
+fn trim_prefetch(page: &mut ExplorerPane, active: usize, keep: usize, cx: &mut Context<ExplorerPane>) {
+    while page.preview_prefetched.len() > keep {
+        let keys: Vec<String> = page.preview_prefetched.keys().cloned().collect();
+        let mut furthest: Option<(String, usize)> = None;
+        for path in keys {
+            let distance = page
+                .filtered_entries
+                .iter()
+                .position(|entry| entry.path == path)
+                .map_or(usize::MAX, |row| row.abs_diff(active));
+            if furthest.as_ref().is_none_or(|(_, best)| distance >= *best) {
+                furthest = Some((path, distance));
+            }
+        }
+        let Some((path, _)) = furthest else {
+            break;
+        };
+        if let Some((_, image)) = page.preview_prefetched.remove(&path) {
+            cx.drop_image(image, None);
+        }
+    }
 }
 
 /// Decodes the photos around `path` in the background, so arrowing onto one
@@ -175,7 +245,8 @@ pub(crate) fn prefetch_neighbours(
     let Some(row) = page.filtered_entries.iter().position(|entry| entry.path == path) else {
         return;
     };
-    for neighbour in neighbours_to_prefetch(&page.filtered_entries, row) {
+    let wrap = page.infinite_scroll;
+    for neighbour in neighbours_to_prefetch(&page.filtered_entries, row, wrap) {
         // Holding an arrow key walks the whole folder; this keeps the decodes
         // running to the few rows around where the keys are.
         if page.preview_prefetching.len() >= PREFETCH_CAP {
@@ -186,13 +257,9 @@ pub(crate) fn prefetch_neighbours(
         {
             continue;
         }
-        // Room for the new one: a kept decode goes, texture and all.
-        if page.preview_prefetched.len() >= PREFETCH_CAP
-            && let Some(oldest) = page.preview_prefetched.keys().next().cloned()
-            && let Some((_, image)) = page.preview_prefetched.remove(&oldest)
-        {
-            cx.drop_image(image, None);
-        }
+        // Room for the new one: the kept decodes furthest from the active row
+        // go first, so the immediate neighbours survive a fast scroll.
+        trim_prefetch(page, row, PREFETCH_CAP - 1, cx);
         let decode = cx.background_spawn({
             let neighbour = neighbour.clone();
             async move { crate::explorer::picture::decode_fitted(&neighbour, edge) }
@@ -207,13 +274,24 @@ pub(crate) fn prefetch_neighbours(
                 let Some(image) = crate::explorer::thumbnails::render_image(width, height, pixels) else {
                     return;
                 };
+                let image = std::sync::Arc::new(image);
                 // The panel may have been resized while this decoded.
                 if pane.preview_prefetch_edge != edge {
-                    cx.drop_image(std::sync::Arc::new(image), None);
+                    cx.drop_image(image, None);
                     return;
                 }
-                pane.preview_prefetched
-                    .insert(neighbour, (edge, std::sync::Arc::new(image)));
+                // The picture's own decode won the race and is on screen:
+                // keeping this one as well would only hold a second copy.
+                let shown = pane.preview_sharp.as_ref().is_some_and(|sharp| {
+                    sharp.path == neighbour && sharp.edge == edge && sharp.image.is_some()
+                });
+                if shown {
+                    cx.drop_image(image, None);
+                    return;
+                }
+                pane.preview_prefetched.insert(neighbour, (edge, image));
+                let active = pane.active_row().unwrap_or(0);
+                trim_prefetch(pane, active, PREFETCH_CAP, cx);
             })
             .ok();
         })
@@ -285,6 +363,12 @@ fn sharp_picture(
             match decoded {
                 Ok((width, height, pixels)) => {
                     sharp.image = crate::explorer::thumbnails::render_image(width, height, pixels).map(std::sync::Arc::new);
+                    if sharp.image.is_some() {
+                        // The smaller decode it replaced is no longer drawn.
+                        // Releasing it is what keeps a zoomed decode from
+                        // staying in memory after the zoom is left.
+                        sharp.previous = None;
+                    }
                 }
                 Err(error) => {
                     tracing::debug!("could not decode {wanted} for the preview: {error}");
@@ -292,6 +376,15 @@ fn sharp_picture(
                 }
             }
             sharp._decode = None;
+            // A prefetch of this same picture, if one finished meanwhile, is a
+            // second copy of what is now on screen.
+            if let Some((cached_edge, image)) = pane.preview_prefetched.remove(&wanted) {
+                if cached_edge == edge {
+                    cx.drop_image(image, None);
+                } else {
+                    pane.preview_prefetched.insert(wanted.clone(), (cached_edge, image));
+                }
+            }
             cx.notify();
         })
         .ok();
@@ -1809,11 +1902,17 @@ mod prefetch_tests {
             entry("/f/e.webp", "file"),
             entry("/f/f.gif", "file"),
         ];
-        assert_eq!(neighbours_to_prefetch(&entries, 2), vec!["/f/e.webp", "/f/a.png"]);
+        assert_eq!(neighbours_to_prefetch(&entries, 2, true), vec!["/f/e.webp", "/f/a.png"]);
         // Wrapping: the last photo's neighbours are the first ones.
-        assert_eq!(neighbours_to_prefetch(&entries, 4), vec!["/f/a.png", "/f/c.jpg"]);
+        assert_eq!(neighbours_to_prefetch(&entries, 4, true), vec!["/f/a.png", "/f/c.jpg"]);
+        // Without continuous scrolling the listing has ends; a photo across one
+        // is not reachable, so it is not prefetched.
+        assert_eq!(neighbours_to_prefetch(&entries, 0, false), vec!["/f/c.jpg"]);
+        // Two photos: +-2 lands back on the active one, which is left out.
+        let two = vec![entry("/f/a.jpg", "file"), entry("/f/b.jpg", "file")];
+        assert_eq!(neighbours_to_prefetch(&two, 0, true), vec!["/f/b.jpg"]);
         // A single row has nothing to prefetch.
-        assert_eq!(neighbours_to_prefetch(&entries[..1], 0), Vec::<String>::new());
+        assert_eq!(neighbours_to_prefetch(&entries[..1], 0, true), Vec::<String>::new());
     }
 
     #[test]

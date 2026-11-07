@@ -572,4 +572,13 @@ pub(super) static HUNGARIAN: &[(&str, &str)] = &[
     ("Tags tiradas", "Címkék levéve"),
     ("Tag {tag} criada", "{tag} címke létrehozva"),
     ("Remover desta tag", "Eltávolítás ebből a címkéből"),
+    ("Ajustes rápidos", "Gyorsbeállítások"),
+    ("Todas as configurações", "Összes beállítás"),
+    ("Cópia portátil", "Hordozható példány"),
+    ("Atualizado", "Naprakész"),
+    ("Falha ao atualizar", "A frissítés sikertelen"),
+    ("Versão {version}", "{version}. verzió"),
+    ("Procurar atualizações", "Frissítések keresése"),
+    ("Explorador padrão", "Alapértelmezett fájlkezelő"),
+    ("Pastas, Win+E e o ícone do Explorador na barra de tarefas abrem no Prime Files.", "A mappák, a Win+E és a tálcán lévő Intéző ikon a Prime Filesban nyílnak meg."),
 ];

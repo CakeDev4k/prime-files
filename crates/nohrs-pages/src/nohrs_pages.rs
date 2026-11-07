@@ -34,6 +34,7 @@ pub mod s3;
 // removed search
 /// The settings page.
 pub mod settings;
+mod settings_home;
 /// The right-click menu: the Windows context menu with Nohrs's entries.
 pub(crate) mod shell_menu;
 /// The terminal panel under the explorer, one shell per tab.

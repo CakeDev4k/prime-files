@@ -572,4 +572,13 @@ pub(super) static ARABIC: &[(&str, &str)] = &[
     ("Tags tiradas", "أُزيلت الوسوم"),
     ("Tag {tag} criada", "أُنشئ الوسم {tag}"),
     ("Remover desta tag", "إزالة من هذا الوسم"),
+    ("Ajustes rápidos", "إعدادات سريعة"),
+    ("Todas as configurações", "كل الإعدادات"),
+    ("Cópia portátil", "نسخة محمولة"),
+    ("Atualizado", "محدّث"),
+    ("Falha ao atualizar", "فشل التحديث"),
+    ("Versão {version}", "الإصدار {version}"),
+    ("Procurar atualizações", "البحث عن تحديثات"),
+    ("Explorador padrão", "مدير الملفات الافتراضي"),
+    ("Pastas, Win+E e o ícone do Explorador na barra de tarefas abrem no Prime Files.", "تُفتح المجلدات وWin+E وأيقونة المستكشف في شريط المهام في Prime Files."),
 ];

@@ -6263,4 +6263,103 @@ pub(super) static EXTRA: &[(&str, [&str; 6])] = &[
             "从此标签移除",
         ],
     ),
+    (
+        "Ajustes rápidos",
+        [
+            "Réglages rapides",
+            "Schnelleinstellungen",
+            "Impostazioni rapide",
+            "Быстрые настройки",
+            "クイック設定",
+            "快速设置",
+        ],
+    ),
+    (
+        "Todas as configurações",
+        [
+            "Tous les paramètres",
+            "Alle Einstellungen",
+            "Tutte le impostazioni",
+            "Все настройки",
+            "すべての設定",
+            "所有设置",
+        ],
+    ),
+    (
+        "Cópia portátil",
+        [
+            "Copie portable",
+            "Portable Kopie",
+            "Copia portatile",
+            "Портативная копия",
+            "ポータブル版",
+            "便携版",
+        ],
+    ),
+    (
+        "Atualizado",
+        [
+            "À jour",
+            "Aktuell",
+            "Aggiornato",
+            "Обновлено",
+            "最新です",
+            "已是最新",
+        ],
+    ),
+    (
+        "Falha ao atualizar",
+        [
+            "Échec de la mise à jour",
+            "Update fehlgeschlagen",
+            "Aggiornamento non riuscito",
+            "Не удалось обновить",
+            "アップデートに失敗しました",
+            "更新失败",
+        ],
+    ),
+    (
+        "Versão {version}",
+        [
+            "Version {version}",
+            "Version {version}",
+            "Versione {version}",
+            "Версия {version}",
+            "バージョン {version}",
+            "版本 {version}",
+        ],
+    ),
+    (
+        "Procurar atualizações",
+        [
+            "Rechercher des mises à jour",
+            "Nach Updates suchen",
+            "Cerca aggiornamenti",
+            "Проверить обновления",
+            "アップデートを確認",
+            "检查更新",
+        ],
+    ),
+    (
+        "Explorador padrão",
+        [
+            "Gestionnaire de fichiers par défaut",
+            "Standard-Dateimanager",
+            "Gestore file predefinito",
+            "Файловый менеджер по умолчанию",
+            "既定のファイルマネージャー",
+            "默认文件管理器",
+        ],
+    ),
+    (
+        "Pastas, Win+E e o ícone do Explorador na barra de tarefas abrem no Prime Files.",
+        [
+            "Les dossiers, Win+E et l'icône de l'Explorateur dans la barre des tâches s'ouvrent dans Prime Files.",
+            "Ordner, Win+E und das Explorer-Symbol in der Taskleiste öffnen sich in Prime Files.",
+            "Le cartelle, Win+E e l'icona di Esplora file nella barra delle applicazioni si aprono in Prime Files.",
+            "Папки, Win+E и значок Проводника на панели задач открываются в Prime Files.",
+            "フォルダー、Win+E、タスクバーのエクスプローラーのアイコンが Prime Files で開きます。",
+            "文件夹、Win+E 和任务栏上的资源管理器图标都会在 Prime Files 中打开。",
+        ],
+    ),
 ];

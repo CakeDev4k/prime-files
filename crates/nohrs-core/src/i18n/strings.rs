@@ -1013,4 +1013,13 @@ pub(super) static STRINGS: &[(&str, &str, &str)] = &[
     ("Tags tiradas", "Tags removed", "Etiquetas quitadas"),
     ("Tag {tag} criada", "Tag {tag} created", "Etiqueta {tag} creada"),
     ("Remover desta tag", "Remove from this tag", "Quitar de esta etiqueta"),
+    ("Ajustes rápidos", "Quick settings", "Ajustes rápidos"),
+    ("Todas as configurações", "All settings", "Toda la configuración"),
+    ("Cópia portátil", "Portable copy", "Copia portátil"),
+    ("Atualizado", "Up to date", "Actualizado"),
+    ("Falha ao atualizar", "Update failed", "Error al actualizar"),
+    ("Versão {version}", "Version {version}", "Versión {version}"),
+    ("Procurar atualizações", "Check for updates", "Buscar actualizaciones"),
+    ("Explorador padrão", "Default file manager", "Explorador predeterminado"),
+    ("Pastas, Win+E e o ícone do Explorador na barra de tarefas abrem no Prime Files.", "Folders, Win+E and the Explorer icon on the taskbar open in Prime Files.", "Las carpetas, Win+E y el icono del Explorador en la barra de tareas se abren en Prime Files."),
 ];

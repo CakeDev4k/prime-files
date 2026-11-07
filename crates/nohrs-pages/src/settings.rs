@@ -52,6 +52,11 @@ pub enum SettingsSection {
 }
 
 impl SettingsSection {
+    /// Every section, in the side list's order.
+    pub(crate) fn all() -> [Self; 10] {
+        Self::ALL
+    }
+
     const ALL: [Self; 10] = [
         Self::General,
         Self::Appearance,
@@ -65,7 +70,7 @@ impl SettingsSection {
         Self::About,
     ];
 
-    fn label(self) -> &'static str {
+    pub(crate) fn label(self) -> &'static str {
         match self {
             Self::General => t!("Geral"),
             Self::Appearance => t!("Aparência"),
@@ -80,7 +85,7 @@ impl SettingsSection {
         }
     }
 
-    fn description(self) -> &'static str {
+    pub(crate) fn description(self) -> &'static str {
         match self {
             Self::General => t!("Idioma, abas e painéis."),
             Self::Appearance => t!("Tema, cores e como a lista se move."),
@@ -97,7 +102,7 @@ impl SettingsSection {
 
     // SVGs in nohrs-ui's assets: an `IconName` without its file logs an
     // error on every frame.
-    fn icon(self) -> &'static str {
+    pub(crate) fn icon(self) -> &'static str {
         match self {
             Self::General => "icons/settings.svg",
             Self::Appearance => "icons/palette.svg",
@@ -606,6 +611,41 @@ impl SettingsPage {
             .log_err();
         })
         .detach();
+    }
+
+    // ---------------------------------------------------------------------
+    // What the first section's top (`settings_home`) reaches
+
+    pub(crate) fn config(&self) -> &Config {
+        &self.config
+    }
+
+    pub(crate) fn updater_status(&self, cx: &gpui::App) -> crate::updater::Status {
+        self.updater.read(cx).status.clone()
+    }
+
+    pub(crate) fn check_updates(&mut self, cx: &mut Context<Self>) {
+        self.updater.update(cx, |updater, cx| updater.check(cx));
+    }
+
+    pub(crate) fn install_update(&mut self, cx: &mut Context<Self>) {
+        self.updater.update(cx, |updater, cx| updater.install_now(cx));
+    }
+
+    /// Writes `value` (TOML) to `[section] key`.
+    pub(crate) fn write_config(&mut self, section: &'static str, key: &'static str, value: &str, cx: &mut Context<Self>) {
+        self.write(section, key, value.to_string(), cx);
+    }
+
+    /// The switch that makes Prime Files the default file manager, or the
+    /// wait while the registry is asked.
+    pub(crate) fn default_explorer_switch(&self, cx: &mut Context<Self>) -> AnyElement {
+        match self.default_explorer {
+            Some(is_default) => {
+                self.switch_pick("home-default-explorer", is_default, Pick::DefaultExplorer(!is_default), cx).into_any_element()
+            }
+            None => checking().into_any_element(),
+        }
     }
 
     // ---------------------------------------------------------------------
@@ -2021,11 +2061,22 @@ impl SettingsPage {
 impl SettingsPage {
     fn render_section(&self, section: SettingsSection, stacked: bool, cx: &mut Context<Self>) -> Div {
         let groups = self.groups(section, cx);
+        let home = section == SettingsSection::General;
         div()
             .flex()
             .flex_col()
             .gap(px(22.0))
-            .child(
+            // The first section opens on the app and the quick choices; its
+            // own rows follow under a heading of their own.
+            .when(home, |this| this.child(self.render_home(cx)).child(
+                div()
+                    .mt(px(6.0))
+                    .text_lg()
+                    .font_weight(gpui::FontWeight::SEMIBOLD)
+                    .text_color(rgb(theme::fg()))
+                    .child(t!("Geral")),
+            ))
+            .when(!home, |this| this.child(
                 div()
                     .flex()
                     .items_center()
@@ -2056,7 +2107,7 @@ impl SettingsPage {
                             )
                             .child(div().text_sm().text_color(rgb(theme::fg_secondary())).child(section.description())),
                     ),
-            )
+            ))
             .children(groups.into_iter().map(|group| self.render_group(group, stacked, cx)))
     }
 

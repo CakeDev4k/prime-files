@@ -1023,6 +1023,9 @@ fn read_theme(table: &toml::Table, theme: &mut Theme, diagnostics: &mut Vec<Diag
     warn_unknown_keys(table, &["mode", "accent"], "theme.", diagnostics);
 }
 
+/// Reads the `[ui]` table into `ui`: the language, the listing defaults, the
+/// hover-audio behaviour and the new-tab settings. A value the wrong type gets
+/// a warning and leaves the field as it was.
 fn read_ui(table: &toml::Table, ui: &mut Ui, diagnostics: &mut Vec<Diagnostic>) {
     if let Some(value) = table.get("language") {
         match value.as_str().map(str::trim) {
@@ -1940,6 +1943,7 @@ mod tests {
         assert_eq!(config, Config::default());
     }
 
+    /// `new_tab_mode` and `new_tab_path` are read, trimmed, and known keys.
     #[test]
     fn ui_new_tab_keys_are_read() {
         let (config, diagnostics) = Config::from_toml_str(
@@ -1950,6 +1954,7 @@ mod tests {
         assert!(diagnostics.is_empty(), "both keys are known: {diagnostics:?}");
     }
 
+    /// A mode that is not `folder` or `box` warns and keeps the default.
     #[test]
     fn ui_new_tab_mode_rejects_nonsense() {
         let (config, diagnostics) = Config::from_toml_str("[ui]\nnew_tab_mode = \"nope\"\n");

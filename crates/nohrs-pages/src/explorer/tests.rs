@@ -1096,8 +1096,8 @@ async fn new_tab_appends_and_activates(cx: &mut TestAppContext) {
         .unwrap();
 }
 
-// The box itself needs a renderer, so this checks the decision it rests on:
-// Shift asks, and `[ui] new_tab_mode = "box"` asks without it.
+/// The box itself needs a renderer, so this checks the decision it rests on:
+/// Shift asks, and `[ui] new_tab_mode = "box"` asks without it.
 #[gpui::test]
 async fn new_tab_asks_when_shifted_or_configured_to(cx: &mut TestAppContext) {
     use nohrs_core::config::NewTabMode;

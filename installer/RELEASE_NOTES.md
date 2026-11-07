@@ -1,6 +1,25 @@
-## Prime Files 0.3.7
+## Prime Files 0.3.8
 
 Explorador de arquivos para Windows, rápido, escrito em Rust.
+
+### Novidades da 0.3.8
+
+- **Busca do Ctrl+T com miniaturas**: os resultados mostram o ícone do Windows, a miniatura de fotos e vídeos e a forma de onda dos sons. Ctrl+roda (ou os botões − e + da caixa) muda o tamanho, de uma lista de ícones pequenos até uma grade de miniaturas grandes; o tamanho fica guardado. Com a busca vazia, a caixa continua como antes, só com as abas.
+- **Vídeos .mov de editores no visualizador**: ProRes, QuickTime Animation e Motion JPEG, que o Windows não abre, passam a tocar no visualizador quando o FFmpeg está instalado (o Prime Files faz uma cópia leve só para a prévia, guardada para a próxima vez). Vídeos com transparência aparecem sobre um xadrez, como nos editores.
+- **Tags mais fáceis**: arraste arquivos e pastas sobre uma tag da barra lateral para marcá-los; solte sobre "Tags" ou no "+" para criar uma tag já com eles. Alt+1 a Alt+7 põem ou tiram as primeiras tags da seleção, e Alt+0 tira todas. Na lista de uma tag, o botão direito tem "Remover desta tag". O grupo de tags pode sair da barra lateral em Configurações › Geral › Layout.
+- **Favoritos separados**: os arquivos adicionados aos Favoritos do Windows ficam num grupo próprio na barra lateral, longe das pastas fixadas; um clique abre o arquivo.
+- **Colar seleciona o que chegou**: depois de colar ou soltar arquivos numa pasta, eles já aparecem selecionados.
+- **Recortado fica apagado**: o ícone de um item recortado fica transparente até você colar, como no Explorador.
+- **Ctrl+Z desfaz mover**: recortar e colar, ou arrastar para outra pasta, pode ser desfeito com Ctrl+Z ou com "Desfazer mover" no menu.
+- **Setas na faixa de abas**: com muitas abas, setas nas pontas rolam a faixa.
+- **Configurações com tela inicial**: a seção Geral abre com o Prime Files e o estado da atualização, ajustes rápidos com figuras (tema, cor de destaque, explorador padrão) e um atalho para cada seção.
+
+### Correções da 0.3.8
+
+- Com "Igual ao Windows", trocar entre claro e escuro no Windows agora muda o Prime Files na hora, sem reiniciar.
+- O menu de uma pasta fixada no Acesso rápido mostrava "Fixar no Acesso rápido" de novo; agora mostra "Desafixar". O mesmo para "Remover dos Favoritos".
+- Adicionar aos Favoritos ou fixar uma pasta demorava cerca de 15 segundos para aparecer na barra lateral; agora aparece na hora.
+- A miniatura de uma imagem recém-movida podia ficar parada por vários segundos.
 
 ### Novidades da 0.3.7
 

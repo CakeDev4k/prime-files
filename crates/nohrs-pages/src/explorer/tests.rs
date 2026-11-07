@@ -427,7 +427,10 @@ async fn a_fitted_image_is_not_decoded_whole(cx: &mut TestAppContext) {
             let photo = r"C:\nao-existe\foto.jpg";
             assert!(fitted_picture(page, photo, window, cx).is_some(), "fitted: the Shell's picture");
             page.preview_zoom = 2.0;
-            assert!(fitted_picture(page, photo, window, cx).is_none(), "zoomed in: the whole file");
+            // Zooming in keeps the fitted decode, at a bigger edge; the file
+            // is not handed to the whole decode (the `image` crate's JPEG
+            // decode left streaks on some photos at zoom).
+            assert!(fitted_picture(page, photo, window, cx).is_some(), "zoomed in: still fitted");
             page.preview_zoom = 1.0;
             assert!(
                 fitted_picture(page, r"C:\nao-existe\anima.gif", window, cx).is_none(),
@@ -441,11 +444,16 @@ async fn a_fitted_image_is_not_decoded_whole(cx: &mut TestAppContext) {
 fn a_fitted_image_is_asked_for_in_steps_that_cover_the_pane() {
     use super::view::preview::fitted_edge;
     // The pane's longer side in device pixels, rounded up to a step.
-    assert_eq!(fitted_edge(340.0, 400.0, 1.0), 512);
-    assert_eq!(fitted_edge(340.0, 789.0, 1.0), 1024);
-    assert_eq!(fitted_edge(340.0, 789.0, 1.5), 2048);
+    assert_eq!(fitted_edge(340.0, 400.0, 1.0, 1.0), 512);
+    assert_eq!(fitted_edge(340.0, 789.0, 1.0, 1.0), 1024);
+    assert_eq!(fitted_edge(340.0, 789.0, 1.5, 1.0), 2048);
+    // The zoom asks for a bigger step, so a zoomed picture stays sharp; below
+    // 100% the fit size is what the pane shows.
+    assert_eq!(fitted_edge(340.0, 400.0, 1.0, 0.5), 512);
+    assert_eq!(fitted_edge(340.0, 400.0, 1.0, 10.0), 4096);
+    assert_eq!(fitted_edge(340.0, 789.0, 1.5, 4.0), 8192);
     // Past the top step, the top step.
-    assert_eq!(fitted_edge(340.0, 2160.0, 2.0), 2048);
+    assert_eq!(fitted_edge(340.0, 2160.0, 2.0, 8.0), 12288);
 }
 
 #[gpui::test]

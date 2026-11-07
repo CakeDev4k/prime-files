@@ -311,11 +311,13 @@ impl ExplorerPane {
             return;
         };
         // Decode the photos next to the active row while it is being chosen,
-        // so the preview has them ready whichever way the keys go.
+        // so the preview has them ready whichever way the keys go. Neighbours
+        // are prefetched at the fit size: that is how they open.
         let edge = super::view::preview::fitted_edge(
             super::view::panels::preview_width(),
             f32::from(window.viewport_size().height),
             window.scale_factor(),
+            1.0,
         );
         super::view::preview::prefetch_neighbours(self, &path, edge, cx);
         if self.preview_path.as_deref() == Some(path.as_str()) {
@@ -443,6 +445,7 @@ impl ExplorerPane {
             super::view::panels::preview_width(),
             f32::from(window.viewport_size().height),
             window.scale_factor(),
+            1.0,
         );
         if is_binary_image_path(&path) {
             super::view::preview::warm_sharp_picture(self, &path, edge, cx);

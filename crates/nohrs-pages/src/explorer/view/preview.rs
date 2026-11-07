@@ -10,15 +10,17 @@ use nohrs_ui::theme::theme;
 /// Edge of the system thumbnail asked for when the pane has no richer preview.
 const PREVIEW_THUMBNAIL_SIZE: u32 = 512;
 
-/// The edges a fitted image is asked of the Shell in. Steps rather than the
-/// pane's exact size, so dragging the divider does not ask again at every
-/// pixel; the top one covers a full-height pane on a 4K screen at 100%.
-const FITTED_EDGES: [u32; 3] = [512, 1024, 2048];
+/// The edges a fitted image is asked of Windows' decoder in. Steps rather than
+/// the pane's exact size, so dragging the divider (or zooming) does not ask
+/// again at every pixel; the first ones cover a full-height pane at 100%, and
+/// the larger ones a zoomed-in picture, whose decode stays with Windows' codec
+/// (the `image` crate's JPEG decoder left streaks on some photos at zoom).
+const FITTED_EDGES: [u32; 6] = [512, 1024, 2048, 4096, 8192, 12288];
 
-/// The edge to ask for so an image fitted in the preview is drawn from at
-/// least as many pixels as it covers.
-pub(crate) fn fitted_edge(preview_width: f32, window_height: f32, scale: f32) -> u32 {
-    let needed = (preview_width.max(window_height) * scale).ceil();
+/// The edge to ask for so an image fitted in the preview — at its `zoom` — is
+/// drawn from at least as many pixels as it covers.
+pub(crate) fn fitted_edge(preview_width: f32, window_height: f32, scale: f32, zoom: f32) -> u32 {
+    let needed = (preview_width.max(window_height) * scale * zoom.max(1.0)).ceil();
     FITTED_EDGES
         .into_iter()
         .find(|&edge| edge as f32 >= needed)
@@ -28,15 +30,16 @@ pub(crate) fn fitted_edge(preview_width: f32, window_height: f32, scale: f32) ->
 /// An image fitted in the preview, drawn from the Shell's picture at the
 /// size the pane shows, or `None` to decode the file itself.
 ///
-/// Decoding the file is what `img(path)` does, at full size: a 48 MP photo
-/// took the process from ~122 to ~677 MB, held for as long as it stayed in
-/// the preview (`docs/PERFORMANCE.md`, passada 7). Fitted, the pane shows at
-/// most a couple of megapixels of it. The Shell's picture comes from the same
-/// cache and workers as the grid's tiles, with Windows' own codecs (and the
-/// photo's orientation), and the grid tile of the same file is shown while it
-/// is made. The file is still decoded whole when that is what is needed: a
-/// zoom past 100%, an animated GIF (the Shell's picture is one frame), or a
-/// format the Shell has no picture of.
+/// Windows' decoder is asked for the size the pane shows, actually shown: a
+/// fit at 100%, or `edge` growing with the zoom, up to the picture's own size.
+/// Decoding the file whole is what `img(path)` does: a 48 MP photo took the
+/// process from ~122 to ~677 MB, held for as long as it stayed in the preview
+/// (`docs/PERFORMANCE.md`, passada 7), and its `image`-crate JPEG decode left
+/// streaks on some photos. Fitted, the pane shows at most what it draws; the
+/// Shell's picture comes from the same cache and workers as the grid's tiles,
+/// and the grid tile of the same file is shown while it is made. The file is
+/// still decoded whole only for an animated GIF (the Shell's picture is one
+/// frame) or a format Windows' decoder cannot read.
 pub(crate) fn fitted_picture(
     page: &mut ExplorerPane,
     image_path: &str,
@@ -44,7 +47,7 @@ pub(crate) fn fitted_picture(
     cx: &mut Context<ExplorerPane>,
 ) -> Option<AnyElement> {
     let animated = image_path.to_lowercase().ends_with(".gif");
-    if page.preview_zoom > 1.0 || animated {
+    if animated {
         return None;
     }
     // Quick look shows the picture over the whole pane: decoded for the side
@@ -54,13 +57,17 @@ pub(crate) fn fitted_picture(
     } else {
         super::panels::preview_width()
     };
-    let edge = fitted_edge(width, f32::from(window.viewport_size().height), window.scale_factor());
+    let edge = fitted_edge(
+        width,
+        f32::from(window.viewport_size().height),
+        window.scale_factor(),
+        page.preview_zoom,
+    );
     // The file decoded at this size, sharp; the Shell's picture (or the grid
     // tile) only while that is being made, or if it cannot be.
     // A file Windows' decoder could not read (a WebP or HEIC without its
-    // codec, say) is decoded whole, as a zoom past 100% does: the Shell's
-    // picture alone left a small tile stretched to the pane, blurred until
-    // the zoom went past 100%.
+    // codec, say) is decoded whole, as before, rather than leaving a small
+    // tile stretched to the pane.
     if page.preview_sharp.as_ref().is_some_and(|sharp| sharp.path == image_path && sharp.failed) {
         return None;
     }
@@ -76,8 +83,10 @@ pub(crate) fn fitted_picture(
     // The Shell's picture (or the smaller fitted one already held) shows while
     // the sharp decode is made: better a soft picture at once than an empty
     // panel. A prefetched neighbour skips this and draws sharp on the first
-    // frame (`prefetch_neighbours`).
-    let shown = match page.thumbnails.picture(image_path, edge, cx) {
+    // frame (`prefetch_neighbours`). The placeholder is asked at a fit size,
+    // not the zoomed one: a zoomed request would have the Shell build a huge
+    // thumbnail for a picture about to be replaced.
+    let shown = match page.thumbnails.picture(image_path, edge.min(2048), cx) {
         crate::explorer::thumbnails::Picture::Shown(image) => Some(image),
         crate::explorer::thumbnails::Picture::Waiting(meanwhile) => meanwhile,
         crate::explorer::thumbnails::Picture::Unavailable => return None,

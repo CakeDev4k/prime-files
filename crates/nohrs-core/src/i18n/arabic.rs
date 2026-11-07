@@ -542,4 +542,9 @@ pub(super) static ARABIC: &[(&str, &str)] = &[
     ("{path}: não está mais onde foi movido", "{path}: لم يعد في المكان الذي نُقل إليه"),
     ("{path}: o lugar de origem já está ocupado", "{path}: المكان الأصلي مشغول بالفعل"),
     ("Favoritos", "المفضلة"),
+    ("Abas abertas", "علامات التبويب المفتوحة"),
+    ("No computador", "على الكمبيوتر"),
+    ("Escolher", "اختيار"),
+    ("Fechar", "إغلاق"),
+    ("Arraste para levar o arquivo", "اسحب لأخذ الملف"),
 ];

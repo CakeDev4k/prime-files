@@ -135,6 +135,19 @@ impl Waveforms {
     /// The bars of `path`, or `None` while they are on their way or when the
     /// file cannot be decoded; the tile shows the icon meanwhile.
     pub fn get(&mut self, path: &str, size: u64, modified: u64, cx: &mut Context<ExplorerPane>) -> Option<Arc<[u8]>> {
+        self.get_for(path, size, modified, |pane| &mut pane.waveforms, cx)
+    }
+
+    /// [`Self::get`] for waveforms held by another view than a pane (the
+    /// Ctrl+T search): `cache` finds them again when the bars arrive.
+    pub fn get_for<V: 'static>(
+        &mut self,
+        path: &str,
+        size: u64,
+        modified: u64,
+        cache: fn(&mut V) -> &mut Waveforms,
+        cx: &mut Context<V>,
+    ) -> Option<Arc<[u8]>> {
         let frame = self.frame;
         if let Some(slot) = self.entries.get_mut(path) {
             if slot.size == size && slot.modified == modified {
@@ -149,7 +162,7 @@ impl Waveforms {
                 self.loading -= 1;
             }
         }
-        let task = request(path, size, modified, cx);
+        let task = request(path, size, modified, cache, cx);
         self.entries
             .insert(path.to_string(), Slot { entry: Entry::Loading(task), size, modified, last_seen: frame });
         self.loading += 1;
@@ -168,7 +181,13 @@ impl Waveforms {
     }
 }
 
-fn request(path: &str, size: u64, modified: u64, cx: &mut Context<ExplorerPane>) -> Task<()> {
+fn request<V: 'static>(
+    path: &str,
+    size: u64,
+    modified: u64,
+    cache: fn(&mut V) -> &mut Waveforms,
+    cx: &mut Context<V>,
+) -> Task<()> {
     let (reply, answer) = async_channel::bounded(1);
     service().ask(Job { path: path.to_string(), size, modified, reply });
     let path = path.to_string();
@@ -176,8 +195,8 @@ fn request(path: &str, size: u64, modified: u64, cx: &mut Context<ExplorerPane>)
         // A closed channel: the worker dropped the job, which counts as no
         // waveform for now; the next visit asks again.
         let bars = answer.recv().await.ok().flatten();
-        this.update(cx, |pane, cx| {
-            pane.waveforms.arrived(&path, modified, bars);
+        this.update(cx, |view, cx| {
+            cache(view).arrived(&path, modified, bars);
             cx.notify();
         })
         .log_err();

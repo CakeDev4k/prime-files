@@ -542,4 +542,9 @@ pub(super) static HUNGARIAN: &[(&str, &str)] = &[
     ("{path}: não está mais onde foi movido", "{path}: már nincs ott, ahová áthelyezted"),
     ("{path}: o lugar de origem já está ocupado", "{path}: az eredeti helyen már van valami"),
     ("Favoritos", "Kedvencek"),
+    ("Abas abertas", "Megnyitott lapok"),
+    ("No computador", "A számítógépen"),
+    ("Escolher", "Kiválasztás"),
+    ("Fechar", "Bezárás"),
+    ("Arraste para levar o arquivo", "Húzd el a fájl elviteléhez"),
 ];

@@ -5933,4 +5933,59 @@ pub(super) static EXTRA: &[(&str, [&str; 6])] = &[
             "收藏夹",
         ],
     ),
+    (
+        "Abas abertas",
+        [
+            "Onglets ouverts",
+            "Geöffnete Tabs",
+            "Schede aperte",
+            "Открытые вкладки",
+            "開いているタブ",
+            "已打开的标签页",
+        ],
+    ),
+    (
+        "No computador",
+        [
+            "Sur l'ordinateur",
+            "Auf dem Computer",
+            "Sul computer",
+            "На компьютере",
+            "このコンピューター",
+            "此电脑中",
+        ],
+    ),
+    (
+        "Escolher",
+        [
+            "Choisir",
+            "Auswählen",
+            "Scegli",
+            "Выбрать",
+            "選択",
+            "选择",
+        ],
+    ),
+    (
+        "Fechar",
+        [
+            "Fermer",
+            "Schließen",
+            "Chiudi",
+            "Закрыть",
+            "閉じる",
+            "关闭",
+        ],
+    ),
+    (
+        "Arraste para levar o arquivo",
+        [
+            "Faites glisser pour emporter le fichier",
+            "Ziehen, um die Datei mitzunehmen",
+            "Trascina per portare il file",
+            "Перетащите, чтобы забрать файл",
+            "ドラッグしてファイルを持っていけます",
+            "拖动即可带走文件",
+        ],
+    ),
 ];

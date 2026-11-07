@@ -983,4 +983,9 @@ pub(super) static STRINGS: &[(&str, &str, &str)] = &[
     ("{path}: não está mais onde foi movido", "{path}: no longer where it was moved to", "{path}: ya no está donde se movió"),
     ("{path}: o lugar de origem já está ocupado", "{path}: something else is already at its original place", "{path}: el lugar de origen ya está ocupado"),
     ("Favoritos", "Favorites", "Favoritos"),
+    ("Abas abertas", "Open tabs", "Pestañas abiertas"),
+    ("No computador", "On this computer", "En el equipo"),
+    ("Escolher", "Choose", "Elegir"),
+    ("Fechar", "Close", "Cerrar"),
+    ("Arraste para levar o arquivo", "Drag to take the file along", "Arrastra para llevar el archivo"),
 ];

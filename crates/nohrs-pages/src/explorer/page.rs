@@ -202,9 +202,11 @@ pub struct ExplorerPage {
     background_tabs: bool,
     /// The Ctrl+T search box, while it is open.
     pub(crate) palette: Option<super::palette::Palette>,
+    /// The search box's pictures and size, kept between openings.
+    pub(crate) palette_media: super::palette::PaletteMedia,
     // Last-applied `[ui]` settings, replayed onto tabs opened later so they match
     // config rather than reverting to pane defaults.
-    ui: Ui,
+    pub(crate) ui: Ui,
     // Host KV store for session persistence (§4). `None` disables save/restore
     // (e.g. when the store failed to open, or in tests).
     store: Option<Arc<dyn KvStore>>,
@@ -284,6 +286,7 @@ impl ExplorerPage {
             synced_panes: false,
             background_tabs: true,
             palette: None,
+            palette_media: Default::default(),
             ui: Ui::default(),
             store,
             save_task: None,

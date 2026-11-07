@@ -332,14 +332,38 @@ impl Thumbnails {
         self.fetch(path, Kind::Icon, is_dir, size, slot, cx)
     }
 
-    fn fetch(
+    /// [`Self::get`] for a cache held by another view than a pane (the
+    /// Ctrl+T search): `cache` finds it again when the picture arrives.
+    pub fn get_for<V: 'static>(
+        &mut self,
+        path: &str,
+        size: u32,
+        cache: fn(&mut V) -> &mut Thumbnails,
+        cx: &mut Context<V>,
+    ) -> Option<Arc<RenderImage>> {
+        self.fetch(path, Kind::Thumbnail, false, size, cache, cx)
+    }
+
+    /// [`Self::icon`] for a cache held by another view than a pane.
+    pub fn icon_for<V: 'static>(
+        &mut self,
+        path: &str,
+        is_dir: bool,
+        size: u32,
+        cache: fn(&mut V) -> &mut Thumbnails,
+        cx: &mut Context<V>,
+    ) -> Option<Arc<RenderImage>> {
+        self.fetch(path, Kind::Icon, is_dir, size, cache, cx)
+    }
+
+    fn fetch<V: 'static>(
         &mut self,
         path: &str,
         kind: Kind,
         is_dir: bool,
         size: u32,
-        cache: fn(&mut ExplorerPane) -> &mut Thumbnails,
-        cx: &mut Context<ExplorerPane>,
+        cache: fn(&mut V) -> &mut Thumbnails,
+        cx: &mut Context<V>,
     ) -> Option<Arc<RenderImage>> {
         let frame = self.frame;
         if !self.entries.contains_key(path) {
@@ -447,13 +471,13 @@ fn retry_delay(retries: u8) -> Duration {
 }
 
 /// Puts the job on a worker's queue, and the answer in the slot when it comes.
-fn request(
+fn request<V: 'static>(
     path: &str,
     kind: Kind,
     is_dir: bool,
     size: u32,
-    cache: fn(&mut ExplorerPane) -> &mut Thumbnails,
-    cx: &mut Context<ExplorerPane>,
+    cache: fn(&mut V) -> &mut Thumbnails,
+    cx: &mut Context<V>,
 ) -> Task<()> {
     let reply = service().request(path.to_string(), kind, is_dir, size);
     let path = path.to_string();
@@ -464,8 +488,8 @@ fn request(
             image: None,
             settled: false,
         });
-        this.update(cx, |pane, cx| {
-            cache(pane).arrived(&path, kind, size, answer, cx);
+        this.update(cx, |view, cx| {
+            cache(view).arrived(&path, kind, size, answer, cx);
             cx.notify();
         })
         .ok();

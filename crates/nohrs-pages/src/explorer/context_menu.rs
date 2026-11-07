@@ -65,10 +65,11 @@ enum Command {
     RestoreFromBin,
     PurgeFromBin,
     EmptyBin,
+    RemoveFromTag,
 }
 
 impl Command {
-    const ALL: [Command; 48] = [
+    const ALL: [Command; 49] = [
         Command::ViewList,
         Command::ViewGrid,
         Command::ViewTree,
@@ -117,6 +118,7 @@ impl Command {
         Command::RestoreFromBin,
         Command::PurgeFromBin,
         Command::EmptyBin,
+        Command::RemoveFromTag,
     ];
 
     fn from_id(id: u32) -> Option<Self> {
@@ -354,6 +356,14 @@ impl ExplorerPane {
                     } else {
                         before.push(entry);
                     }
+                }
+                // In a tag's list, what is in it can leave it, first thing:
+                // Delete there would send the file itself to the Recycle Bin.
+                if super::tags::tag_of_location(&self.cwd).is_some() {
+                    before.insert(
+                        0,
+                        Entry::command(Command::RemoveFromTag as u32, t!("Remover desta tag")).with_icon("icons/tag.svg"),
+                    );
                 }
                 (before, after, windows)
             }
@@ -983,8 +993,22 @@ impl ExplorerPane {
                 let paths = self.selected_paths();
                 let name = t!("Nova tag").to_string();
                 let id = super::tags::Tags::create(name.clone(), &paths, cx);
-                self.sidebar_visible = true;
-                self.begin_sidebar_input(super::places::SidebarInputPurpose::RenameTag(id), name, window, cx);
+                // With the tags out of the sidebar there is no field to
+                // name it in: it keeps the name, renamed from its menu later.
+                if super::tags::in_sidebar() {
+                    self.sidebar_visible = true;
+                    self.begin_sidebar_input(super::places::SidebarInputPurpose::RenameTag(id), name, window, cx);
+                } else {
+                    self.set_status(super::types::StatusLevel::Info, nohrs_core::tf!("Tag {tag} criada", tag = name));
+                }
+            }
+            Command::RemoveFromTag => {
+                if let Some(tag) = super::tags::tag_of_location(&self.cwd) {
+                    let paths = self.selected_paths();
+                    super::tags::Tags::remove(&paths, tag, cx);
+                    // The tag's list is the list of what has it.
+                    self.reload(cx);
+                }
             }
             Command::FitColumn
             | Command::FitAllColumns

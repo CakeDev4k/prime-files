@@ -686,6 +686,12 @@ impl SettingsPage {
                         self.switch("move-grips", layout.move_grips, ("layout", "move_grips"), cx),
                     )
                     .reset(("layout", "move_grips"), !layout.move_grips, "false"),
+                    Row::hint(
+                        t!("Tags na barra lateral"),
+                        t!("O grupo de tags embaixo dos lugares. Desligado, as tags continuam nos arquivos e no menu do botão direito."),
+                        self.switch("sidebar-tags", layout.sidebar_tags, ("layout", "sidebar_tags"), cx),
+                    )
+                    .reset(("layout", "sidebar_tags"), layout.sidebar_tags, "true"),
                 ],
             ),
         ]

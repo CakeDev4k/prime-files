@@ -82,7 +82,9 @@ pub fn render(
     if !places.other.iter().any(|place| place.parsing_name.eq_ignore_ascii_case(crate::explorer::network::NETWORK)) {
         list = network_rows(page, list, cx);
     }
-    list = tag_rows(page, list, cx);
+    if crate::explorer::tags::in_sidebar() {
+        list = tag_rows(page, list, cx);
+    }
 
     div()
         .id("sidebar")
@@ -225,9 +227,16 @@ fn render_band(
             let id = Tags::create(name.clone(), &[], cx);
             this.begin_sidebar_input(SidebarInputPurpose::RenameTag(id), name, window, cx);
         }))
+        .drag_over::<ExternalPaths>(|style, _, _, _| style.bg(rgb(theme::accent_subtle())).text_color(rgb(theme::accent())))
+        .on_drop(cx.listener(|this, paths: &ExternalPaths, window, cx| {
+            cx.stop_propagation();
+            this.drop_on_new_tag(paths.paths(), window, cx);
+        }))
         .child(Icon::new(IconName::Plus).size_3())
         .into_any_element();
-    sections.push((t!("Tags").to_string(), "icons/tag.svg", tags, Some(new_tag)));
+    if crate::explorer::tags::in_sidebar() {
+        sections.push((t!("Tags").to_string(), "icons/tag.svg", tags, Some(new_tag)));
+    }
 
     // Not shrunk to the band: as wide as its columns, so the band has
     // something to scroll (in a block parent it took the band's width and
@@ -322,6 +331,11 @@ fn band_cell(item: BandItem, cx: &mut Context<ExplorerPane>) -> AnyElement {
     let opened = item.target.clone();
     let in_tab = item.target.clone();
     let menu = item.menu.clone();
+    // A tag takes the files dropped on it.
+    let dropped_tag = match &item.menu {
+        Some(BandMenu::Tag(tag)) => Some(*tag),
+        _ => None,
+    };
     let tip = item.name.clone();
     let name = div()
         .min_w(px(0.0))
@@ -362,6 +376,13 @@ fn band_cell(item: BandItem, cx: &mut Context<ExplorerPane>) -> AnyElement {
                 }
             }),
         )
+        .when_some(dropped_tag, |this, tag| {
+            this.drag_over::<ExternalPaths>(|style, _, _, _| style.bg(rgb(theme::accent_subtle())))
+                .on_drop(cx.listener(move |this, paths: &ExternalPaths, _, cx| {
+                    cx.stop_propagation();
+                    this.drop_on_tag(tag, paths.paths(), cx);
+                }))
+        })
         .when_some(menu, |this, menu| {
             this.on_mouse_down(
                 MouseButton::Right,
@@ -451,9 +472,18 @@ fn tag_rows(page: &mut ExplorerPane, mut list: Div, cx: &mut Context<ExplorerPan
     let counts = Tags::counts(cx);
     list = list.child(div().my(px(8.0)).mx(px(6.0)).h(px(1.0)).bg(rgb(theme::border()))).child(
         div()
+            .id("tags-heading")
             .flex()
             .items_center()
             .justify_between()
+            .rounded(px(4.0))
+            // Files dropped on the heading (or its +) get a new tag of their
+            // own, named at once.
+            .drag_over::<ExternalPaths>(|style, _, _, _| style.bg(rgb(theme::accent_subtle())).text_color(rgb(theme::accent())))
+            .on_drop(cx.listener(|this, paths: &ExternalPaths, window, cx| {
+                cx.stop_propagation();
+                this.drop_on_new_tag(paths.paths(), window, cx);
+            }))
             .h(px(24.0))
             .pl(px(8.0))
             .pr(px(4.0))
@@ -478,6 +508,16 @@ fn tag_rows(page: &mut ExplorerPane, mut list: Div, cx: &mut Context<ExplorerPan
                     .child(Icon::new(IconName::Plus).size_3()),
             ),
     );
+    if tags.is_empty() {
+        list = list.child(
+            div()
+                .px(px(8.0))
+                .py(px(4.0))
+                .text_xs()
+                .text_color(rgb(theme::muted()))
+                .child(t!("Arraste arquivos ou pastas para cá para criar uma tag.")),
+        );
+    }
     for tag in tags {
         let renaming = page
             .sidebar
@@ -493,6 +533,7 @@ fn tag_rows(page: &mut ExplorerPane, mut list: Div, cx: &mut Context<ExplorerPan
         let active = page.cwd == location;
         let count = counts.get(&tag.id).copied().unwrap_or(0);
         let id = tag.id;
+        let tag_color = tag.color;
         list = list.child(
             simple_row(
                 SharedString::from(format!("tag-{}", tag.id)),
@@ -511,10 +552,50 @@ fn tag_rows(page: &mut ExplorerPane, mut list: Div, cx: &mut Context<ExplorerPan
                     cx.stop_propagation();
                     this.open_tag_menu(id, window, cx);
                 }),
-            ),
+            )
+            // Files and folders dropped on a tag get it, as on Finder's and
+            // the Files app's sidebar.
+            .drag_over::<ExternalPaths>(move |style, _, _, _| {
+                style.bg(rgb(theme::accent_subtle())).border_1().border_color(rgb(tag_color))
+            })
+            .on_drop(cx.listener(move |this, paths: &ExternalPaths, _, cx| {
+                cx.stop_propagation();
+                this.drop_on_tag(id, paths.paths(), cx);
+            })),
         );
     }
     list
+}
+
+impl ExplorerPane {
+    /// Puts tag `id` on what was dropped on it, saying so in the footer.
+    fn drop_on_tag(&mut self, id: u32, paths: &[std::path::PathBuf], cx: &mut Context<Self>) {
+        let paths: Vec<String> = paths.iter().map(|path| path.to_string_lossy().into_owned()).collect();
+        if paths.is_empty() {
+            return;
+        }
+        let added = Tags::add(&paths, id, cx);
+        let name = Tags::get(id, cx).map(|tag| tag.name).unwrap_or_default();
+        let text = if added == 0 {
+            nohrs_core::tf!("Já tinham a tag {tag}", tag = name)
+        } else {
+            nohrs_core::i18n::plural(added, nohrs_core::k!("{n} item marcado com {tag}"), nohrs_core::k!("{n} itens marcados com {tag}"))
+                .replace("{tag}", &name)
+        };
+        self.set_status(crate::explorer::types::StatusLevel::Info, text);
+        cx.notify();
+    }
+
+    /// A new tag on what was dropped, its name field open.
+    fn drop_on_new_tag(&mut self, paths: &[std::path::PathBuf], window: &mut Window, cx: &mut Context<Self>) {
+        let paths: Vec<String> = paths.iter().map(|path| path.to_string_lossy().into_owned()).collect();
+        if paths.is_empty() {
+            return;
+        }
+        let name = t!("Nova tag").to_string();
+        let id = Tags::create(name.clone(), &paths, cx);
+        self.begin_sidebar_input(SidebarInputPurpose::RenameTag(id), name, window, cx);
+    }
 }
 
 // A sidebar row with no tree around it: an icon and a name.

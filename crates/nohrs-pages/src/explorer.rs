@@ -36,6 +36,7 @@ mod state;
 pub(crate) mod thumbnails;
 pub(crate) mod waveforms;
 pub(crate) mod tags;
+pub(crate) mod video_proxy;
 mod tree;
 mod types;
 /// Rendering of a single explorer pane: header, sidebar, listing, and preview.

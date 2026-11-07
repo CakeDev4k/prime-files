@@ -51,6 +51,32 @@ pub enum Action {
     OpenCommandPrompt,
     OpenPowerShell,
     OpenFileExplorer,
+    /// The first … seventh tag, on or off the selection.
+    Tag1,
+    Tag2,
+    Tag3,
+    Tag4,
+    Tag5,
+    Tag6,
+    Tag7,
+    /// Every tag off the selection.
+    TagsClear,
+}
+
+impl Action {
+    /// For Tag1…Tag7, which tag (0-based) in the sidebar's order.
+    pub fn tag_index(self) -> Option<usize> {
+        match self {
+            Action::Tag1 => Some(0),
+            Action::Tag2 => Some(1),
+            Action::Tag3 => Some(2),
+            Action::Tag4 => Some(3),
+            Action::Tag5 => Some(4),
+            Action::Tag6 => Some(5),
+            Action::Tag7 => Some(6),
+            _ => None,
+        }
+    }
 }
 
 /// A command's place in the table: its id in `config.toml`, the group and
@@ -76,6 +102,7 @@ const SEARCH: &str = crate::k!("Seleção e busca");
 const PANES: &str = crate::k!("Abas e painéis");
 const VIEW: &str = crate::k!("Exibição");
 const OPEN: &str = crate::k!("Abrir em outro programa");
+const TAGS: &str = crate::k!("Tags");
 
 /// Every command, in the order the settings page lists them.
 pub const ACTIONS: &[ActionInfo] = &[
@@ -127,6 +154,16 @@ pub const ACTIONS: &[ActionInfo] = &[
     info(Action::OpenCommandPrompt, "open_command_prompt", OPEN, crate::k!("Abrir a pasta no Prompt de Comando"), &[]),
     info(Action::OpenPowerShell, "open_powershell", OPEN, crate::k!("Abrir a pasta no PowerShell"), &[]),
     info(Action::OpenFileExplorer, "open_file_explorer", OPEN, crate::k!("Abrir a pasta no Explorador do Windows"), &[]),
+    // Finder puts its tags on Ctrl+1…7 and clears them with Ctrl+0; here
+    // Ctrl+1, Ctrl+2 and Ctrl+0 are the panes and the zoom, so Alt.
+    info(Action::Tag1, "tag_1", TAGS, crate::k!("Pôr ou tirar a 1ª tag"), &["alt-1"]),
+    info(Action::Tag2, "tag_2", TAGS, crate::k!("Pôr ou tirar a 2ª tag"), &["alt-2"]),
+    info(Action::Tag3, "tag_3", TAGS, crate::k!("Pôr ou tirar a 3ª tag"), &["alt-3"]),
+    info(Action::Tag4, "tag_4", TAGS, crate::k!("Pôr ou tirar a 4ª tag"), &["alt-4"]),
+    info(Action::Tag5, "tag_5", TAGS, crate::k!("Pôr ou tirar a 5ª tag"), &["alt-5"]),
+    info(Action::Tag6, "tag_6", TAGS, crate::k!("Pôr ou tirar a 6ª tag"), &["alt-6"]),
+    info(Action::Tag7, "tag_7", TAGS, crate::k!("Pôr ou tirar a 7ª tag"), &["alt-7"]),
+    info(Action::TagsClear, "tags_clear", TAGS, crate::k!("Tirar todas as tags"), &["alt-0"]),
 ];
 
 const fn info(

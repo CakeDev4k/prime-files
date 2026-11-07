@@ -319,6 +319,9 @@ pub struct Layout {
     /// another side. Off by default: dragging it was not obvious, and the
     /// sides are also chosen here and from the bubbles of the listing's edges.
     pub move_grips: bool,
+    /// The tags' group in the sidebar. Off hides it; the tags stay on the
+    /// files and in their menu.
+    pub sidebar_tags: bool,
 }
 
 impl Default for Layout {
@@ -329,6 +332,7 @@ impl Default for Layout {
             terminal: DockSide::Bottom,
             vertical_tabs: false,
             move_grips: false,
+            sidebar_tags: true,
         }
     }
 }
@@ -1275,7 +1279,11 @@ fn read_layout(table: &toml::Table, layout: &mut Layout, diagnostics: &mut Vec<D
             }
         }
     }
-    for (key, slot) in [("vertical_tabs", &mut layout.vertical_tabs), ("move_grips", &mut layout.move_grips)] {
+    for (key, slot) in [
+        ("vertical_tabs", &mut layout.vertical_tabs),
+        ("move_grips", &mut layout.move_grips),
+        ("sidebar_tags", &mut layout.sidebar_tags),
+    ] {
         if let Some(value) = table.get(key) {
             match value.as_bool() {
                 Some(flag) => *slot = flag,
@@ -1285,7 +1293,7 @@ fn read_layout(table: &toml::Table, layout: &mut Layout, diagnostics: &mut Vec<D
     }
     warn_unknown_keys(
         table,
-        &["sidebar", "preview", "terminal", "vertical_tabs", "move_grips"],
+        &["sidebar", "preview", "terminal", "vertical_tabs", "move_grips", "sidebar_tags"],
         "layout.",
         diagnostics,
     );

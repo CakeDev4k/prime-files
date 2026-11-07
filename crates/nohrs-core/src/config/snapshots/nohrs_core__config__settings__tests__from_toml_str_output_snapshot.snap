@@ -50,6 +50,7 @@ expression: parsed
             terminal: Bottom,
             vertical_tabs: false,
             move_grips: false,
+            sidebar_tags: true,
         },
         menu: Menu {
             quick: [

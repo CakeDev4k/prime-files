@@ -87,6 +87,42 @@ impl ExplorerPane {
             Action::OpenCommandPrompt => self.open_in(OpenIn::CommandPrompt, cx),
             Action::OpenPowerShell => self.open_in(OpenIn::PowerShell, cx),
             Action::OpenFileExplorer => self.open_in(OpenIn::FileExplorer, cx),
+            Action::Tag1
+            | Action::Tag2
+            | Action::Tag3
+            | Action::Tag4
+            | Action::Tag5
+            | Action::Tag6
+            | Action::Tag7 => {
+                let paths = self.selected_paths();
+                let tag = action.tag_index().and_then(|index| super::tags::Tags::nth(index, cx));
+                match tag {
+                    Some(tag) if !paths.is_empty() => {
+                        let on = !super::tags::Tags::all_have(&paths, tag.id, cx);
+                        super::tags::Tags::toggle(&paths, tag.id, cx);
+                        let text = if on {
+                            nohrs_core::tf!("Tag {tag} posta", tag = tag.name)
+                        } else {
+                            nohrs_core::tf!("Tag {tag} tirada", tag = tag.name)
+                        };
+                        self.set_status(super::types::StatusLevel::Info, text);
+                    }
+                    Some(_) => {}
+                    None => self.set_status(
+                        super::types::StatusLevel::Info,
+                        nohrs_core::t!("Não há tag nessa posição").to_string(),
+                    ),
+                }
+                cx.notify();
+            }
+            Action::TagsClear => {
+                let paths = self.selected_paths();
+                if !paths.is_empty() {
+                    super::tags::Tags::clear(&paths, cx);
+                    self.set_status(super::types::StatusLevel::Info, nohrs_core::t!("Tags tiradas").to_string());
+                    cx.notify();
+                }
+            }
             Action::NewTab
             | Action::CloseTab
             | Action::SplitVertical

@@ -1020,6 +1020,30 @@ fn render_media(page: &ExplorerPane, cx: &mut Context<ExplorerPane>) -> AnyEleme
                     .size_16()
                     .text_color(rgb(theme::gray_400())),
             ),
+            // A video Windows cannot decode, being converted for the preview
+            // (`video_proxy`): how far it got, and why it waits.
+            (None, None) if media.preparing.is_some() => screen.child(
+                div()
+                    .flex()
+                    .flex_col()
+                    .items_center()
+                    .gap(px(6.0))
+                    .px(px(16.0))
+                    .child(div().text_sm().text_color(rgb(theme::fg())).child(match media.preparing.flatten() {
+                        Some(done) => nohrs_core::tf!(
+                            "Preparando a prévia… {percent}%",
+                            percent = (done * 100.0).round() as u32
+                        ),
+                        None => t!("Preparando a prévia…").to_string(),
+                    }))
+                    .child(
+                        div()
+                            .text_xs()
+                            .text_center()
+                            .text_color(rgb(theme::muted()))
+                            .child(t!("O Windows não abre este formato; o FFmpeg faz uma cópia leve para a prévia.")),
+                    ),
+            ),
             (None, None) => screen.child(div().text_xs().text_color(rgb(theme::muted())).child(t!("Carregando…"))),
         });
     let controls = div()

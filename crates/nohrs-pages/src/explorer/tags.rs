@@ -72,6 +72,20 @@ impl Global for Tags {}
 // Which paths carry each tag, for the listing thread.
 static TAGGED: Mutex<Option<HashMap<u32, Vec<String>>>> = Mutex::new(None);
 
+// `layout.sidebar_tags`: whether the sidebar shows the tags' group.
+static IN_SIDEBAR: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(true);
+
+/// Shows or hides the tags' group in the sidebar. Whether it changed.
+pub(crate) fn set_in_sidebar(shown: bool) -> bool {
+    IN_SIDEBAR.swap(shown, std::sync::atomic::Ordering::Relaxed) != shown
+}
+
+/// Whether the sidebar shows the tags' group.
+pub(crate) fn in_sidebar() -> bool {
+    IN_SIDEBAR.load(std::sync::atomic::Ordering::Relaxed)
+}
+
+
 /// The same item however its path was spelled.
 fn item_key(path: &str) -> String {
     path.trim_end_matches(['\\', '/']).replace('/', "\\").to_lowercase()
@@ -255,6 +269,54 @@ impl Tags {
                 }
             }
         });
+    }
+
+    /// Puts tag `id` on every one of `paths` (a drop on the tag: it adds,
+    /// never takes off). How many did not have it.
+    pub(crate) fn add(paths: &[String], id: u32, cx: &mut App) -> usize {
+        let mut added = 0;
+        Self::change(cx, |tags| {
+            if !tags.tags.iter().any(|tag| tag.id == id) {
+                return;
+            }
+            for path in paths {
+                let (_, ids) = tags.items.entry(item_key(path)).or_insert_with(|| (path.clone(), Vec::new()));
+                if !ids.contains(&id) {
+                    ids.push(id);
+                    added += 1;
+                }
+            }
+        });
+        added
+    }
+
+    /// Takes tag `id` off `paths` ("Remove from this tag").
+    pub(crate) fn remove(paths: &[String], id: u32, cx: &mut App) {
+        Self::change(cx, |tags| {
+            for path in paths {
+                let key = item_key(path);
+                if let Some((_, ids)) = tags.items.get_mut(&key) {
+                    ids.retain(|tag| *tag != id);
+                    if ids.is_empty() {
+                        tags.items.remove(&key);
+                    }
+                }
+            }
+        });
+    }
+
+    /// Takes every tag off `paths` (Alt+0).
+    pub(crate) fn clear(paths: &[String], cx: &mut App) {
+        Self::change(cx, |tags| {
+            for path in paths {
+                tags.items.remove(&item_key(path));
+            }
+        });
+    }
+
+    /// The `index`th tag (0-based) in the sidebar's order, for Alt+1….
+    pub(crate) fn nth(index: usize, cx: &App) -> Option<Tag> {
+        cx.try_global::<Self>()?.tags.get(index).cloned()
     }
 
     /// Makes a tag with the next colour and puts it on `paths`. Returns its id.

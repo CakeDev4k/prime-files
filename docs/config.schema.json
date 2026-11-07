@@ -266,6 +266,11 @@
           "default": "left",
           "description": "The side the sidebar with the places docks to."
         },
+        "sidebar_tags": {
+          "default": true,
+          "description": "The tags' group in the sidebar. Off hides it; the tags stay on the\nfiles and in their menu.",
+          "type": "boolean"
+        },
         "terminal": {
           "$ref": "#/$defs/DockSide",
           "default": "bottom",
@@ -610,6 +615,7 @@
         "move_grips": false,
         "preview": "right",
         "sidebar": "left",
+        "sidebar_tags": true,
         "terminal": "bottom",
         "vertical_tabs": false
       },

@@ -44,6 +44,9 @@ pub(crate) struct MediaPreview {
     pub playing: bool,
     pub has_video: bool,
     pub error: Option<String>,
+    /// While a video Windows cannot play is converted for the preview
+    /// (`video_proxy`): how far, 0..=1, or `Some(None)` with no length known.
+    pub preparing: Option<Option<f32>>,
     /// Loudest sample of each `PEAK_BLOCKS_PER_SECOND`th of a second of an
     /// audio file, 0..=1, filled from the start as the file is read. Empty
     /// for video. An `Arc` so a frame's paint can hold it without a copy.
@@ -62,6 +65,8 @@ enum Update {
     State { position: f64, duration: f64, playing: bool, has_video: bool },
     /// The next stretch of `MediaPreview::peaks`.
     Peaks(Vec<f32>),
+    /// Converting with FFmpeg (`Some`), or done with it (`None`).
+    Preparing(Option<Option<f32>>),
     Failed(String),
 }
 
@@ -155,7 +160,11 @@ impl ExplorerPane {
                             media.peak_max = stretch.iter().fold(media.peak_max, |max, &p| max.max(p));
                             Arc::make_mut(&mut media.peaks).extend(stretch);
                         }
-                        Update::Failed(error) => media.error = Some(error),
+                        Update::Preparing(progress) => media.preparing = progress,
+                        Update::Failed(error) => {
+                            media.preparing = None;
+                            media.error = Some(error);
+                        }
                     }
                     cx.notify();
                     true
@@ -173,6 +182,7 @@ impl ExplorerPane {
             playing: false,
             has_video: false,
             error: None,
+            preparing: None,
             peaks: Arc::default(),
             peak_max: 0.0,
             _task: task,
@@ -338,16 +348,107 @@ mod platform {
             updates.send_blocking(Update::Failed(error.message().to_string())).ok();
             return;
         }
-        if let Err(error) = play(path, commands, updates) {
-            updates.send_blocking(Update::Failed(error.message().to_string())).ok();
+        let mut wanted = Wanted::default();
+        let video = !super::is_audio(path);
+        if let Err(error) = play(path, video, commands, updates, &mut wanted) {
+            // A video Windows cannot decode (ProRes, Animation...): a copy
+            // FFmpeg makes plays instead, with what was asked meanwhile.
+            if error.code() == CLOSED {
+                // The preview closed: nothing to say.
+            } else if video {
+                match convert(path, commands, updates, &mut wanted) {
+                    Some(Ok(copy)) => {
+                        updates.send_blocking(Update::Preparing(None)).ok();
+                        let copy = copy.to_string_lossy().into_owned();
+                        if let Err(error) = play(&copy, true, commands, updates, &mut wanted)
+                            && error.code() != CLOSED
+                        {
+                            updates.send_blocking(Update::Failed(error.message().to_string())).ok();
+                        }
+                    }
+                    Some(Err(message)) => {
+                        updates.send_blocking(Update::Failed(message)).ok();
+                    }
+                    // Closed while converting.
+                    None => {}
+                }
+            } else {
+                updates.send_blocking(Update::Failed(error.message().to_string())).ok();
+            }
         }
         unsafe { MFShutdown() }.ok();
     }
 
-    fn play(
+    // What `play` returns when the preview closed: not a failure, and not
+    // worth converting over.
+    const CLOSED: windows::core::HRESULT = windows::core::HRESULT(0x8000_4004_u32 as i32);
+
+    /// What the preview asked of the player, carried from a failed open to
+    /// the copy that plays instead.
+    #[derive(Default)]
+    struct Wanted {
+        play: bool,
+        volume: Option<f64>,
+        seek: Option<f64>,
+    }
+
+    impl Wanted {
+        fn take(&mut self, command: Command) {
+            match command {
+                Command::Play => self.play = true,
+                Command::Pause => self.play = false,
+                Command::Volume(volume) => self.volume = Some(volume),
+                Command::Seek(seconds) => self.seek = Some(seconds),
+            }
+        }
+    }
+
+    // Converts `path` with FFmpeg, saying how far it got. `None` when the
+    // preview closed meanwhile; commands that come are kept for the copy.
+    fn convert(
         path: &str,
         commands: &mpsc::Receiver<Command>,
         updates: &async_channel::Sender<Update>,
+        wanted: &mut Wanted,
+    ) -> Option<Result<std::path::PathBuf, String>> {
+        let closed = std::cell::Cell::new(false);
+        let wanted = std::cell::RefCell::new(wanted);
+        let cancelled = || {
+            loop {
+                match commands.try_recv() {
+                    Ok(command) => wanted.borrow_mut().take(command),
+                    Err(mpsc::TryRecvError::Empty) => break,
+                    Err(mpsc::TryRecvError::Disconnected) => {
+                        closed.set(true);
+                        break;
+                    }
+                }
+            }
+            closed.get() || updates.is_closed()
+        };
+        let result = crate::explorer::video_proxy::make(path, &cancelled, &mut |progress| {
+            updates.send_blocking(Update::Preparing(Some(progress))).ok();
+        });
+        if closed.get() || updates.is_closed() {
+            return None;
+        }
+        Some(result)
+    }
+
+    // The copy plays as made: a sound-only original stays sound-only there.
+    fn path_is_proxy(path: &str) -> bool {
+        std::path::Path::new(path).starts_with(nohrs_core::config::paths::cache_dir())
+    }
+
+    // Plays `path` until the preview closes. `video`: the file is a video,
+    // so one that opens with a length and no picture failed (Windows read
+    // its sound and not its images), and the caller converts it.
+    fn play(
+        path: &str,
+        video: bool,
+        commands: &mpsc::Receiver<Command>,
+        updates: &async_channel::Sender<Update>,
+        wanted: &mut Wanted,
     ) -> windows::core::Result<()> {
         let engine = unsafe {
             let factory: IMFMediaEngineClassFactory =
@@ -361,6 +462,17 @@ mod platform {
             let engine: IMFMediaEngine = factory.CreateInstance(0, &attributes)?;
             crate::explorer::audio_session::watch();
             engine.SetSource(&BSTR::from(path))?;
+            // What was asked before this engine existed (during a failed
+            // first open, or the conversion after it).
+            if let Some(volume) = wanted.volume {
+                engine.SetVolume(volume).ok();
+            }
+            if let Some(seconds) = wanted.seek {
+                engine.SetCurrentTime(seconds).ok();
+            }
+            if wanted.play {
+                engine.Play().ok();
+            }
             engine
         };
         let wic: IWICImagingFactory =
@@ -372,20 +484,30 @@ mod platform {
             loop {
                 match commands.try_recv() {
                     Ok(Command::Play) => unsafe {
+                        wanted.play = true;
                         // From the end, play starts over, as players do.
                         if engine.IsEnded().as_bool() {
                             engine.SetCurrentTime(0.0).ok();
                         }
                         engine.Play().ok();
                     },
-                    Ok(Command::Pause) => unsafe { engine.Pause() }.unwrap_or(()),
-                    Ok(Command::Seek(seconds)) => unsafe { engine.SetCurrentTime(seconds) }.unwrap_or(()),
-                    Ok(Command::Volume(volume)) => unsafe { engine.SetVolume(volume) }.unwrap_or(()),
+                    Ok(Command::Pause) => {
+                        wanted.play = false;
+                        unsafe { engine.Pause() }.unwrap_or(())
+                    }
+                    Ok(Command::Seek(seconds)) => {
+                        wanted.seek = Some(seconds);
+                        unsafe { engine.SetCurrentTime(seconds) }.unwrap_or(())
+                    }
+                    Ok(Command::Volume(volume)) => {
+                        wanted.volume = Some(volume);
+                        unsafe { engine.SetVolume(volume) }.unwrap_or(())
+                    }
                     Err(mpsc::TryRecvError::Empty) => break,
                     // The preview was closed.
                     Err(mpsc::TryRecvError::Disconnected) => {
                         unsafe { engine.Shutdown() }.ok();
-                        return Ok(());
+                        return Err(windows::core::Error::new(CLOSED, ""));
                     }
                 }
             }
@@ -400,6 +522,14 @@ mod platform {
                 ));
             }
             let has_video = unsafe { engine.HasVideo() }.as_bool();
+            // Opened, with a length, and no picture: a video whose images
+            // Windows cannot decode, played as sound only.
+            if video && !has_video && unsafe { engine.GetDuration() } > 0.0 && !path_is_proxy(path) {
+                break Err(windows::core::Error::new(
+                    windows::core::HRESULT(0xC00D_5212_u32 as i32),
+                    nohrs_core::t!("Windows não consegue reproduzir este arquivo"),
+                ));
+            }
             if has_video
                 && let Ok(time) = unsafe { engine.OnVideoStreamTick() }
                 && time != last_frame

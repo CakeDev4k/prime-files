@@ -701,6 +701,10 @@ impl ExplorerPage {
         self.terminal_side = layout.terminal;
         self.group.set_vertical_tabs(layout.vertical_tabs);
         super::view::panels::set_move_grips(layout.move_grips);
+        // The panes draw the sidebar: each one redraws.
+        if super::tags::set_in_sidebar(layout.sidebar_tags) {
+            cx.refresh_windows();
+        }
         cx.notify();
     }
 

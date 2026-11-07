@@ -315,7 +315,7 @@ pub(crate) struct SharpPicture {
     _decode: Option<gpui::Task<()>>,
 }
 
-// The sharp picture of `path` at `edge`, asking for it the first time.
+/// The sharp picture of `path` at `edge`, asking for it the first time.
 fn sharp_picture(
     page: &mut ExplorerPane,
     path: &str,
@@ -1878,6 +1878,7 @@ mod prefetch_tests {
     use super::{neighbours_to_prefetch, prefetchable_image};
     use nohrs_services::fs::listing::FileEntryDto;
 
+    /// A listing entry with only the fields the prefetch reads.
     fn entry(path: &str, kind: &str) -> FileEntryDto {
         FileEntryDto {
             name: path.rsplit('/').next().unwrap_or(path).to_string(),

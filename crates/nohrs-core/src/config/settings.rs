@@ -151,6 +151,13 @@ pub struct Ui {
     pub hover_audio: bool,
     /// How long the mouse rests on a sound file before it plays, in ms.
     pub hover_audio_delay_ms: u32,
+    /// Folder a new tab starts in (Ctrl+T and the `+`). Empty follows the
+    /// home folder. A folder that no longer exists falls back to home.
+    pub new_tab_path: String,
+    /// What Ctrl+T and the `+` open first: `box` (the default, the box that
+    /// asks) or `folder` (a tab at `new_tab_path` at once). Shift+click on
+    /// the `+`, and Ctrl+Shift+T, always open the box.
+    pub new_tab_mode: NewTabMode,
 }
 
 impl Default for Ui {
@@ -168,6 +175,8 @@ impl Default for Ui {
             welcome_done: false,
             hover_audio: true,
             hover_audio_delay_ms: 400,
+            new_tab_path: String::new(),
+            new_tab_mode: NewTabMode::Box,
         }
     }
 }
@@ -409,6 +418,29 @@ impl SplitDirection {
         match value {
             "vertical" => Some(Self::Vertical),
             "horizontal" => Some(Self::Horizontal),
+            _ => None,
+        }
+    }
+}
+
+/// What a new tab opens first: the folder at once, or the box that asks for
+/// a path.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "lowercase")]
+pub enum NewTabMode {
+    /// A tab at `new_tab_path` at once, as Explorer does.
+    Folder,
+    /// The box that searches the computer or takes a typed path.
+    #[default]
+    Box,
+}
+
+impl NewTabMode {
+    /// Parse the `config.toml` spelling (`folder`/`box`).
+    pub fn parse(value: &str) -> Option<Self> {
+        match value {
+            "folder" => Some(Self::Folder),
+            "box" => Some(Self::Box),
             _ => None,
         }
     }
@@ -1097,6 +1129,24 @@ fn read_ui(table: &toml::Table, ui: &mut Ui, diagnostics: &mut Vec<Diagnostic>) 
             ))),
         }
     }
+    if let Some(value) = table.get("new_tab_path") {
+        match value.as_str() {
+            // Trimmed here so a quoted path with stray spaces still opens.
+            Some(path) => ui.new_tab_path = path.trim().to_string(),
+            None => diagnostics.push(Diagnostic::warn(format!(
+                "invalid ui.new_tab_path {value}; expected a folder path"
+            ))),
+        }
+    }
+    if let Some(value) = table.get("new_tab_mode") {
+        match value.as_str().and_then(NewTabMode::parse) {
+            Some(mode) => ui.new_tab_mode = mode,
+            None => diagnostics.push(Diagnostic::warn(format!(
+                "invalid ui.new_tab_mode {value}; using {:?}",
+                ui.new_tab_mode
+            ))),
+        }
+    }
     warn_unknown_keys(
         table,
         &[
@@ -1112,6 +1162,8 @@ fn read_ui(table: &toml::Table, ui: &mut Ui, diagnostics: &mut Vec<Diagnostic>) 
             "hover_audio",
             "hover_audio_delay_ms",
             "welcome_done",
+            "new_tab_path",
+            "new_tab_mode",
         ],
         "ui.",
         diagnostics,
@@ -1878,6 +1930,23 @@ mod tests {
         let (config, diagnostics) = Config::from_toml_str(&Config::default_toml_template());
         assert!(diagnostics.is_empty(), "{diagnostics:?}");
         assert_eq!(config, Config::default());
+    }
+
+    #[test]
+    fn ui_new_tab_keys_are_read() {
+        let (config, diagnostics) = Config::from_toml_str(
+            "[ui]\nnew_tab_mode = \"folder\"\nnew_tab_path = \"  C:\\\\Work  \"\n",
+        );
+        assert_eq!(config.ui.new_tab_mode, NewTabMode::Folder);
+        assert_eq!(config.ui.new_tab_path, r"C:\Work", "the path is trimmed");
+        assert!(diagnostics.is_empty(), "both keys are known: {diagnostics:?}");
+    }
+
+    #[test]
+    fn ui_new_tab_mode_rejects_nonsense() {
+        let (config, diagnostics) = Config::from_toml_str("[ui]\nnew_tab_mode = \"nope\"\n");
+        assert_eq!(config.ui.new_tab_mode, NewTabMode::Box);
+        assert_eq!(diagnostics.len(), 1, "{diagnostics:?}");
     }
 
     #[test]

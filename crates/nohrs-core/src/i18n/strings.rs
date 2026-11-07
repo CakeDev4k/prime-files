@@ -377,6 +377,19 @@ pub(super) static STRINGS: &[(&str, &str, &str)] = &[
     ),
     ("Nome", "Name", "Nombre"),
     ("Nova aba", "New tab", "Nueva pestaña"),
+    ("Ctrl+T e o + abrem", "What Ctrl+T and + open", "Lo que abren Ctrl+T y el +"),
+    (
+        "Uma pasta de uma vez, ou a caixa que pergunta o caminho e busca no computador. Shift+clique no + e Ctrl+Shift+T abrem sempre a caixa.",
+        "A folder at once, or the box that asks for a path and searches the computer. Shift+click on + and Ctrl+Shift+T always open the box.",
+        "Una carpeta de una vez, o el cuadro que pide la ruta y busca en el equipo. Mayús+clic en + y Ctrl+Mayús+T abren siempre el cuadro.",
+    ),
+    ("Numa pasta", "In a folder", "En una carpeta"),
+    ("Na caixa de busca", "In the search box", "En el cuadro de búsqueda"),
+    (
+        "Ir para uma pasta, ou buscar no computador",
+        "Go to a folder, or search the computer",
+        "Ir a una carpeta, o buscar en el equipo",
+    ),
     ("Nova pasta", "New folder", "Nueva carpeta"),
     ("Não deu para atualizar: {error}", "Could not update: {error}", "No se pudo actualizar: {error}"),
     (

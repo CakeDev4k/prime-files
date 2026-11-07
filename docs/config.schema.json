@@ -327,6 +327,21 @@
       },
       "type": "object"
     },
+    "NewTabMode": {
+      "description": "What a new tab opens first: the folder at once, or the box that asks for\na path.",
+      "oneOf": [
+        {
+          "const": "folder",
+          "description": "A tab at `new_tab_path` at once, as Explorer does.",
+          "type": "string"
+        },
+        {
+          "const": "box",
+          "description": "The box that searches the computer or takes a typed path.",
+          "type": "string"
+        }
+      ]
+    },
     "Plugins": {
       "description": "Plugin selection (config.md §2, reserved for P4).\n\nType definition / reservation only: the lists are parsed and stored, but no\nplugin host loads them yet (that lands in P4).",
       "properties": {
@@ -500,6 +515,16 @@
           "description": "Most lines a name takes under an icon in the icons view, the last\none ending in \"…\" when the name needs more; 0 = no limit.",
           "minimum": 0,
           "type": "integer"
+        },
+        "new_tab_mode": {
+          "$ref": "#/$defs/NewTabMode",
+          "default": "box",
+          "description": "What Ctrl+T and the `+` open first: `box` (the default, the box that\nasks) or `folder` (a tab at `new_tab_path` at once). Shift+click on\nthe `+`, and Ctrl+Shift+T, always open the box."
+        },
+        "new_tab_path": {
+          "default": "",
+          "description": "Folder a new tab starts in (Ctrl+T and the `+`). Empty follows the\nhome folder. A folder that no longer exists falls back to home.",
+          "type": "string"
         },
         "preview_autoplay": {
           "default": false,
@@ -678,6 +703,8 @@
         "icon_pack": "default",
         "language": "auto",
         "name_lines": 0,
+        "new_tab_mode": "box",
+        "new_tab_path": "",
         "preview_autoplay": false,
         "scroll_smoothness": 50,
         "show_hidden": false,

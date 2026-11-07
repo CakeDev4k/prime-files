@@ -26,7 +26,7 @@ mod page;
 mod pdf;
 mod picture;
 mod path_edit;
-mod places;
+pub(crate) mod places;
 mod preview;
 pub(crate) mod preview_listing;
 mod quick_search;

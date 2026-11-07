@@ -97,6 +97,66 @@ type BuildPane<T> = Box<dyn Fn(&mut Window, &mut App) -> Entity<T>>;
 /// splits are P3+. (Tabs within a pane are unbounded — see [`Pane`].)
 const MAX_PANES: usize = 2;
 
+/// How far one press of a tab strip arrow slides it.
+const TAB_SCROLL_STEP: f32 = 240.0;
+
+// Whether the tabs ran past the strip in the last layout.
+fn strip_overflows(handle: &ScrollHandle) -> bool {
+    handle.max_offset().width > px(0.5)
+}
+
+// An arrow at one end of a tab strip that does not fit: slides the strip by
+// `TAB_SCROLL_STEP` towards `direction` (-1 left, 1 right). Dimmed at its end.
+// Only the view slides: the active tab stays the active tab.
+fn tab_scroll_arrow(id: (&'static str, usize), handle: &ScrollHandle, direction: f32, at_end: bool) -> Stateful<Div> {
+    let handle = handle.clone();
+    div()
+        .id(id)
+        .flex_shrink_0()
+        .flex()
+        .items_center()
+        .justify_center()
+        .w(px(20.0))
+        .h(px(26.0))
+        .mb(px(2.0))
+        .rounded(px(6.0))
+        .when(!at_end, |this| {
+            this.cursor_pointer().hover(|style| style.bg(rgb(theme::toolbar_hover())))
+        })
+        .when(at_end, |this| this.opacity(0.35))
+        // The pane-wide `on_mouse_down` would also take the press.
+        .on_mouse_down(MouseButton::Left, |_, _window, cx| cx.stop_propagation())
+        .on_click(move |_, window, _cx| {
+            let max = handle.max_offset().width;
+            let mut offset = handle.offset();
+            // The offset grows negative as the strip slides to the right.
+            offset.x = (offset.x - px(TAB_SCROLL_STEP * direction)).clamp(-max, px(0.0));
+            handle.set_offset(offset);
+            window.refresh();
+        })
+        .child(
+            Icon::new(if direction < 0.0 { IconName::ChevronLeft } else { IconName::ChevronRight })
+                .size_4()
+                .text_color(rgb(theme::muted())),
+        )
+}
+
+// The arrows are drawn from the layout before; when the tabs start or stop
+// fitting this frame (a tab opened, the window resized), one more frame is
+// asked for, or the arrows would wait for the next mouse move.
+fn strip_watch(handle: ScrollHandle, drawn: bool) -> impl IntoElement {
+    canvas(
+        move |_, window, _| {
+            if strip_overflows(&handle) != drawn {
+                window.refresh();
+            }
+        },
+        |_, _, _, _| {},
+    )
+    .w(px(0.0))
+    .h(px(0.0))
+}
+
 /// One pane: an ordered, non-empty list of tabs with one active.
 struct Pane<T: PaneItem> {
     // Invariant: always non-empty.
@@ -942,6 +1002,14 @@ impl<T: PaneItem> PaneGroup<T> {
             pane.tab_scroll.scroll_to_item(active_tab);
         }
 
+        // Arrows at the strip's ends while the tabs do not fit (issue #23).
+        // Read from the last layout; `strip_watch` draws again when this
+        // frame's turns out different.
+        let overflowing = strip_overflows(&pane.tab_scroll);
+        let scroll_x = pane.tab_scroll.offset().x;
+        let at_start = scroll_x >= px(-0.5);
+        let at_end = scroll_x <= -pane.tab_scroll.max_offset().width + px(0.5);
+
         // Tabs sit on the bar's bottom edge and the active one takes the
         // content's colour, so it reads as the front of the folder below, as in
         // Explorer and browsers.
@@ -964,6 +1032,9 @@ impl<T: PaneItem> PaneGroup<T> {
             // scrolls (the wheel moves it sideways). Without a strip of their
             // own they kept their minimum width and ran on under the window's
             // buttons (issue #3).
+            .when(overflowing, |this| {
+                this.child(tab_scroll_arrow(("tab-scroll-left", pane_index), &pane.tab_scroll, -1.0, at_start))
+            })
             .child(
                 div()
                     .id(("tab-strip", pane_index))
@@ -977,6 +1048,10 @@ impl<T: PaneItem> PaneGroup<T> {
                     .track_scroll(&pane.tab_scroll)
                     .children(tabs),
             )
+            .child(strip_watch(pane.tab_scroll.clone(), overflowing))
+            .when(overflowing, |this| {
+                this.child(tab_scroll_arrow(("tab-scroll-right", pane_index), &pane.tab_scroll, 1.0, at_end))
+            })
             // New-tab affordance (`Cmd/Ctrl+T`, §4 / §6).
             .child(
                 div()

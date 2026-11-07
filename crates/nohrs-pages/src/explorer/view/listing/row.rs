@@ -43,7 +43,8 @@ pub fn render(
     };
 
     let is_selected = page.is_selected(ix);
-    let tree_view = page.view_mode == crate::explorer::types::ViewMode::Tree;
+    let is_cut = crate::explorer::file_ops::is_cut(&item.path, cx);
+    let tree_view =page.view_mode == crate::explorer::types::ViewMode::Tree;
     let depth = if tree_view { page.tree_depth(&item.path) } else { 0 };
     let tree_folder = tree_view && item.kind == "dir";
     let tree_open = tree_folder && page.tree_open(&item.path);
@@ -317,16 +318,23 @@ pub fn render(
                                 })
                                 // The Windows icon once extracted; until then,
                                 // or when the Shell has none, the generic one.
-                                .child(match shell_icon {
-                                    Some(image) => img(ImageSource::Render(image))
-                                        .size(px(ICON_SIZE))
+                                // Faded while the item is cut (issue #22).
+                                .child(
+                                    div()
+                                        .flex()
                                         .flex_shrink_0()
-                                        .into_any_element(),
-                                    None => Icon::new(icon_name)
-                                        .size_4()
-                                        .text_color(icon_color)
-                                        .into_any_element(),
-                                })
+                                        .when(is_cut, |this| this.opacity(CUT_OPACITY))
+                                        .child(match shell_icon {
+                                            Some(image) => img(ImageSource::Render(image))
+                                                .size(px(ICON_SIZE))
+                                                .flex_shrink_0()
+                                                .into_any_element(),
+                                            None => Icon::new(icon_name)
+                                                .size_4()
+                                                .text_color(icon_color)
+                                                .into_any_element(),
+                                        }),
+                                )
                                 .child(match rename_input {
                                     // Borderless and flush with the label it
                                     // stands in for, so the row keeps its shape
@@ -508,6 +516,9 @@ pub(crate) fn cloud_badge(state: nohrs_models::file_entry::CloudState) -> impl I
         .tooltip(move |window, cx| gpui_component::tooltip::Tooltip::new(tip).build(window, cx))
         .child(glyph)
 }
+
+/// How much of a cut item's icon shows: about the Explorer's ghosted look.
+pub(crate) const CUT_OPACITY: f32 = 0.45;
 
 /// "42%" after the name of a file still being copied here, so it is not
 /// opened half-written.

@@ -977,4 +977,10 @@ pub(super) static STRINGS: &[(&str, &str, &str)] = &[
     ("Para abrir {name}, restaure o item primeiro (botão direito › Restaurar).", "To open {name}, restore it first (right-click › Restore).", "Para abrir {name}, restaura el elemento primero (clic derecho › Restaurar)."),
     ("Restaurar", "Restore", "Restaurar"),
     ("Sempre mantido neste dispositivo", "Always kept on this device", "Siempre se mantiene en este dispositivo"),
+    ("Desfazer mover", "Undo move", "Deshacer mover"),
+    ("{n} item movido de volta", "{n} item moved back", "{n} elemento devuelto a su lugar"),
+    ("{n} itens movidos de volta", "{n} items moved back", "{n} elementos devueltos a su lugar"),
+    ("{path}: não está mais onde foi movido", "{path}: no longer where it was moved to", "{path}: ya no está donde se movió"),
+    ("{path}: o lugar de origem já está ocupado", "{path}: something else is already at its original place", "{path}: el lugar de origen ya está ocupado"),
+    ("Favoritos", "Favorites", "Favoritos"),
 ];

@@ -536,4 +536,10 @@ pub(super) static ARABIC: &[(&str, &str)] = &[
     ("Para abrir {name}, restaure o item primeiro (botão direito › Restaurar).", "لفتح {name}، استعده أولًا (زر الفأرة الأيمن › استعادة)."),
     ("Restaurar", "استعادة"),
     ("Sempre mantido neste dispositivo", "يُحتفظ به دائمًا على هذا الجهاز"),
+    ("Desfazer mover", "التراجع عن النقل"),
+    ("{n} item movido de volta", "أُعيد {n} عنصر إلى مكانه"),
+    ("{n} itens movidos de volta", "أُعيدت {n} عناصر إلى مكانها"),
+    ("{path}: não está mais onde foi movido", "{path}: لم يعد في المكان الذي نُقل إليه"),
+    ("{path}: o lugar de origem já está ocupado", "{path}: المكان الأصلي مشغول بالفعل"),
+    ("Favoritos", "المفضلة"),
 ];

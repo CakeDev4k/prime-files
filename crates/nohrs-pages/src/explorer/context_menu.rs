@@ -558,7 +558,7 @@ impl ExplorerPane {
                 match choice {
                     Choice::Verb(_) => self.open_place(&place, window, cx),
                     // Unpinning, renaming or deleting changes the list.
-                    Choice::Ran => self.refresh_places(),
+                    Choice::Ran => self.refresh_places_after_shell(window, cx),
                     Choice::Dismissed | Choice::Own(_) => {}
                 }
                 cx.notify();
@@ -853,7 +853,10 @@ impl ExplorerPane {
             Entry::command(Command::Refresh as u32, t!("Atualizar"))
                 .with_icon("icons/refresh-cw.svg")
                 .with_shortcut(keys_of(Action::Refresh)),
-            Entry::command(Command::UndoTrash as u32, t!("Desfazer exclusão"))
+            Entry::command(
+                Command::UndoTrash as u32,
+                if self.undo_is_move() { t!("Desfazer mover") } else { t!("Desfazer exclusão") },
+            )
                 .with_icon("icons/undo-2.svg")
                 .with_shortcut(keys_of(Action::Undo))
                 .enabled(self.can_undo_trash()),
@@ -932,7 +935,7 @@ impl ExplorerPane {
             // Pinning to Quick access changes the sidebar as well as the
             // folder's own menu.
             Choice::Ran => {
-                self.refresh_places();
+                self.refresh_places_after_shell(window, cx);
                 self.reload(cx);
             }
         }

@@ -2805,3 +2805,114 @@ async fn the_folder_on_screen_follows_what_other_programs_do(cx: &mut TestAppCon
     std::fs::remove_file(dir.path().join("a.txt")).unwrap();
     assert!(wait_for(cx, &["b.txt"]), "after a delete elsewhere: {:?}", names(cx));
 }
+
+// Cut, paste in another folder, Ctrl+Z: the pasted files come out selected
+// (issue #21), the cut ones are faded until the paste (issue #22), and the
+// undo moves them back where they were (issue #28).
+#[gpui::test]
+async fn a_cut_paste_selects_what_arrived_and_undoes_back(cx: &mut TestAppContext) {
+    let dir = tempfile::tempdir().unwrap();
+    let src = dir.path().join("src");
+    let dst = dir.path().join("dst");
+    std::fs::create_dir(&src).unwrap();
+    std::fs::create_dir(&dst).unwrap();
+    std::fs::write(src.join("a.txt"), "A").unwrap();
+    std::fs::write(src.join("b.txt"), "B").unwrap();
+    std::fs::write(dst.join("outro.txt"), "-").unwrap();
+    let window = new_explorer(cx);
+    window
+        .update(cx, |pane, _window, cx| {
+            pane.cwd = src.to_string_lossy().to_string();
+            pane.reload(cx);
+            pane.select_all();
+            pane.cut_selection(cx);
+            let a = src.join("a.txt").to_string_lossy().to_string();
+            assert!(super::file_ops::is_cut(&a, cx), "a cut file is drawn faded");
+
+            pane.cwd = dst.to_string_lossy().to_string();
+            pane.reload(cx);
+            assert!(!pane.prepare_paste(cx), "no conflict");
+            pane.execute_paste_plan(cx);
+        })
+        .unwrap();
+    cx.run_until_parked();
+    assert!(dst.join("a.txt").exists() && dst.join("b.txt").exists());
+    assert!(!src.join("a.txt").exists());
+    window
+        .update(cx, |pane, _window, cx| {
+            let a = dst.join("a.txt").to_string_lossy().to_string();
+            let b = dst.join("b.txt").to_string_lossy().to_string();
+            let selected = |path: &str| pane.selection.iter().any(|held| super::same_path(held, path));
+            assert!(selected(&a) && selected(&b), "both pasted files selected: {:?}", pane.selection);
+            assert!(
+                !selected(&dst.join("outro.txt").to_string_lossy()),
+                "what was there before is not"
+            );
+            assert!(!super::file_ops::is_cut(&src.join("a.txt").to_string_lossy(), cx), "the paste ends the cut");
+            assert!(pane.undo_is_move(), "Ctrl+Z would undo the move");
+            pane.undo_trash(cx);
+        })
+        .unwrap();
+    cx.run_until_parked();
+    assert_eq!(std::fs::read_to_string(src.join("a.txt")).unwrap(), "A");
+    assert_eq!(std::fs::read_to_string(src.join("b.txt")).unwrap(), "B");
+    assert!(!dst.join("a.txt").exists() && !dst.join("b.txt").exists(), "nothing left at the destination");
+    assert!(dst.join("outro.txt").exists());
+}
+
+// A move whose source place was taken since is left where it is, not
+// written over.
+#[gpui::test]
+async fn undoing_a_move_leaves_a_taken_name_alone(cx: &mut TestAppContext) {
+    let dir = tempfile::tempdir().unwrap();
+    let src = dir.path().join("src");
+    let dst = dir.path().join("dst");
+    std::fs::create_dir(&src).unwrap();
+    std::fs::create_dir(&dst).unwrap();
+    std::fs::write(src.join("a.txt"), "A").unwrap();
+    let window = new_explorer(cx);
+    window
+        .update(cx, |pane, _window, cx| {
+            pane.cwd = src.to_string_lossy().to_string();
+            pane.reload(cx);
+            pane.select_all();
+            pane.cut_selection(cx);
+            pane.cwd = dst.to_string_lossy().to_string();
+            pane.reload(cx);
+            pane.prepare_paste(cx);
+            pane.execute_paste_plan(cx);
+        })
+        .unwrap();
+    cx.run_until_parked();
+    std::fs::write(src.join("a.txt"), "NOVO").unwrap();
+    window.update(cx, |pane, _window, cx| pane.undo_trash(cx)).unwrap();
+    cx.run_until_parked();
+    assert_eq!(std::fs::read_to_string(src.join("a.txt")).unwrap(), "NOVO");
+    assert_eq!(std::fs::read_to_string(dst.join("a.txt")).unwrap(), "A");
+}
+
+// A copy is not a move: Ctrl+Z after it does not take the original away.
+#[gpui::test]
+async fn a_copy_paste_leaves_nothing_to_undo(cx: &mut TestAppContext) {
+    let (_dir, src, _dst) = paste_fixture();
+    let empty = src.parent().unwrap().join("vazia");
+    std::fs::create_dir(&empty).unwrap();
+    let window = new_explorer(cx);
+    window
+        .update(cx, |pane, _window, cx| {
+            pane.cwd = src.to_string_lossy().to_string();
+            pane.reload(cx);
+            pane.select_all();
+            pane.copy_selection(cx);
+            assert!(!super::file_ops::is_cut(&src.join("foo.txt").to_string_lossy(), cx));
+            pane.cwd = empty.to_string_lossy().to_string();
+            pane.reload(cx);
+            pane.prepare_paste(cx);
+            pane.execute_paste_plan(cx);
+        })
+        .unwrap();
+    cx.run_until_parked();
+    window
+        .update(cx, |pane, _window, _cx| assert!(!pane.can_undo_trash(), "a copy is not in the history"))
+        .unwrap();
+}

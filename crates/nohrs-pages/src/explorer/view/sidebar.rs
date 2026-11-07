@@ -34,6 +34,22 @@ pub fn render(
     for place in &places.quick_access {
         list = list.child(row(page, place, 0, None, icon_px, cx));
     }
+    // Favorite files under a heading of their own, apart from the folders
+    // (issue #24).
+    if !places.favorites.is_empty() {
+        list = list.child(
+            div()
+                .mt(px(10.0))
+                .mb(px(2.0))
+                .px(px(8.0))
+                .text_xs()
+                .text_color(rgb(theme::muted()))
+                .child(t!("Favoritos")),
+        );
+        for place in &places.favorites {
+            list = list.child(row(page, place, 0, None, icon_px, cx));
+        }
+    }
     list = list.child(
         div()
             .my(px(8.0))
@@ -144,6 +160,8 @@ fn render_band(
     let mut sections: Vec<(String, &'static str, Vec<BandItem>, Option<AnyElement>)> = Vec::new();
     let quick = place_items(page, &places.quick_access, "quick", cx);
     sections.push((t!("Acesso rápido").to_string(), "icons/star.svg", quick, None));
+    let favorites = place_items(page, &places.favorites, "favorite", cx);
+    sections.push((t!("Favoritos").to_string(), "icons/star.svg", favorites, None));
     let mut drives = Vec::new();
     if let Some(this_pc) = &places.this_pc {
         drives.push(band_place(page, this_pc, "pc", icon_px, cx));

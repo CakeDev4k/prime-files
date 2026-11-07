@@ -5867,4 +5867,70 @@ pub(super) static EXTRA: &[(&str, [&str; 6])] = &[
             "始终保留在此设备上",
         ],
     ),
+    (
+        "Desfazer mover",
+        [
+            "Annuler le déplacement",
+            "Verschieben rückgängig machen",
+            "Annulla spostamento",
+            "Отменить перемещение",
+            "移動を元に戻す",
+            "撤销移动",
+        ],
+    ),
+    (
+        "{n} item movido de volta",
+        [
+            "{n} élément remis à sa place",
+            "{n} Element zurückverschoben",
+            "{n} elemento riportato indietro",
+            "{n} элемент возвращён на место",
+            "{n} 個の項目を元の場所に戻しました",
+            "已将 {n} 个项目移回原处",
+        ],
+    ),
+    (
+        "{n} itens movidos de volta",
+        [
+            "{n} éléments remis à leur place",
+            "{n} Elemente zurückverschoben",
+            "{n} elementi riportati indietro",
+            "{n} элементов возвращено на место",
+            "{n} 個の項目を元の場所に戻しました",
+            "已将 {n} 个项目移回原处",
+        ],
+    ),
+    (
+        "{path}: não está mais onde foi movido",
+        [
+            "{path} : n'est plus là où il a été déplacé",
+            "{path}: ist nicht mehr dort, wohin es verschoben wurde",
+            "{path}: non è più dove è stato spostato",
+            "{path}: больше не находится там, куда был перемещён",
+            "{path}: 移動先にもうありません",
+            "{path}：已不在移动后的位置",
+        ],
+    ),
+    (
+        "{path}: o lugar de origem já está ocupado",
+        [
+            "{path} : l'emplacement d'origine est déjà occupé",
+            "{path}: am ursprünglichen Ort liegt schon etwas anderes",
+            "{path}: il posto di origine è già occupato",
+            "{path}: исходное место уже занято",
+            "{path}: 元の場所はすでに使われています",
+            "{path}：原位置已被占用",
+        ],
+    ),
+    (
+        "Favoritos",
+        [
+            "Favoris",
+            "Favoriten",
+            "Preferiti",
+            "Избранное",
+            "お気に入り",
+            "收藏夹",
+        ],
+    ),
 ];

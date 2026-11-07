@@ -692,7 +692,63 @@ mod platform {
         }
     }
 
+    // The menu of `path`'s entry in Quick access, for an item pinned or added
+    // to favorites there. Built from its own folder, the Shell's menu always
+    // says "Pin to Quick access" and "Add to favorites", even right after
+    // either was done; built from Quick access, it says "Unpin" and "Remove
+    // from favorites", as the Explorer shows (issues #11 and #26). Measured:
+    // the same file, in one process, through each of the two.
+    fn quick_access_menu(hwnd: HWND, path: &str) -> Option<IContextMenu> {
+        use windows::Win32::UI::Shell::{
+            BHID_SFObject, IEnumIDList, IShellItem, SHCONTF_FOLDERS, SHCONTF_NONFOLDERS,
+            SHCreateItemFromParsingName, SHGDN_FORPARSING, StrRetToStrW,
+        };
+        use windows::Win32::UI::Shell::Common::STRRET;
+        use windows::core::{HSTRING, PWSTR};
+
+        let quick_access: IShellItem = unsafe {
+            SHCreateItemFromParsingName(&HSTRING::from("shell:::{679f85cb-0220-4080-b29b-5540cc05aab6}"), None)
+        }
+        .ok()?;
+        let folder: IShellFolder = unsafe { quick_access.BindToHandler(None, &BHID_SFObject) }.ok()?;
+        let mut list: Option<IEnumIDList> = None;
+        unsafe { folder.EnumObjects(hwnd, (SHCONTF_FOLDERS.0 | SHCONTF_NONFOLDERS.0) as u32, &mut list) }
+            .ok()
+            .ok()?;
+        let list = list?;
+        let wanted = path.to_lowercase();
+        loop {
+            let mut child = [std::ptr::null_mut::<ITEMIDLIST>()];
+            let mut fetched = 0;
+            if unsafe { list.Next(&mut child, Some(&mut fetched)) }.is_err() || fetched == 0 {
+                return None;
+            }
+            let child = Pidl(child[0]);
+            let mut name = STRRET::default();
+            if unsafe { folder.GetDisplayNameOf(child.0, SHGDN_FORPARSING, &mut name) }.is_err() {
+                continue;
+            }
+            let mut text = PWSTR::null();
+            if unsafe { StrRetToStrW(&mut name, Some(child.0), &mut text) }.is_err() {
+                continue;
+            }
+            let parsed = unsafe { text.to_string() }.unwrap_or_default();
+            unsafe { CoTaskMemFree(Some(text.0 as *const _)) };
+            if parsed.to_lowercase() == wanted {
+                return unsafe { folder.GetUIObjectOf::<IContextMenu>(hwnd, &[child.0 as *const ITEMIDLIST], None) }
+                    .ok();
+            }
+        }
+    }
+
     fn shell_menu(hwnd: HWND, target: &Target) -> windows::core::Result<IContextMenu> {
+        if let Target::Items(paths) = target
+            && let [path] = paths.as_slice()
+            && crate::explorer::places::in_quick_access(path)
+            && let Some(menu) = quick_access_menu(hwnd, path)
+        {
+            return Ok(menu);
+        }
         match target {
             Target::Items(paths) => {
                 let folder_of = |path: &str| {

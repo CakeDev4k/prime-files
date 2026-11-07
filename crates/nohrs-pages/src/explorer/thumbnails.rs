@@ -28,11 +28,15 @@ const SLOW_WORKERS: usize = 4;
 const READY_BYTES_CAP: usize = 192 * 1024 * 1024;
 
 /// How many times an answer that is not the real picture is asked for again,
-/// and how long the first wait is; each wait is four times the one before
-/// (15 s, 1 min, 4 min). A video whose thumbnail Windows could not make right
-/// then (the file still syncing from Drive, a busy decoder) gets it on a later
-/// look; a type that has no thumbnail at all costs three quick failures.
-const RETRIES: u8 = 3;
+/// and the waits: a quick one, then 15 s, each after it four times the one
+/// before (2 s, 15 s, 1 min, 4 min). A video whose thumbnail Windows could not
+/// make right then (the file still syncing from Drive, a busy decoder) gets it
+/// on a later look; a type that has no thumbnail at all costs four quick
+/// failures. The quick one is for a file still arriving: a folder lists an
+/// image being moved or copied into it before its last byte, and the Shell
+/// has no picture of half a file (issue #29, where it took the 15 s).
+const RETRIES: u8 = 4;
+const QUICK_RETRY: Duration = Duration::from_secs(2);
 const FIRST_RETRY: Duration = Duration::from_secs(15);
 
 enum Entry {
@@ -436,7 +440,10 @@ impl Thumbnails {
 
 /// How long to wait before asking again for the `retries`-th time.
 fn retry_delay(retries: u8) -> Duration {
-    FIRST_RETRY * 4u32.pow(u32::from(retries))
+    match retries {
+        0 => QUICK_RETRY,
+        n => FIRST_RETRY * 4u32.pow(u32::from(n - 1)),
+    }
 }
 
 /// Puts the job on a worker's queue, and the answer in the slot when it comes.
@@ -846,8 +853,9 @@ mod tests {
             cache.ready_bytes = 0;
             cache.arrived("v.mp4", Kind::Thumbnail, 64, Answer { image: Some(cone), settled: false }, cx);
             assert!(cache.entries["v.mp4"][0].retry_at.is_none());
-            assert_eq!(retry_delay(0), FIRST_RETRY);
-            assert_eq!(retry_delay(2), FIRST_RETRY * 16);
+            assert_eq!(retry_delay(0), QUICK_RETRY);
+            assert_eq!(retry_delay(1), FIRST_RETRY);
+            assert_eq!(retry_delay(3), FIRST_RETRY * 16);
         });
     }
 

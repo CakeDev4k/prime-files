@@ -536,4 +536,10 @@ pub(super) static HUNGARIAN: &[(&str, &str)] = &[
     ("Para abrir {name}, restaure o item primeiro (botão direito › Restaurar).", "A(z) {name} megnyitásához előbb állítsd vissza (jobb gomb › Visszaállítás)."),
     ("Restaurar", "Visszaállítás"),
     ("Sempre mantido neste dispositivo", "Mindig ezen az eszközön marad"),
+    ("Desfazer mover", "Áthelyezés visszavonása"),
+    ("{n} item movido de volta", "{n} elem visszahelyezve"),
+    ("{n} itens movidos de volta", "{n} elem visszahelyezve"),
+    ("{path}: não está mais onde foi movido", "{path}: már nincs ott, ahová áthelyezted"),
+    ("{path}: o lugar de origem já está ocupado", "{path}: az eredeti helyen már van valami"),
+    ("Favoritos", "Kedvencek"),
 ];

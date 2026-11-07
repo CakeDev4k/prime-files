@@ -54,6 +54,9 @@ pub(crate) struct ExplorerClipboard {
     // the clipboard is deliberately empty rather than unset, so there is nothing
     // to fall back to.
     cuts_in_flight: u32,
+    // The paths of a cut, in lowercase, for the rows to ask about on every
+    // frame without walking the list (`is_cut`).
+    cut: std::collections::HashSet<String>,
 }
 
 impl Global for ExplorerClipboard {}
@@ -65,8 +68,15 @@ impl ExplorerClipboard {
     fn write(entry: Option<(ClipMode, Vec<PathBuf>)>, cx: &mut App) -> u64 {
         let clipboard = cx.default_global::<ExplorerClipboard>();
         clipboard.generation = clipboard.generation.wrapping_add(1);
+        clipboard.cut = match &entry {
+            Some((ClipMode::Cut, paths)) => paths.iter().map(|path| path.to_string_lossy().to_lowercase()).collect(),
+            _ => Default::default(),
+        };
         clipboard.entry = entry;
-        clipboard.generation
+        let generation = clipboard.generation;
+        // Every pane and window draws the cut rows faded.
+        cx.refresh_windows();
+        generation
     }
 
     fn generation(cx: &App) -> u64 {
@@ -88,6 +98,15 @@ impl ExplorerClipboard {
         cx.try_global::<ExplorerClipboard>()
             .is_some_and(|clip| clip.cuts_in_flight > 0)
     }
+}
+
+/// Whether `path` was cut and waits for a paste to move it: its icon is drawn
+/// faded, as in the Explorer (issue #22). A copy made since, here or in another
+/// program, ends it.
+pub(crate) fn is_cut(path: &str, cx: &App) -> bool {
+    cx.try_global::<ExplorerClipboard>()
+        .is_some_and(|clip| !clip.cut.is_empty() && clip.cut.contains(&path.to_lowercase()))
+        && explorer_clipboard_is_current()
 }
 
 // Puts the sources a cut-paste could not move back on the clipboard, so the user
@@ -890,14 +909,15 @@ impl ExplorerPane {
     where
         F: FnOnce() -> OpReport + Send + 'static,
     {
-        self.run_fs_op_with(total, success_label, cx, move || (op(), ()), |(), _| {});
+        self.run_fs_op_with(total, success_label, cx, move || (op(), ()), |(), _| Vec::new());
     }
 
     // [`run_fs_op`](Self::run_fs_op) for batches that carry an outcome of their
     // own beyond the failure messages. `on_complete` takes `&mut App` rather
     // than the pane, and runs whether or not the pane outlived the batch, so an
     // outcome owning process-wide state is not dropped along with the pane that
-    // started the work.
+    // started the work. It returns the paths the batch put somewhere: the pane
+    // selects the ones in its folder and asks for their pictures again.
     fn run_fs_op_with<T, F, G>(
         &mut self,
         total: usize,
@@ -908,7 +928,7 @@ impl ExplorerPane {
     ) where
         T: Send + 'static,
         F: FnOnce() -> (OpReport, T) + Send + 'static,
-        G: FnOnce(T, &mut App) + 'static,
+        G: FnOnce(T, &mut App) -> Vec<PathBuf> + 'static,
     {
         use nohrs_core::telemetry::LogErr as _;
         let task = cx.background_spawn(async move { op() });
@@ -952,7 +972,7 @@ impl ExplorerPane {
             async move {
                 let (report, outcome) = task.await;
                 done.set(true);
-                cx.update(|cx| on_complete(outcome, cx)).log_err();
+                let landed = cx.update(|cx| on_complete(outcome, cx)).log_err().unwrap_or_default();
                 // Before the update, not inside it: this is what writes the
                 // failures to the log, and a batch can outlive the pane that
                 // started it. Computed in there, a closed pane would take the
@@ -960,6 +980,7 @@ impl ExplorerPane {
                 let (level, text) = report.footer(total, &success_label);
                 if let Err(error) = this.update(&mut cx, |pane, cx| {
                     pane.reload(cx);
+                    pane.landed(&landed, cx);
                     pane.set_status(level, text);
                     cx.notify();
                 }) {
@@ -1022,18 +1043,76 @@ impl ExplorerPane {
                     paths.into_iter().filter(|path| !failed.iter().any(|(gone, _)| gone == path)).collect();
                 (report, trashed)
             },
-            |trashed, _| remember_trashed(trashed),
+            |trashed, _| {
+                remember(Undo::Trashed(trashed));
+                Vec::new()
+            },
         );
     }
 
-    /// Ctrl+Z: puts the last batch sent to the Recycle Bin back where it was
-    /// (issue #8). Batches from every tab share one history, newest first, as
-    /// Explorer's do.
-    pub(crate) fn undo_trash(&mut self, cx: &mut Context<Self>) {
-        let Some(batch) = TRASHED.lock().ok().and_then(|mut history| history.pop()) else {
-            self.set_status(StatusLevel::Info, t!("Nada para desfazer").to_string());
-            cx.notify();
+    // What a batch put somewhere, back on the UI thread after the reload.
+    //
+    // Selected when it is in this folder, as the Explorer does after a paste or
+    // a drop (issue #21): in a folder of thousands the new file was left for
+    // the user to find. And its pictures are asked for again: a folder being
+    // pasted into lists the file while it is still arriving, the Shell has no
+    // thumbnail for half a file, and the slot then waited for its next retry
+    // with the type's icon in its place (issue #29).
+    pub(crate) fn landed(&mut self, paths: &[PathBuf], cx: &mut Context<Self>) {
+        let here: Vec<String> = paths
+            .iter()
+            .filter(|path| {
+                path.parent()
+                    .is_some_and(|parent| super::same_path(&parent.to_string_lossy(), &self.cwd))
+            })
+            .map(|path| path.to_string_lossy().into_owned())
+            .collect();
+        for path in &here {
+            self.thumbnails.forget(path, cx);
+        }
+        let Some(first) = here.first().cloned() else {
             return;
+        };
+        self.select_after_listing = here;
+        // Selects `first` now or once the reload lands; the others join it
+        // there (`take_select_after_listing`).
+        self.reveal(&first);
+        if !self.listing_pending {
+            self.take_select_after_listing();
+        }
+    }
+
+    /// Adds the rest of a batch to the selection `reveal` just made of its
+    /// first item.
+    pub(crate) fn take_select_after_listing(&mut self) {
+        let paths = std::mem::take(&mut self.select_after_listing);
+        if paths.len() < 2 {
+            return;
+        }
+        for path in &paths[1..] {
+            if let Some(entry) = self.filtered_entries.iter().find(|entry| super::same_path(&entry.path, path)) {
+                self.selection.insert(entry.path.clone());
+            }
+        }
+        // A batch is not one file to look at.
+        self.preview_selection_pending = false;
+    }
+
+    /// Ctrl+Z: undoes the last deletion (issue #8) or move — a cut and paste,
+    /// or files dragged to another folder (issue #28). Batches from every tab
+    /// share one history, newest first, as Explorer's do.
+    pub(crate) fn undo_trash(&mut self, cx: &mut Context<Self>) {
+        let batch = match with_history(Vec::pop).flatten() {
+            Some(Undo::Trashed(batch)) => batch,
+            Some(Undo::Moved(moves)) => {
+                self.undo_moves(moves, cx);
+                return;
+            }
+            None => {
+                self.set_status(StatusLevel::Info, t!("Nada para desfazer").to_string());
+                cx.notify();
+                return;
+            }
         };
         let total = batch.len();
         let label = i18n::plural(total, k!("{n} item restaurado"), k!("{n} itens restaurados"));
@@ -1054,9 +1133,51 @@ impl ExplorerPane {
         });
     }
 
-    /// Whether Ctrl+Z has a deletion to undo.
+    // Moves each item of a move back where it came from. A name taken there
+    // since is left alone, as the Explorer does, and said in the footer.
+    fn undo_moves(&mut self, moves: Vec<(PathBuf, PathBuf)>, cx: &mut Context<Self>) {
+        let total = moves.len();
+        let label = i18n::plural(total, k!("{n} item movido de volta"), k!("{n} itens movidos de volta"));
+        self.run_fs_op_with(
+            total,
+            label,
+            cx,
+            move || {
+                let mut report = OpReport::default();
+                let mut back = Vec::new();
+                // Newest first, so a folder moved after its parent is undone
+                // before the parent it went into.
+                for (from, to) in moves.into_iter().rev() {
+                    if !ops::would_conflict(&to) {
+                        report.failed(tf!("{path}: não está mais onde foi movido", path = to.display()));
+                        continue;
+                    }
+                    if ops::would_conflict(&from) {
+                        report.failed(tf!("{path}: o lugar de origem já está ocupado", path = from.display()));
+                        continue;
+                    }
+                    match apply_to_free_name(ClipMode::Cut, &to, &from) {
+                        Ok(applied) => {
+                            report.applied(applied);
+                            back.push(from);
+                        }
+                        Err(error) => report.failed(format!("{}: {error}", to.display())),
+                    }
+                }
+                (report, back)
+            },
+            |back, _| back,
+        );
+    }
+
+    /// Whether Ctrl+Z has something to undo.
     pub(crate) fn can_undo_trash(&self) -> bool {
-        TRASHED.lock().is_ok_and(|history| !history.is_empty())
+        with_history(|history| !history.is_empty()).unwrap_or(false)
+    }
+
+    /// Whether what Ctrl+Z would undo is a move (the menu names it).
+    pub(crate) fn undo_is_move(&self) -> bool {
+        with_history(|history| matches!(history.last(), Some(Undo::Moved(_)))).unwrap_or(false)
     }
 
     pub(crate) fn delete_permanent_paths(&mut self, paths: Vec<String>, cx: &mut Context<Self>) {
@@ -1308,6 +1429,9 @@ impl ExplorerPane {
             move || {
                 let mut report = OpReport::default();
                 let mut failed = Vec::new();
+                // Where each item went, and whether moving it back undoes it
+                // (not for one that replaced an item already there).
+                let mut landed: Vec<(PathBuf, PathBuf, bool)> = Vec::new();
                 for src in clear {
                     // Owned so the borrow of `src` ends before `src` is moved
                     // into `failed`.
@@ -1329,7 +1453,10 @@ impl ExplorerPane {
                         }
                     };
                     match apply_to_free_name(mode, &src, &dst) {
-                        Ok(applied) => report.applied(applied),
+                        Ok(applied) => {
+                            report.applied(applied);
+                            landed.push((src, dst, true));
+                        }
                         Err(error) => {
                             report.failed(format!("{}: {error}", src.display()));
                             failed.push(src);
@@ -1344,25 +1471,38 @@ impl ExplorerPane {
                         // Filtered out above; kept for exhaustiveness without panicking.
                         ConflictResolution::Skip => continue,
                         ConflictResolution::Rename => free_destination(&dest_dir, &name)
-                            .and_then(|dst| apply_to_free_name(mode, &src, &dst)),
+                            .and_then(|dst| apply_to_free_name(mode, &src, &dst).map(|applied| (applied, dst, true))),
                         ConflictResolution::Overwrite => ops::destination_in(&dest_dir, &name)
-                            .and_then(|dst| overwrite_apply(mode, &src, &dst)),
+                            .and_then(|dst| overwrite_apply(mode, &src, &dst).map(|applied| (applied, dst, false))),
                     };
                     match result {
-                        Ok(applied) => report.applied(applied),
+                        Ok((applied, dst, undoable)) => {
+                            report.applied(applied);
+                            landed.push((src, dst, undoable));
+                        }
                         Err(error) => {
                             report.failed(format!("{}: {error}", src.display()));
                             failed.push(src);
                         }
                     }
                 }
-                (report, failed)
+                (report, (failed, landed))
             },
-            move |failed, cx| {
+            move |(failed, landed), cx| {
                 if let Some(generation) = cut_generation {
                     retain_failed_cut(failed, generation, cx);
                     ExplorerClipboard::end_cut(cx);
                 }
+                if mode == ClipMode::Cut {
+                    remember(Undo::Moved(
+                        landed
+                            .iter()
+                            .filter(|(_, _, undoable)| *undoable)
+                            .map(|(from, to, _)| (from.clone(), to.clone()))
+                            .collect(),
+                    ));
+                }
+                landed.into_iter().map(|(_, to, _)| to).collect()
             },
         );
     }
@@ -2068,20 +2208,56 @@ impl ExplorerPane {
     }
 }
 
-// What went to the Recycle Bin, a batch per deletion, newest last; Ctrl+Z
-// takes the last one back out. Kept for the app rather than a tab.
-static TRASHED: std::sync::Mutex<Vec<Vec<PathBuf>>> = std::sync::Mutex::new(Vec::new());
+// One batch Ctrl+Z can take back.
+enum Undo {
+    /// Sent to the Recycle Bin, by original path.
+    Trashed(Vec<PathBuf>),
+    /// Moved, as (from, to). A move over an item it replaced is not here:
+    /// moving it back would not bring the replaced one back.
+    Moved(Vec<(PathBuf, PathBuf)>),
+}
+
+impl Undo {
+    fn is_empty(&self) -> bool {
+        match self {
+            Undo::Trashed(paths) => paths.is_empty(),
+            Undo::Moved(moves) => moves.is_empty(),
+        }
+    }
+}
+
+// What was deleted or moved, a batch per operation, newest last; Ctrl+Z
+// takes the last one back. Kept for the app rather than a tab.
+#[cfg(not(test))]
+static HISTORY: std::sync::Mutex<Vec<Undo>> = std::sync::Mutex::new(Vec::new());
 const UNDO_DEPTH: usize = 30;
 
-fn remember_trashed(trashed: Vec<PathBuf>) {
-    if trashed.is_empty() {
+#[cfg(not(test))]
+fn with_history<R>(f: impl FnOnce(&mut Vec<Undo>) -> R) -> Option<R> {
+    HISTORY.lock().ok().map(|mut history| f(&mut history))
+}
+
+// One history per test thread: tests run side by side, and one deleting
+// files would hand its batch to another's Ctrl+Z.
+#[cfg(test)]
+thread_local! {
+    static HISTORY: std::cell::RefCell<Vec<Undo>> = const { std::cell::RefCell::new(Vec::new()) };
+}
+
+#[cfg(test)]
+fn with_history<R>(f: impl FnOnce(&mut Vec<Undo>) -> R) -> Option<R> {
+    Some(HISTORY.with(|history| f(&mut history.borrow_mut())))
+}
+
+fn remember(batch: Undo) {
+    if batch.is_empty() {
         return;
     }
-    if let Ok(mut history) = TRASHED.lock() {
-        history.push(trashed);
+    with_history(|history| {
+        history.push(batch);
         let excess = history.len().saturating_sub(UNDO_DEPTH);
         history.drain(..excess);
-    }
+    });
 }
 
 // Windows paths compare without case, and the Recycle Bin may hand one back

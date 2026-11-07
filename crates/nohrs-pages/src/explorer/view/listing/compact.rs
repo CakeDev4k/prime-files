@@ -196,16 +196,24 @@ fn render_item(
                 cx.notify();
             }),
         )
-        .child(match icon {
-            Some(image) => img(ImageSource::Render(image))
-                .size(px(16.0))
+        .child(
+            div()
+                .flex()
                 .flex_shrink_0()
-                .into_any_element(),
-            None => Icon::new(if is_dir { IconName::Folder } else { IconName::File })
-                .size_4()
-                .text_color(rgb(theme::gray_500()))
-                .into_any_element(),
-        })
+                .when(crate::explorer::file_ops::is_cut(&item.path, cx), |this| {
+                    this.opacity(super::row::CUT_OPACITY)
+                })
+                .child(match icon {
+                    Some(image) => img(ImageSource::Render(image))
+                        .size(px(16.0))
+                        .flex_shrink_0()
+                        .into_any_element(),
+                    None => Icon::new(if is_dir { IconName::Folder } else { IconName::File })
+                        .size_4()
+                        .text_color(rgb(theme::gray_500()))
+                        .into_any_element(),
+                }),
+        )
         .child(match rename_input {
             Some(input) => div()
                 .flex_1()

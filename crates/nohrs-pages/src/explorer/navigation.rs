@@ -332,6 +332,7 @@ impl ExplorerPane {
                 self.clear_status();
                 if let Some(path) = self.reveal_after_listing.take() {
                     self.reveal(&path);
+                    self.take_select_after_listing();
                 }
             }
             Err(e) => {
@@ -339,6 +340,7 @@ impl ExplorerPane {
                 // The rows are not this folder's, so the next read is a visit.
                 self.listed_cwd = None;
                 self.reveal_after_listing = None;
+                self.select_after_listing.clear();
                 self.entries = Vec::new();
                 self.filtered_entries = Vec::new();
                 // The rows are gone, so the selection addressing them has to go
@@ -494,7 +496,7 @@ impl ExplorerPane {
 
     /// Opens a file in the program Windows associates with it, as a double
     /// click in Explorer does.
-    fn open_with_default_app(&mut self, path: &str) {
+    pub(crate) fn open_with_default_app(&mut self, path: &str) {
         // Tests record the request instead: launching the real program would
         // open windows on the machine running them.
         #[cfg(test)]

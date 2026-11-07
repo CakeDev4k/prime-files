@@ -30,6 +30,10 @@ pub struct Place {
 #[derive(Clone, Debug, Default)]
 pub struct Places {
     pub quick_access: Vec<Place>,
+    /// Files added with Windows' "Add to favorites". The Shell lists them
+    /// among the Quick access folders; they get a group of their own
+    /// (issue #24).
+    pub favorites: Vec<Place>,
     /// This PC itself, for its localized name.
     pub this_pc: Option<Place>,
     pub drives: Vec<Place>,
@@ -40,7 +44,34 @@ pub struct Places {
 /// Reads the places. Slow (the Shell may touch network drives), so it runs
 /// on a background thread.
 pub fn load() -> Places {
-    platform::load()
+    let places = platform::load();
+    if let Ok(mut known) = IN_QUICK_ACCESS.lock() {
+        *known = Some(
+            places
+                .quick_access
+                .iter()
+                .chain(&places.favorites)
+                .filter(|place| place.pinned)
+                .filter_map(|place| place.path.as_deref())
+                .map(str::to_lowercase)
+                .collect(),
+        );
+    }
+    places
+}
+
+// The paths pinned to Quick access or added to favorites, as of the last
+// read of the places, in lowercase.
+static IN_QUICK_ACCESS: std::sync::Mutex<Option<HashSet<String>>> = std::sync::Mutex::new(None);
+
+/// Whether `path` is pinned to Quick access or a favorite, as far as the
+/// sidebar knows. The Shell's menu for an item says "Unpin" or "Remove from
+/// favorites" only when it is built from the item's Quick access entry, not
+/// from its folder (`shell_menu`, issues #11 and #26).
+pub(crate) fn in_quick_access(path: &str) -> bool {
+    IN_QUICK_ACCESS
+        .lock()
+        .is_ok_and(|known| known.as_ref().is_some_and(|known| known.contains(&path.to_lowercase())))
 }
 
 /// The subfolders of `path`, sorted by name, for expanding a tree node.
@@ -196,6 +227,30 @@ impl ExplorerPane {
         self.sidebar.loaded_at = None;
     }
 
+    /// [`refresh_places`](Self::refresh_places) after a Shell command, and
+    /// again a moment later. Pinning and "Add to favorites" return before
+    /// the Shell has updated Quick access (about 100 ms here): the read made
+    /// at once found the old list, and the item showed up only on the next
+    /// timed read, 15 s later (issue #25).
+    pub(crate) fn refresh_places_after_shell(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.refresh_places();
+        cx.spawn_in(window, async move |this: WeakEntity<Self>, cx| {
+            for wait in [400, 1500] {
+                cx.background_executor().timer(Duration::from_millis(wait)).await;
+                if this
+                    .update(cx, |pane, cx| {
+                        pane.refresh_places();
+                        cx.notify();
+                    })
+                    .is_err()
+                {
+                    return;
+                }
+            }
+        })
+        .detach();
+    }
+
     /// Opens or closes a tree node, reading its subfolders the first time.
     pub(crate) fn toggle_place(&mut self, place: &Place, cx: &mut Context<Self>) {
         let key = place.parsing_name.clone();
@@ -228,6 +283,10 @@ impl ExplorerPane {
     /// drives and folders, or Explorer for another virtual one.
     pub(crate) fn open_place(&mut self, place: &Place, window: &mut Window, cx: &mut Context<Self>) {
         match &place.path {
+            // A favorite is a file: it opens in its program, as a click on it
+            // in the Explorer's Home does. Entering it as a folder left an
+            // empty listing with an error.
+            Some(path) if std::path::Path::new(path).is_file() => self.open_with_default_app(path),
             Some(path) => self.change_dir(path.clone(), window, cx),
             None if place.parsing_name.eq_ignore_ascii_case(THIS_PC) => {
                 self.change_dir(THIS_PC.to_string(), window, cx)
@@ -255,7 +314,8 @@ impl ExplorerPane {
     /// in a new tab (issue #14). `None` for one only the Explorer opens.
     pub(crate) fn place_address(place: &Place) -> Option<String> {
         if let Some(path) = &place.path {
-            return Some(path.clone());
+            // A favorite file has no tab to open.
+            return (!std::path::Path::new(path).is_file()).then(|| path.clone());
         }
         let name = place.parsing_name.as_str();
         (name.eq_ignore_ascii_case(THIS_PC)
@@ -393,10 +453,13 @@ mod platform {
         if let Err(error) = unsafe { CoInitializeEx(None, COINIT_APARTMENTTHREADED) }.ok() {
             tracing::debug!("CoInitializeEx: {error}");
         }
-        let quick_access = children(QUICK_ACCESS)
+        // A pinned file is a favorite: Quick access itself pins only folders.
+        let (favorites, quick_access): (Vec<Place>, Vec<Place>) = children(QUICK_ACCESS)
             .into_iter()
             .filter_map(|item| place(&item))
-            .collect();
+            .partition(|place| {
+                place.pinned && place.path.as_deref().is_some_and(|path| std::path::Path::new(path).is_file())
+            });
         // This PC also lists the user folders and portable devices; the
         // drives are the ones whose path is a root.
         let drives = children(THIS_PC)
@@ -414,6 +477,7 @@ mod platform {
         }
         Places {
             quick_access,
+            favorites,
             this_pc: item(THIS_PC).and_then(|item| place(&item)),
             drives,
             other,

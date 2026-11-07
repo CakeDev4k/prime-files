@@ -46,6 +46,9 @@ pub struct ExplorerPane {
     pub(crate) listing_wait: std::time::Duration,
     /// A path to select once the pending read arrives.
     pub(crate) reveal_after_listing: Option<String>,
+    /// What a paste or a drop put here, selected with the first one once the
+    /// listing that has them arrives (`file_ops::landed`).
+    pub(crate) select_after_listing: Vec<String>,
     /// A folder just created, to be put in rename mode once the listing
     /// that has it arrives (the listing is read off the UI thread).
     pub(crate) rename_when_listed: Option<String>,
@@ -507,6 +510,7 @@ impl ExplorerPane {
             listing_tasks: Vec::new(),
             listing_wait: super::navigation::LISTING_WAIT,
             reveal_after_listing: None,
+            select_after_listing: Vec::new(),
             rename_when_listed: None,
             slow_rename: None,
             activation_watch: None,

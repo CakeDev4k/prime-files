@@ -380,6 +380,9 @@ fn render_grid_item(
                 .flex()
                 .items_center()
                 .justify_center()
+                .when(crate::explorer::file_ops::is_cut(&item.path, cx), |this| {
+                    this.opacity(super::row::CUT_OPACITY)
+                })
                 .child(match (waveform, thumbnail) {
                     (Some(bars), _) => crate::explorer::waveforms::canvas(
                         bars,

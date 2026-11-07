@@ -148,6 +148,15 @@ impl RootView {
             }
         })
         .detach();
+        // `system` was resolved only when the config was applied, so a switch
+        // between light and dark in Windows showed up only after a restart
+        // (issue #20). gpui reports the change per window.
+        cx.observe_window_appearance(window, |root, window, cx| {
+            if root.config.theme.mode == config::ThemeMode::System {
+                root.apply_theme(window, cx);
+            }
+        })
+        .detach();
         view
     }
 
@@ -219,15 +228,7 @@ impl RootView {
             crate::explorer::rebind_shortcuts(cx);
             cx.refresh_windows();
         }
-        // Before `restyle_components`, which reads these tokens.
-        theme::set_dark(mode.is_dark());
-        theme::set_accent(theme::parse_accent(&config.theme.accent));
-        Theme::change(mode, Some(window), cx);
-
-        // Applied unconditionally: `Theme::change` restores the shipped palette,
-        // and on the first call the mode often already matches, so this cannot
-        // hang off the branch above.
-        Self::restyle_components(cx);
+        Self::apply_palette(mode, &config.theme.accent, window, cx);
 
         // Condense the (possibly multi-line) diagnostic to a single line plus the
         // file path for the one-line status bar; full detail is in the logs.
@@ -279,6 +280,28 @@ impl RootView {
     /// - `primary` ships near-black and drives every accent-bearing widget
     ///   (buttons, checkbox, switch, radio, tabs), which left the dialogs
     ///   looking unrelated to the rest of the window.
+    // Light or dark and the accent, on both palettes the UI draws from.
+    fn apply_palette(mode: GpuiThemeMode, accent: &str, window: &mut Window, cx: &mut App) {
+        // Before `restyle_components`, which reads these tokens.
+        theme::set_dark(mode.is_dark());
+        theme::set_accent(theme::parse_accent(accent));
+        Theme::change(mode, Some(window), cx);
+
+        // Applied unconditionally: `Theme::change` restores the shipped palette,
+        // and on the first call the mode often already matches, so this cannot
+        // hang off a check of whether the mode changed.
+        Self::restyle_components(cx);
+    }
+
+    // Windows switched between light and dark while `theme.mode` is `system`.
+    fn apply_theme(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let mode = GpuiThemeMode::from(window.appearance());
+        let accent = self.config.theme.accent.clone();
+        Self::apply_palette(mode, &accent, window, cx);
+        // Every window draws from the same tokens.
+        cx.refresh_windows();
+    }
+
     fn restyle_components(cx: &mut App) {
         let palette = Theme::global_mut(cx);
         palette.overlay = gpui::Rgba {

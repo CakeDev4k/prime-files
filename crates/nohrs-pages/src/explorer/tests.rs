@@ -815,6 +815,7 @@ async fn synced_panes_mirror_navigation(cx: &mut TestAppContext) {
                 restore_tabs: true,
                 reveal_from_other_apps: true,
                 background_tabs: true,
+                ..Default::default()
             };
             page.apply_config_explorer(&synced, cx);
             assert!(page.is_synced());
@@ -854,6 +855,7 @@ async fn synced_navigation_clears_stale_search_state(cx: &mut TestAppContext) {
                 restore_tabs: true,
                 reveal_from_other_apps: true,
                 background_tabs: true,
+                ..Default::default()
             };
             page.apply_config_explorer(&synced, cx);
 
@@ -997,6 +999,7 @@ async fn close_pane_keeps_subscriptions_aligned(cx: &mut TestAppContext) {
                 restore_tabs: true,
                 reveal_from_other_apps: true,
                 background_tabs: true,
+                ..Default::default()
             };
             page.apply_config_explorer(&synced, cx);
             page.pane(0)
@@ -2891,12 +2894,15 @@ async fn undoing_a_move_leaves_a_taken_name_alone(cx: &mut TestAppContext) {
     assert_eq!(std::fs::read_to_string(dst.join("a.txt")).unwrap(), "A");
 }
 
-// A copy is not a move: Ctrl+Z after it does not take the original away.
+// Copy, paste, Ctrl+Z: the copies go to the Recycle Bin and the originals
+// stay (issue #33). A copy is not a move.
 #[gpui::test]
-async fn a_copy_paste_leaves_nothing_to_undo(cx: &mut TestAppContext) {
+async fn undoing_a_copy_paste_removes_only_the_copies(cx: &mut TestAppContext) {
     let (_dir, src, _dst) = paste_fixture();
     let empty = src.parent().unwrap().join("vazia");
     std::fs::create_dir(&empty).unwrap();
+    let originals: Vec<_> = std::fs::read_dir(&src).unwrap().map(|entry| entry.unwrap().file_name()).collect();
+    assert!(!originals.is_empty());
     let window = new_explorer(cx);
     window
         .update(cx, |pane, _window, cx| {
@@ -2912,7 +2918,161 @@ async fn a_copy_paste_leaves_nothing_to_undo(cx: &mut TestAppContext) {
         })
         .unwrap();
     cx.run_until_parked();
+    for name in &originals {
+        assert!(empty.join(name).exists(), "{name:?} was copied");
+    }
     window
-        .update(cx, |pane, _window, _cx| assert!(!pane.can_undo_trash(), "a copy is not in the history"))
+        .update(cx, |pane, _window, cx| {
+            assert!(pane.undo_is_copy() && !pane.undo_is_move(), "Ctrl+Z would undo the copy");
+            pane.undo_trash(cx);
+        })
         .unwrap();
+    cx.run_until_parked();
+    for name in &originals {
+        assert!(!empty.join(name).exists(), "{name:?} copy taken back");
+        assert!(src.join(name).exists(), "{name:?} original kept");
+    }
+    window
+        .update(cx, |pane, _window, _cx| assert!(!pane.can_undo_trash(), "the undo is used up"))
+        .unwrap();
+}
+
+// A rename goes back with Ctrl+Z and forward again with Ctrl+Y, as many
+// times as asked; the undo and redo lists trade the batch each time.
+#[gpui::test]
+async fn a_rename_is_undone_and_redone(cx: &mut TestAppContext) {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    std::fs::write(root.join("a.txt"), "A").unwrap();
+    let window = open_pane_at(cx, root);
+    window
+        .update(cx, |pane, window, cx| {
+            pane.begin_rename(0, window, cx);
+            let input = pane.renaming.as_ref().unwrap().input.clone();
+            input.update(cx, |state, cx| state.set_value("b.txt", window, cx));
+            pane.commit_rename(window, cx);
+        })
+        .unwrap();
+    cx.run_until_parked();
+    assert!(root.join("b.txt").exists() && !root.join("a.txt").exists());
+    for _ in 0..2 {
+        window
+            .update(cx, |pane, _window, cx| {
+                assert_eq!(pane.undo_kind(), Some(super::file_ops::UndoKind::Renamed));
+                assert!(!pane.can_redo());
+                pane.undo_trash(cx);
+            })
+            .unwrap();
+        cx.run_until_parked();
+        assert!(root.join("a.txt").exists() && !root.join("b.txt").exists(), "Ctrl+Z gives the old name back");
+        window
+            .update(cx, |pane, _window, cx| {
+                assert!(pane.can_redo() && !pane.can_undo_trash());
+                pane.redo(cx);
+            })
+            .unwrap();
+        cx.run_until_parked();
+        assert!(root.join("b.txt").exists() && !root.join("a.txt").exists(), "Ctrl+Y renames it again");
+    }
+    assert_eq!(std::fs::read_to_string(root.join("b.txt")).unwrap(), "A");
+}
+
+// Undo a move, then redo it: the files go back to where they were pasted.
+// A new operation after an undo empties the redo list.
+#[gpui::test]
+async fn a_move_is_redone_and_a_new_operation_ends_the_redo(cx: &mut TestAppContext) {
+    let dir = tempfile::tempdir().unwrap();
+    let src = dir.path().join("src");
+    let dst = dir.path().join("dst");
+    std::fs::create_dir(&src).unwrap();
+    std::fs::create_dir(&dst).unwrap();
+    std::fs::write(src.join("a.txt"), "A").unwrap();
+    std::fs::write(src.join("c.txt"), "C").unwrap();
+    let window = new_explorer(cx);
+    window
+        .update(cx, |pane, _window, cx| {
+            pane.cwd = src.to_string_lossy().to_string();
+            pane.reload(cx);
+            if let Some(ix) = pane.filtered_entries.iter().position(|entry| entry.name == "a.txt") {
+                pane.select_single(ix);
+            }
+            pane.cut_selection(cx);
+            pane.cwd = dst.to_string_lossy().to_string();
+            pane.reload(cx);
+            pane.prepare_paste(cx);
+            pane.execute_paste_plan(cx);
+        })
+        .unwrap();
+    cx.run_until_parked();
+    window.update(cx, |pane, _window, cx| pane.undo_trash(cx)).unwrap();
+    cx.run_until_parked();
+    assert!(src.join("a.txt").exists() && !dst.join("a.txt").exists());
+    window.update(cx, |pane, _window, cx| pane.redo(cx)).unwrap();
+    cx.run_until_parked();
+    assert!(dst.join("a.txt").exists() && !src.join("a.txt").exists(), "Ctrl+Y moves it again");
+
+    window.update(cx, |pane, _window, cx| pane.undo_trash(cx)).unwrap();
+    cx.run_until_parked();
+    window
+        .update(cx, |pane, window, cx| {
+            assert!(pane.can_redo());
+            pane.cwd = src.to_string_lossy().to_string();
+            pane.reload(cx);
+            let ix = pane.filtered_entries.iter().position(|entry| entry.name == "c.txt").unwrap();
+            pane.begin_rename(ix, window, cx);
+            let input = pane.renaming.as_ref().unwrap().input.clone();
+            input.update(cx, |state, cx| state.set_value("d.txt", window, cx));
+            pane.commit_rename(window, cx);
+        })
+        .unwrap();
+    cx.run_until_parked();
+    window
+        .update(cx, |pane, _window, _cx| {
+            assert!(!pane.can_redo(), "a new rename ends the redo");
+            assert_eq!(pane.undo_kind(), Some(super::file_ops::UndoKind::Renamed));
+        })
+        .unwrap();
+}
+
+// "Nova pasta" and the name typed for it are one step: Ctrl+Z takes the
+// folder away (to the Recycle Bin), Ctrl+Y brings it back with its name.
+#[gpui::test]
+async fn a_new_folder_and_its_name_are_one_undo(cx: &mut TestAppContext) {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().to_path_buf();
+    let (window, pane) = new_explorer_in_root(cx);
+    window
+        .update(cx, |_root, window, cx| {
+            pane.update(cx, |pane, cx| {
+                pane.cwd = root.to_string_lossy().to_string();
+                pane.reload(cx);
+                pane.create_new_folder(window, cx);
+            });
+        })
+        .unwrap();
+    cx.run_until_parked();
+    window
+        .update(cx, |_root, window, cx| {
+            pane.update(cx, |pane, cx| {
+                pane.take_rename_when_listed(window, cx);
+                let input = pane.renaming.as_ref().expect("the new folder is being named").input.clone();
+                input.update(cx, |state, cx| state.set_value("Fotos", window, cx));
+                pane.commit_rename(window, cx);
+            });
+        })
+        .unwrap();
+    cx.run_until_parked();
+    assert!(root.join("Fotos").is_dir());
+    pane.update(cx, |pane, cx| {
+        assert_eq!(pane.undo_kind(), Some(super::file_ops::UndoKind::Created));
+        pane.undo_trash(cx);
+    });
+    cx.run_until_parked();
+    assert!(!root.join("Fotos").exists(), "Ctrl+Z takes the named folder away");
+    pane.update(cx, |pane, cx| {
+        assert!(!pane.can_undo_trash(), "one step, not two");
+        pane.redo(cx);
+    });
+    cx.run_until_parked();
+    assert!(root.join("Fotos").is_dir(), "Ctrl+Y brings it back from the Recycle Bin");
 }

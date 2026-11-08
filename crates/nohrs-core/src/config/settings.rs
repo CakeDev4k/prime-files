@@ -186,9 +186,16 @@ pub struct Explorer {
     /// Explorer, a browser's Show in folder) opens here instead of Explorer.
     pub reveal_from_other_apps: bool,
     /// Whether a tab opened with the middle button stays behind the current
-    /// one, as in a browser (issue #6). "Open in new tab" in the menu always
-    /// shows the tab it opens.
+    /// one, as in a browser (issue #6). Off by default since 07/11/2026: the
+    /// owner wants to land on the tab just opened. "Open in new tab" in the
+    /// menu always shows the tab it opens.
     pub background_tabs: bool,
+    /// Where a folder another program sends (Premiere's Reveal, a browser's
+    /// Show in folder, the Desktop, Win+E) opens: a new tab of the window
+    /// used last, the tab on screen, or a window of its own. RML asked to
+    /// choose (07/11/2026): a new tab behind, then torn off into a window,
+    /// was two steps for what they wanted in one.
+    pub open_from_other_apps: OpenFromOtherApps,
 }
 
 impl Default for Explorer {
@@ -198,7 +205,33 @@ impl Default for Explorer {
             synced_panes: false,
             restore_tabs: true,
             reveal_from_other_apps: true,
-            background_tabs: true,
+            background_tabs: false,
+            open_from_other_apps: OpenFromOtherApps::NewTab,
+        }
+    }
+}
+
+/// See [`Explorer::open_from_other_apps`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "kebab-case")]
+pub enum OpenFromOtherApps {
+    /// A new tab of the window used last, as browsers do with links.
+    #[default]
+    NewTab,
+    /// The tab on screen goes to the folder.
+    CurrentTab,
+    /// A window of its own, with just that folder.
+    NewWindow,
+}
+
+impl OpenFromOtherApps {
+    /// Parse the `config.toml` spelling (`new-tab`/`current-tab`/`new-window`).
+    pub fn parse(value: &str) -> Option<Self> {
+        match value {
+            "new-tab" => Some(Self::NewTab),
+            "current-tab" => Some(Self::CurrentTab),
+            "new-window" => Some(Self::NewWindow),
+            _ => None,
         }
     }
 }
@@ -529,7 +562,10 @@ impl SearchBackend {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(default)]
 pub struct Launcher {
-    /// Global hotkey that summons the launcher.
+    /// The shortcut that opens the quick search (Prime Files' own Listary)
+    /// from any program: `off`, `double-ctrl`, `double-shift`, `double-alt`,
+    /// a combination such as `ctrl+space`, or `auto`: Ctrl twice, or Shift
+    /// twice when Listary is installed, so that the two do not open together.
     pub hotkey: String,
     /// Whether the launcher reopens at its last on-screen position.
     pub position_remember: bool,
@@ -538,7 +574,7 @@ pub struct Launcher {
 impl Default for Launcher {
     fn default() -> Self {
         Self {
-            hotkey: "Cmd+Shift+Space".to_string(),
+            hotkey: "auto".to_string(),
             position_remember: true,
         }
     }
@@ -947,7 +983,7 @@ impl Config {
              backend = \"auto\"   # \"tantivy\" | \"ripgrep\" | \"auto\"\n\
              \n\
              [launcher]\n\
-             hotkey = \"Cmd+Shift+Space\"\n\
+             hotkey = \"auto\"   # quick search: \"off\" | \"double-ctrl\" | \"double-shift\" | \"double-alt\" | \"ctrl+space\" | \"auto\"\n\
              position_remember = true\n\
              \n\
              # Store performance logging for analysis; all off by default.\n\
@@ -1168,9 +1204,25 @@ fn read_explorer(table: &toml::Table, explorer: &mut Explorer, diagnostics: &mut
             ))),
         }
     }
+    if let Some(value) = table.get("open_from_other_apps") {
+        match value.as_str().and_then(OpenFromOtherApps::parse) {
+            Some(place) => explorer.open_from_other_apps = place,
+            None => diagnostics.push(Diagnostic::warn(format!(
+                "invalid explorer.open_from_other_apps {value}; using {:?}",
+                explorer.open_from_other_apps
+            ))),
+        }
+    }
     warn_unknown_keys(
         table,
-        &["split_direction", "synced_panes", "restore_tabs", "reveal_from_other_apps", "background_tabs"],
+        &[
+            "split_direction",
+            "synced_panes",
+            "restore_tabs",
+            "reveal_from_other_apps",
+            "background_tabs",
+            "open_from_other_apps",
+        ],
         "explorer.",
         diagnostics,
     );

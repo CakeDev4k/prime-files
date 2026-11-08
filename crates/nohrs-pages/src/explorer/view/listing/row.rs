@@ -336,23 +336,19 @@ pub fn render(
                                         }),
                                 )
                                 .child(match rename_input {
-                                    // Borderless and flush with the label it
-                                    // stands in for, so the row keeps its shape
-                                    // and only the caret marks the edit.
+                                    // Its text where the label's was, the
+                                    // box around it centered on the row.
                                     Some(input) => div()
                                         .flex_1()
                                         .min_w(px(0.0))
+                                        .h_full()
+                                        .flex()
+                                        .items_center()
                                         .child(
-                                            // Matches the resting label's
-                                            // typography exactly, so committing
-                                            // the rename is not a visible jump.
-                                            Input::new(&input)
-                                                .small()
-                                                .appearance(false)
-                                                .px(px(0.0))
-                                                .text_sm()
-                                                .font_weight(gpui::FontWeight::MEDIUM)
-                                                .text_color(rgb(theme::fg())),
+                                            rename_field(&input, false)
+                                                .flex_1()
+                                                .min_w(px(0.0))
+                                                .ml(px(-RENAME_FIELD_INSET)),
                                         )
                                         .into_any_element(),
                                     // `flex_1` + `min_w(0)` give the ellipsis a
@@ -494,6 +490,37 @@ pub fn render(
         None => row,
     }
 }
+
+/// The field a rename types into, in every view: a box with the accent
+/// outline, as the Explorer draws it, with the text centered in its height.
+/// It used to be the bare text field set where the label was, which sat a
+/// little off the label's line and, in the grid, flush left under a centered
+/// icon.
+pub(crate) fn rename_field(input: &Entity<gpui_component::input::InputState>, small_text: bool) -> Div {
+    div()
+        .h(px(if small_text { 20.0 } else { 24.0 }))
+        .flex()
+        .items_center()
+        .px(px(RENAME_FIELD_INSET - 1.0))
+        .rounded(px(4.0))
+        .border_1()
+        .border_color(rgb(theme::accent()))
+        .bg(rgb(theme::bg()))
+        .overflow_hidden()
+        .child(
+            Input::new(input)
+                .small()
+                .appearance(false)
+                .h_full()
+                .px(px(0.0))
+                .map(|field| if small_text { field.text_xs() } else { field.text_sm() })
+                .text_color(rgb(theme::fg())),
+        )
+}
+
+/// From the box's edge to its text: where a field stands in for a label, it
+/// is moved out by this much so the name does not jump when it opens.
+pub(crate) const RENAME_FIELD_INSET: f32 = 5.0;
 
 /// The Explorer's Status icon for an item of a cloud-synced folder (OneDrive
 /// and the like): a cloud when it is only online, a green check when it is

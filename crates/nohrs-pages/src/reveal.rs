@@ -115,6 +115,12 @@ mod platform {
     /// Polls after the listing during which a reveal's selection may still
     /// arrive: 150 ms, too soon for a person to have clicked.
     const SELECTION_GRACE: u32 = 3;
+    /// The same wait when the window is taken either way (Prime Files is the
+    /// default explorer): 1 s. A reveal whose selection landed after 150 ms
+    /// (the Start menu's "Open file location", issue #35) came here as a
+    /// plain folder, nothing selected. A click inside that second only
+    /// selects its file.
+    const TAKEN_SELECTION_GRACE: u32 = 20;
     /// Polls an empty folder is given before it counts as listed: an empty
     /// view and one still reading look the same.
     const EMPTY_GRACE: u32 = 40;
@@ -216,7 +222,8 @@ mod platform {
                     // Files is the default explorer.
                     let polls = listed_for.get_or_insert(0);
                     *polls += 1;
-                    if *polls > SELECTION_GRACE {
+                    let grace = if super::takes_folders() { TAKEN_SELECTION_GRACE } else { SELECTION_GRACE };
+                    if *polls > grace {
                         take_folder(&browser, folder);
                         break;
                     }

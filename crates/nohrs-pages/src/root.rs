@@ -74,6 +74,9 @@ pub struct RootView {
     config_status: Option<String>,
     // Kept alive for the window's lifetime so the OS watch is not dropped.
     _config_watcher: Option<ConfigWatcher>,
+    // The Name box, file types and Open/Cancel while a browser's Open dialog
+    // waits on Nohrs (`picking_bar`).
+    pub(crate) picking_bar: Option<crate::picking_bar::PickingBar>,
 }
 
 impl RootView {
@@ -130,6 +133,7 @@ impl RootView {
             config_overrides,
             config_status: None,
             _config_watcher: None,
+            picking_bar: None,
         };
         view.start_progress_loop(window, cx);
         view.apply_config(config, config_error, window, cx);
@@ -139,12 +143,14 @@ impl RootView {
         if primary {
             crate::ipc::serve(window, cx);
             crate::file_dialog::watch(window, cx);
+            crate::quick_search::install(cx);
             crate::reveal::watch(window, cx);
             view.start_updates(window, cx);
         }
-        cx.observe_window_activation(window, |_root, window, cx| {
+        cx.observe_window_activation(window, |root, window, cx| {
             if window.is_window_active() {
                 crate::windows::touch(window, cx);
+                root.follow_explorer_visit(window, cx);
             }
         })
         .detach();
@@ -215,6 +221,7 @@ impl RootView {
             config::ThemeMode::System => GpuiThemeMode::from(window.appearance()),
         };
         crate::explorer::note_theme_mode(config.theme.mode);
+        crate::quick_search::apply_config(&config);
         crate::explorer::context_menu::note_menu(&config.menu);
         // Every view reads the language while it renders, so a change only
         // needs all windows to draw again (the settings page, the menus, the
@@ -331,12 +338,37 @@ impl RootView {
         editor.editor_active_line_number = Some(rgb(theme::fg_secondary()).into());
     }
 
+    /// Back from an Explorer window while a browser's Open dialog waits:
+    /// the tab on screen goes to that window's folder, as Listary takes a
+    /// dialog there.
+    fn follow_explorer_visit(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(hwnd) = crate::file_dialog::take_explorer_visit() else {
+            return;
+        };
+        // The Shell is asked on a thread of its own: COM, and it may be slow.
+        let (sender, receiver) = async_channel::bounded(1);
+        std::thread::spawn(move || {
+            sender.send_blocking(crate::file_dialog::explorer_folder(hwnd)).ok();
+        });
+        cx.spawn_in(window, async move |this, cx| {
+            let Ok(Some(folder)) = receiver.recv().await else {
+                return;
+            };
+            this.update_in(cx, |root, window, cx| {
+                let pane = root.explorer.read(cx).group.active_pane().clone();
+                pane.update(cx, |pane, cx| pane.change_dir(folder, window, cx));
+            })
+            .ok();
+        })
+        .detach();
+    }
+
     /// The strip shown while a browser's Open dialog waits on Nohrs: what is
-    /// waiting, how to answer it, and a way to give the dialog back.
+    /// waiting and how to answer it.
     fn render_picking_banner(
         &self,
         dialog: crate::file_dialog::Dialog,
-        cx: &mut Context<Self>,
+        _cx: &mut Context<Self>,
     ) -> impl IntoElement + use<> {
         let browser = dialog.browser.trim_end_matches(".exe").to_string();
         div()
@@ -367,25 +399,6 @@ impl RootView {
                     .text_ellipsis()
                     .text_color(rgb(theme::fg_secondary()))
                     .child(t!("Duplo clique ou Enter num arquivo para enviá-lo. Esc devolve a janela.")),
-            )
-            .child(
-                div()
-                    .id("picking-cancel")
-                    .flex_shrink_0()
-                    .px(px(10.0))
-                    .py(px(3.0))
-                    .rounded(px(6.0))
-                    .cursor_pointer()
-                    .text_xs()
-                    .border_1()
-                    .border_color(rgb(theme::accent()))
-                    .text_color(rgb(theme::accent()))
-                    .hover(|button| button.bg(rgb(theme::bg_hover())))
-                    .on_click(cx.listener(|_root, _, _, cx| {
-                        crate::file_dialog::cancel();
-                        cx.notify();
-                    }))
-                    .child(t!("Cancelar")),
             )
     }
 
@@ -506,6 +519,9 @@ impl Focusable for RootView {
 
 impl Render for RootView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        crate::startup::first_render(window);
+        self.sync_picking_bar(window, cx);
+        let picking_bar = self.render_picking_bar(cx);
         // On the explorer with one pane the tab row is the title bar, as in
         // the Explorer of Windows 11; elsewhere the toolbar holds the buttons.
         let own_title_bar = self.welcome.is_some()
@@ -539,12 +555,14 @@ impl Render for RootView {
                             .flex()
                             .flex_col()
                             .min_w(px(0.0))
+                            .min_h(px(0.0))
                             .child(match &self.welcome {
                                 Some(welcome) => welcome.clone().into_any_element(),
                                 None => self.render_active_page(window, cx),
                             }),
                     ),
             )
+            .children(picking_bar)
             .children(
                 // Footer status bar
                 {

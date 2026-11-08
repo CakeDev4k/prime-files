@@ -534,6 +534,20 @@ pub enum FileDropEvent {
     Exited,
 }
 
+/// NOHRS: what a drop of external files would do where the pointer is, as
+/// the app decides it ([`Window::set_file_drop_effect`]). The platform shows
+/// it on the cursor ("Move", "Copy", or the no-entry sign) instead of always
+/// saying "Copy".
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FileDropEffect {
+    /// The files would be copied.
+    Copy,
+    /// The files would be moved.
+    Move,
+    /// Nothing would happen here.
+    None,
+}
+
 impl Sealed for FileDropEvent {}
 impl InputEvent for FileDropEvent {
     fn to_platform_input(self) -> PlatformInput {

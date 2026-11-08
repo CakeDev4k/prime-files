@@ -264,6 +264,7 @@ impl ExplorerPane {
     fn apply_listing(&mut self, read: FolderRead, refresh: bool, cx: &mut Context<Self>) {
         match read.listing {
             Ok(entries) => {
+                crate::startup::mark_once("first-listing");
                 if refresh {
                     // Before `apply_filter`, which splices these under their
                     // folders. A folder that could not be read is gone, and
@@ -467,18 +468,9 @@ impl ExplorerPane {
             // A browser is waiting on its Open dialog: the file goes there. The
             // whole selection goes when the activated file is part of it, so
             // several files can be sent at once; folders in it are skipped.
-            let selected = self.selected_paths();
-            let paths: Vec<String> = if selected.contains(&item.path) {
-                self.filtered_entries
-                    .iter()
-                    .filter(|entry| entry.kind != "dir" && selected.contains(&entry.path))
-                    .map(|entry| entry.path.clone())
-                    .collect()
-            } else {
-                vec![item.path]
-            };
-            crate::file_dialog::deliver(&paths);
-            cx.notify();
+            let selected = self.picked_files();
+            let paths = if selected.contains(&item.path) { selected } else { vec![item.path] };
+            self.send_to_dialog(paths, window, cx);
         } else if let Some((copied, total)) =
             nohrs_services::fs::ops::transfers::progress(std::path::Path::new(&item.path))
         {
@@ -492,6 +484,32 @@ impl ExplorerPane {
         } else {
             self.open_with_default_app(&item.path);
         }
+    }
+
+    /// The selected files, in listing order, folders left out: what a
+    /// browser's Open dialog would get.
+    pub(crate) fn picked_files(&self) -> Vec<String> {
+        let selected = self.selected_paths();
+        self.filtered_entries
+            .iter()
+            .filter(|entry| entry.kind != "dir" && selected.contains(&entry.path))
+            .map(|entry| entry.path.clone())
+            .collect()
+    }
+
+    /// Hands `paths` to the browser dialog waiting on Nohrs. Sent, Nohrs
+    /// steps aside, back to the browser the files went to, as the Windows
+    /// dialog closing does (the owner, 07/11/2026).
+    pub(crate) fn send_to_dialog(&mut self, paths: Vec<String>, window: &mut Window, cx: &mut Context<Self>) {
+        if crate::file_dialog::deliver(&paths) {
+            window.minimize_window();
+        } else {
+            self.set_status(
+                StatusLevel::Warning,
+                nohrs_core::t!("A janela do navegador não recebeu o arquivo. Ela voltou para a tela."),
+            );
+        }
+        cx.notify();
     }
 
     /// Opens a file in the program Windows associates with it, as a double
@@ -510,6 +528,15 @@ impl ExplorerPane {
         #[cfg(not(test))]
         platform::open_default(path);
     }
+}
+
+/// Opens a file in the program Windows associates with it, from outside a
+/// pane (the quick search).
+pub(crate) fn open_with_default(path: &str) {
+    #[cfg(all(windows, not(test)))]
+    platform::open_default(path);
+    #[cfg(any(not(windows), test))]
+    let _ = path;
 }
 
 #[cfg(all(windows, not(test)))]

@@ -13,6 +13,7 @@ mod cli;
 use clap::Parser;
 
 fn main() {
+    nohrs_pages::startup::mark("main");
     // Before parsing: clap prints help, version and argument errors itself.
     // Only for these text commands: opening a folder from a terminal must not
     // pour the app's log into it.

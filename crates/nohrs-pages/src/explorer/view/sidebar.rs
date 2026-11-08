@@ -86,13 +86,27 @@ pub fn render(
         list = tag_rows(page, list, cx);
     }
 
+    // A bar to grab, shown while the pointer is over the sidebar: it only
+    // scrolled by the wheel, and Paullo's wheel skips (07/11/2026). Drawn
+    // over the rows' right edge, only while the pointer is there.
     div()
-        .id("sidebar")
+        .relative()
         .size_full()
         .when(!page.framed.sidebar, |this| this.bg(rgb(theme::bg())))
-        .py(px(8.0))
-        .overflow_y_scroll()
-        .child(list)
+        .child(
+            div()
+                .id("sidebar")
+                .size_full()
+                .py(px(8.0))
+                .overflow_y_scroll()
+                .track_scroll(&page.sidebar_scroll)
+                .child(list),
+        )
+        .child(
+            gpui_component::scroll::Scrollbar::vertical(&page.sidebar_scroll)
+                .id("sidebar-scrollbar")
+                .scrollbar_show(gpui_component::scroll::ScrollbarShow::Hover),
+        )
         .into_any_element()
 }
 
@@ -531,9 +545,12 @@ fn tag_rows(page: &mut ExplorerPane, mut list: Div, cx: &mut Context<ExplorerPan
         }
         let location = crate::explorer::tags::location(tag.id);
         let active = page.cwd == location;
+        let was_active = active;
+        let held_name = tag.name.clone();
         let count = counts.get(&tag.id).copied().unwrap_or(0);
         let id = tag.id;
         let tag_color = tag.color;
+        let tag_name = tag.name.clone();
         list = list.child(
             simple_row(
                 SharedString::from(format!("tag-{}", tag.id)),
@@ -545,7 +562,31 @@ fn tag_rows(page: &mut ExplorerPane, mut list: Div, cx: &mut Context<ExplorerPan
             .when(count > 0, |this| {
                 this.child(div().flex_shrink_0().text_xs().text_color(rgb(theme::muted())).child(count.to_string()))
             })
-            .on_click(cx.listener(move |this, _, window, cx| this.change_dir(location.clone(), window, cx)))
+            // Three ways to name it, as users asked (Senkozinho and the owner,
+            // 07/11/2026; the four tags that come with the app were only
+            // renamed from their menu): holding the button down on it, three
+            // clicks, or a second, slow click on the tag already open, as on
+            // a file in the listing.
+            .on_mouse_down(
+                MouseButton::Left,
+                cx.listener(move |this, _: &MouseDownEvent, window, cx| {
+                    this.arm_tag_hold(id, held_name.clone(), window, cx);
+                }),
+            )
+            // Let go off the tag before the hold was long enough: no rename.
+            .on_mouse_up_out(
+                MouseButton::Left,
+                cx.listener(|this, _: &MouseUpEvent, _window, _cx| this.slow_rename = None),
+            )
+            .on_click(cx.listener(move |this, event: &ClickEvent, window, cx| {
+                if event.click_count() >= 3 {
+                    this.slow_rename = None;
+                    this.begin_sidebar_input(SidebarInputPurpose::RenameTag(id), tag_name.clone(), window, cx);
+                    return;
+                }
+                this.arm_tag_rename(id, tag_name.clone(), was_active, event, window, cx);
+                this.change_dir(location.clone(), window, cx);
+            }))
             .on_mouse_down(
                 MouseButton::Right,
                 cx.listener(move |this, _, window, cx| {
@@ -568,6 +609,54 @@ fn tag_rows(page: &mut ExplorerPane, mut list: Div, cx: &mut Context<ExplorerPan
 }
 
 impl ExplorerPane {
+    // The slow click on a tag: one plain click on the tag already open, not
+    // followed by a second, opens its name field once the double-click time
+    // has passed. Any other click, or leaving the tag, calls it off.
+    fn arm_tag_rename(
+        &mut self,
+        id: u32,
+        name: String,
+        was_active: bool,
+        event: &ClickEvent,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.slow_rename = None;
+        let plain = !(event.modifiers().shift || event.modifiers().control || event.modifiers().platform);
+        if !was_active || event.click_count() != 1 || !plain || self.sidebar.input.is_some() {
+            return;
+        }
+        let location = crate::explorer::tags::location(id);
+        let delay = crate::explorer::file_ops::double_click_time();
+        self.slow_rename = Some(cx.spawn_in(window, async move |this, cx| {
+            cx.background_executor().timer(delay).await;
+            this.update_in(cx, |pane, window, cx| {
+                pane.slow_rename = None;
+                if pane.cwd == location && pane.sidebar.input.is_none() {
+                    pane.begin_sidebar_input(SidebarInputPurpose::RenameTag(id), name, window, cx);
+                }
+            })
+            .ok();
+        }));
+    }
+
+    // Holding the button down on a tag: its name field opens once the press
+    // has lasted, unless the release (the click, which replaces this task)
+    // comes first.
+    fn arm_tag_hold(&mut self, id: u32, name: String, window: &mut Window, cx: &mut Context<Self>) {
+        const HOLD: std::time::Duration = std::time::Duration::from_millis(600);
+        self.slow_rename = Some(cx.spawn_in(window, async move |this, cx| {
+            cx.background_executor().timer(HOLD).await;
+            this.update_in(cx, |pane, window, cx| {
+                pane.slow_rename = None;
+                if pane.sidebar.input.is_none() {
+                    pane.begin_sidebar_input(SidebarInputPurpose::RenameTag(id), name, window, cx);
+                }
+            })
+            .ok();
+        }));
+    }
+
     /// Puts tag `id` on what was dropped on it, saying so in the footer.
     fn drop_on_tag(&mut self, id: u32, paths: &[std::path::PathBuf], cx: &mut Context<Self>) {
         let paths: Vec<String> = paths.iter().map(|path| path.to_string_lossy().into_owned()).collect();

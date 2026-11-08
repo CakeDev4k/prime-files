@@ -137,9 +137,14 @@
       "description": "Split-view and pane settings (see `docs/explorer-essentials.md` §3).",
       "properties": {
         "background_tabs": {
-          "default": true,
-          "description": "Whether a tab opened with the middle button stays behind the current\none, as in a browser (issue #6). \"Open in new tab\" in the menu always\nshows the tab it opens.",
+          "default": false,
+          "description": "Whether a tab opened with the middle button stays behind the current\none, as in a browser (issue #6). Off by default since 07/11/2026: the\nowner wants to land on the tab just opened. \"Open in new tab\" in the\nmenu always shows the tab it opens.",
           "type": "boolean"
+        },
+        "open_from_other_apps": {
+          "$ref": "#/$defs/OpenFromOtherApps",
+          "default": "new-tab",
+          "description": "Where a folder another program sends (Premiere's Reveal, a browser's\nShow in folder, the Desktop, Win+E) opens: a new tab of the window\nused last, the tab on screen, or a window of its own. RML asked to\nchoose (07/11/2026): a new tab behind, then torn off into a window,\nwas two steps for what they wanted in one."
         },
         "restore_tabs": {
           "default": true,
@@ -236,8 +241,8 @@
       "description": "Launcher window settings.",
       "properties": {
         "hotkey": {
-          "default": "Cmd+Shift+Space",
-          "description": "Global hotkey that summons the launcher.",
+          "default": "auto",
+          "description": "The shortcut that opens the quick search (Prime Files' own Listary)\nfrom any program: `off`, `double-ctrl`, `double-shift`, `double-alt`,\na combination such as `ctrl+space`, or `auto`: Ctrl twice, or Shift\ntwice when Listary is installed, so that the two do not open together.",
           "type": "string"
         },
         "position_remember": {
@@ -331,6 +336,26 @@
         }
       },
       "type": "object"
+    },
+    "OpenFromOtherApps": {
+      "description": "See [`Explorer::open_from_other_apps`].",
+      "oneOf": [
+        {
+          "const": "new-tab",
+          "description": "A new tab of the window used last, as browsers do with links.",
+          "type": "string"
+        },
+        {
+          "const": "current-tab",
+          "description": "The tab on screen goes to the folder.",
+          "type": "string"
+        },
+        {
+          "const": "new-window",
+          "description": "A window of its own, with just that folder.",
+          "type": "string"
+        }
+      ]
     },
     "Plugins": {
       "description": "Plugin selection (config.md §2, reserved for P4).\n\nType definition / reservation only: the lists are parsed and stored, but no\nplugin host loads them yet (that lands in P4).",
@@ -577,7 +602,8 @@
     "explorer": {
       "$ref": "#/$defs/Explorer",
       "default": {
-        "background_tabs": true,
+        "background_tabs": false,
+        "open_from_other_apps": "new-tab",
         "restore_tabs": true,
         "reveal_from_other_apps": true,
         "split_direction": "vertical",
@@ -604,7 +630,7 @@
     "launcher": {
       "$ref": "#/$defs/Launcher",
       "default": {
-        "hotkey": "Cmd+Shift+Space",
+        "hotkey": "auto",
         "position_remember": true
       },
       "description": "Launcher window settings."

@@ -237,7 +237,8 @@ fn with_wheel_zoom(
 ) -> AnyElement {
     let entity = cx.entity();
     let hit_boxes = page.hit_boxes.clone();
-    div()
+    let folder = std::path::PathBuf::from(&page.cwd);
+    crate::explorer::drag::drop_effect_hint(div(), folder)
         .relative()
         .flex_1()
         .flex()

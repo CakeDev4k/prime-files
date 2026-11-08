@@ -66,10 +66,11 @@ enum Command {
     PurgeFromBin,
     EmptyBin,
     RemoveFromTag,
+    Redo,
 }
 
 impl Command {
-    const ALL: [Command; 49] = [
+    const ALL: [Command; 50] = [
         Command::ViewList,
         Command::ViewGrid,
         Command::ViewTree,
@@ -115,6 +116,7 @@ impl Command {
         Command::Properties,
         Command::Customize,
         Command::UndoTrash,
+        Command::Redo,
         Command::RestoreFromBin,
         Command::PurgeFromBin,
         Command::EmptyBin,
@@ -181,9 +183,9 @@ pub(crate) fn menu_entry_info(id: &str) -> Option<(&'static str, &'static str)> 
 /// navigates here instead of opening another window.
 fn intercepted(target_is_one_folder: bool) -> &'static [&'static str] {
     if target_is_one_folder {
-        &["copy", "cut", "delete", "rename", "open", "explore"]
+        &["copy", "cut", "delete", "rename", "open", "explore", "opencontaining"]
     } else {
-        &["copy", "cut", "delete", "rename"]
+        &["copy", "cut", "delete", "rename", "opencontaining"]
     }
 }
 
@@ -865,11 +867,21 @@ impl ExplorerPane {
                 .with_shortcut(keys_of(Action::Refresh)),
             Entry::command(
                 Command::UndoTrash as u32,
-                if self.undo_is_move() { t!("Desfazer mover") } else { t!("Desfazer exclusão") },
+                match self.undo_kind() {
+                    Some(super::file_ops::UndoKind::Moved) => t!("Desfazer mover"),
+                    Some(super::file_ops::UndoKind::Copied) => t!("Desfazer cópia"),
+                    Some(super::file_ops::UndoKind::Renamed) => t!("Desfazer renomear"),
+                    Some(super::file_ops::UndoKind::Created) => t!("Desfazer nova pasta"),
+                    Some(super::file_ops::UndoKind::Trashed) | None => t!("Desfazer exclusão"),
+                },
             )
                 .with_icon("icons/undo-2.svg")
                 .with_shortcut(keys_of(Action::Undo))
                 .enabled(self.can_undo_trash()),
+            Entry::command(Command::Redo as u32, t!("Refazer"))
+                .with_icon("icons/redo-2.svg")
+                .with_shortcut(keys_of(Action::Redo))
+                .enabled(self.can_redo()),
             Entry::Separator,
             Entry::command(Command::Paste as u32, t!("Colar"))
                 .with_icon("icons/clipboard.svg")
@@ -923,7 +935,7 @@ impl ExplorerPane {
                 "delete" => self.trash_selection(cx),
                 "rename" => {
                     if let Some(row) = self.active_row() {
-                        self.begin_rename(row, window, cx);
+                        self.rename_at(row, window, cx);
                     }
                 }
                 "open" | "explore" => {
@@ -938,6 +950,7 @@ impl ExplorerPane {
                         self.activate_entry(folder, window, cx);
                     }
                 }
+                "opencontaining" => self.open_item_location(window, cx),
                 _ => {}
             },
             // The Shell may have created, moved or deleted something ("New",
@@ -950,6 +963,27 @@ impl ExplorerPane {
             }
         }
         cx.notify();
+    }
+
+    // "Open file location" run by the Shell starts the Explorer's own reveal,
+    // which came back here with the folder but not the file (issue #35).
+    // Done here, a shortcut's target is selected in this tab.
+    fn open_item_location(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(item) = self.selected_paths().into_iter().next() else {
+            return;
+        };
+        let target = crate::shell_menu::shortcut_target(&item).unwrap_or(item);
+        let target_path = std::path::Path::new(&target);
+        let Some(folder) = target_path.parent().filter(|_| target_path.exists()) else {
+            self.set_status(StatusLevel::Error, t!("O destino do atalho não existe mais").to_string());
+            return;
+        };
+        let folder = folder.to_string_lossy().into_owned();
+        if !super::same_path(&self.cwd, &folder) {
+            self.change_dir(folder, window, cx);
+        }
+        self.ensure_loaded(cx);
+        self.reveal(&target);
     }
 
     fn run_command(&mut self, command: Command, window: &mut Window, cx: &mut Context<Self>) {
@@ -985,7 +1019,7 @@ impl ExplorerPane {
             Command::Delete => self.trash_selection(cx),
             Command::Rename => {
                 if let Some(row) = self.active_row() {
-                    self.begin_rename(row, window, cx);
+                    self.rename_at(row, window, cx);
                 }
             }
             Command::NewTag => {
@@ -1022,6 +1056,7 @@ impl ExplorerPane {
             | Command::MoreOptions => {}
             Command::CopyPath => self.copy_paths_as_text(cx),
             Command::UndoTrash => self.undo_trash(cx),
+            Command::Redo => self.redo(cx),
             Command::RestoreFromBin => self.restore_from_recycle_bin(cx),
             Command::PurgeFromBin => self.purge_from_recycle_bin(cx),
             Command::EmptyBin => self.empty_recycle_bin(cx),

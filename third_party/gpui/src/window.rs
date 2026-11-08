@@ -5,7 +5,7 @@ use crate::{
     AsyncWindowContext, AvailableSpace, Background, BorderStyle, Bounds, BoxShadow, Capslock,
     Context, Corners, CursorStyle, Decorations, DevicePixels, DispatchActionListener,
     DispatchNodeId, DispatchTree, DisplayId, Edges, Effect, Entity, EntityId, EventEmitter,
-    FileDropEvent, FontId, Global, GlobalElementId, GlyphId, GpuSpecs, Hsla, InputHandler, IsZero,
+    FileDropEffect, FileDropEvent, FontId, Global, GlobalElementId, GlyphId, GpuSpecs, Hsla, InputHandler, IsZero,
     KeyBinding, KeyContext, KeyDownEvent, KeyEvent, Keystroke, KeystrokeEvent, LayoutId,
     LineLayoutIndex, Modifiers, ModifiersChangedEvent, MonochromeSprite, MouseButton, MouseEvent,
     MouseMoveEvent, MouseUpEvent, Path, Pixels, PlatformAtlas, PlatformDisplay, PlatformInput,
@@ -1894,6 +1894,17 @@ impl Window {
         self.mouse_position
     }
 
+    /// NOHRS: tells the platform what dropping the external files being
+    /// dragged would do where the pointer is now, for the cursor to show.
+    /// Meant for `on_drag_move::<ExternalPaths>` listeners: the platform
+    /// clears it before each move it dispatches, and those listeners run in
+    /// the capture phase, outermost first, so the innermost element whose
+    /// bounds hold the pointer has the last word. Unset, the cursor says
+    /// "Copy", as gpui always did. Only Windows reads it.
+    pub fn set_file_drop_effect(&self, effect: FileDropEffect) {
+        self.platform_window.set_file_drop_effect(effect);
+    }
+
     /// The current state of the keyboard's modifiers
     pub fn modifiers(&self) -> Modifiers {
         self.modifiers
@@ -3633,7 +3644,9 @@ impl Window {
                     PlatformInput::MouseMove(MouseMoveEvent {
                         position,
                         pressed_button: Some(MouseButton::Left),
-                        modifiers: Modifiers::default(),
+                        // NOHRS: the keys the platform reported for the drag
+                        // (a `ModifiersChanged` just before), not none.
+                        modifiers: self.modifiers,
                     })
                 }
                 FileDropEvent::Pending { position } => {
@@ -3641,7 +3654,9 @@ impl Window {
                     PlatformInput::MouseMove(MouseMoveEvent {
                         position,
                         pressed_button: Some(MouseButton::Left),
-                        modifiers: Modifiers::default(),
+                        // NOHRS: the keys the platform reported for the drag
+                        // (a `ModifiersChanged` just before), not none.
+                        modifiers: self.modifiers,
                     })
                 }
                 FileDropEvent::Submit { position } => {
@@ -3650,7 +3665,7 @@ impl Window {
                     PlatformInput::MouseUp(MouseUpEvent {
                         button: MouseButton::Left,
                         position,
-                        modifiers: Modifiers::default(),
+                        modifiers: self.modifiers,
                         click_count: 1,
                     })
                 }

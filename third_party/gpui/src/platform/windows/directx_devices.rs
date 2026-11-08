@@ -53,18 +53,9 @@ impl DirectXDevices {
         let debug_layer_available = check_debug_layer_available();
         let dxgi_factory =
             get_dxgi_factory(debug_layer_available).context("Creating DXGI factory")?;
-        let adapter =
-            get_adapter(&dxgi_factory, debug_layer_available).context("Getting DXGI adapter")?;
-        let (device, device_context) = {
-            let mut context: Option<ID3D11DeviceContext> = None;
-            let mut feature_level = D3D_FEATURE_LEVEL::default();
-            let device = get_device(
-                &adapter,
-                Some(&mut context),
-                Some(&mut feature_level),
-                debug_layer_available,
-            )
-            .context("Creating Direct3D device")?;
+        let (adapter, device, device_context) = {
+            let (adapter, device, context, feature_level) =
+                get_adapter(&dxgi_factory, debug_layer_available).context("Getting DXGI adapter")?;
             match feature_level {
                 D3D_FEATURE_LEVEL_11_1 => {
                     log::info!("Created device with Direct3D 11.1 feature level.")
@@ -77,7 +68,7 @@ impl DirectXDevices {
                 }
                 _ => unreachable!(),
             }
-            (device, context.unwrap())
+            (adapter, device, context)
         };
 
         Ok(Self {
@@ -119,8 +110,16 @@ fn get_dxgi_factory(debug_layer_available: bool) -> Result<IDXGIFactory6> {
     unsafe { Ok(CreateDXGIFactory2(factory_flag)?) }
 }
 
+// NOHRS: the first adapter that gives a usable device, with that device.
+// Upstream created a device here only to see that it could, dropped it, and
+// created it again in `DirectXDevices::new`: on the owner's RTX 5050 that
+// first device cost ~136 ms of every start (median of 5 fresh processes,
+// 317 ms for both against 181 ms for one; third_party/gpui/NOHRS.md).
 #[inline]
-fn get_adapter(dxgi_factory: &IDXGIFactory6, debug_layer_available: bool) -> Result<IDXGIAdapter1> {
+fn get_adapter(
+    dxgi_factory: &IDXGIFactory6,
+    debug_layer_available: bool,
+) -> Result<(IDXGIAdapter1, ID3D11Device, ID3D11DeviceContext, D3D_FEATURE_LEVEL)> {
     for adapter_index in 0.. {
         let adapter: IDXGIAdapter1 = unsafe { dxgi_factory.EnumAdapters(adapter_index)?.cast()? };
         if let Ok(desc) = unsafe { adapter.GetDesc1() } {
@@ -129,13 +128,18 @@ fn get_adapter(dxgi_factory: &IDXGIFactory6, debug_layer_available: bool) -> Res
                 .to_string();
             log::info!("Using GPU: {}", gpu_name);
         }
-        // Check to see whether the adapter supports Direct3D 11, but don't
-        // create the actual device yet.
-        if get_device(&adapter, None, None, debug_layer_available)
-            .log_err()
-            .is_some()
-        {
-            return Ok(adapter);
+        let mut context: Option<ID3D11DeviceContext> = None;
+        let mut feature_level = D3D_FEATURE_LEVEL::default();
+        let device = get_device(
+            &adapter,
+            Some(&mut context),
+            Some(&mut feature_level),
+            debug_layer_available,
+        )
+        .context("Creating Direct3D device")
+        .log_err();
+        if let (Some(device), Some(context)) = (device, context) {
+            return Ok((adapter, device, context, feature_level));
         }
     }
 

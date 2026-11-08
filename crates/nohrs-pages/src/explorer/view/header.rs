@@ -1,10 +1,10 @@
 use nohrs_core::{k, t};
 use nohrs_core::i18n;
+use std::time::Duration;
 use super::super::types::ViewMode;
 use crate::explorer::ExplorerPane;
 use gpui::prelude::*;
 use gpui::*;
-use gpui_component::breadcrumb::{Breadcrumb, BreadcrumbItem};
 use gpui_component::Sizable;
 use gpui_component::input::Input;
 use gpui_component::list::ListItem;
@@ -35,46 +35,70 @@ pub fn render(
     let display_parts = parts[start_idx..].to_vec();
     let is_truncated = start_idx > 0;
 
-    let mut bc = Breadcrumb::new();
+    let mut crumbs = Vec::new();
+    let mut crumb_id = 0;
+    page.crumb_bounds.borrow_mut().clear();
     // On a share, Network and the server come first, as in Explorer, each
     // leading back to its list.
     let unc_server = crate::explorer::network::server_of(&page.cwd).map(str::to_string);
     if unc_server.is_some() {
-        bc = bc.child(
-            BreadcrumbItem::new(i18n::tr(crate::explorer::network::NETWORK_NAME).to_string()).on_click(cx.listener(
-                |this, _, window, cx| {
-                    cx.stop_propagation();
-                    this.change_dir(crate::explorer::network::NETWORK.to_string(), window, cx)
-                },
-            )),
+        push_crumb(
+            &mut crumbs,
+            page,
+            &mut crumb_id,
+            i18n::tr(crate::explorer::network::NETWORK_NAME),
+            theme::fg_secondary(),
+            None,
+            Some(Box::new(|this, _, window, cx| {
+                this.change_dir(crate::explorer::network::NETWORK.to_string(), window, cx)
+            })),
+            cx,
         );
     }
     if let Some(name) = location {
-        bc = bc.child(BreadcrumbItem::new(name));
+        push_crumb(&mut crumbs, page, &mut crumb_id, name, theme::fg_secondary(), None, None, cx);
     } else if under_this_pc {
         // A computer, as the Explorer draws it there: the name took a
         // crumb's worth of room on every path of every drive.
-        bc = bc.child(
-            BreadcrumbItem::new("\u{e7f4}")
-                .font_family(theme::icon_font())
-                .text_size(px(14.0))
-                .on_click(cx.listener(|this, _, window, cx| {
-                    cx.stop_propagation();
-                    this.change_dir(crate::explorer::places::THIS_PC.to_string(), window, cx)
-                })),
+        push_crumb(
+            &mut crumbs,
+            page,
+            &mut crumb_id,
+            "\u{e7f4}",
+            theme::fg_secondary(),
+            Some(theme::icon_font()),
+            Some(Box::new(|this, _, window, cx| {
+                this.change_dir(crate::explorer::places::THIS_PC.to_string(), window, cx)
+            })),
+            cx,
         );
     } else if let Some(server) = unc_server.clone() {
         let address = format!("\\\\{server}");
-        bc = bc.child(
-            BreadcrumbItem::new(server).on_click(cx.listener(move |this, _, window, cx| {
-                cx.stop_propagation();
+        push_crumb(
+            &mut crumbs,
+            page,
+            &mut crumb_id,
+            server,
+            theme::fg_secondary(),
+            None,
+            Some(Box::new(move |this, _, window, cx| {
                 this.change_dir(address.clone(), window, cx)
             })),
+            cx,
         );
     }
 
     if is_truncated {
-        bc = bc.child(BreadcrumbItem::new("…").on_click(cx.listener(move |_this, _, _, cx| cx.stop_propagation())));
+        push_crumb(
+            &mut crumbs,
+            page,
+            &mut crumb_id,
+            "…",
+            theme::fg_secondary(),
+            None,
+            None,
+            cx,
+        );
     }
 
     for (display_i, p) in display_parts.iter().enumerate() {
@@ -102,17 +126,23 @@ pub fn render(
             path_here = page.cwd.clone();
         }
 
-        let item = BreadcrumbItem::new(text).on_click(cx.listener(move |this, _, window, cx| {
-            // Only the crumb: a click on the bar around it opens the address
-            // field.
-            cx.stop_propagation();
-            this.change_dir(path_here.clone(), window, cx)
-        }));
-        bc = bc.child(match actual_i.cmp(&current_ix) {
-            std::cmp::Ordering::Less => item,
-            std::cmp::Ordering::Equal => item.text_color(rgb(theme::fg())),
-            std::cmp::Ordering::Greater => item.text_color(rgb(theme::fg_secondary())).opacity(0.55),
-        });
+        let (color, opacity) = match actual_i.cmp(&current_ix) {
+            std::cmp::Ordering::Less => (theme::fg_secondary(), 1.0),
+            std::cmp::Ordering::Equal => (theme::fg(), 1.0),
+            std::cmp::Ordering::Greater => (theme::fg_secondary(), 0.55),
+        };
+        push_crumb(
+            &mut crumbs,
+            page,
+            &mut crumb_id,
+            text,
+            mix_rgb(theme::bg(), color, opacity),
+            None,
+            Some(Box::new(move |this, _, window, cx| {
+                this.change_dir(path_here.clone(), window, cx)
+            })),
+            cx,
+        );
     }
 
     let can_go_back = page.history_index > 0;
@@ -233,7 +263,16 @@ pub fn render(
                 .on_click(cx.listener(|this, _event: &ClickEvent, window, cx| {
                     this.begin_path_edit(window, cx);
                 }))
-                .child(bc)
+                .child(
+                    div()
+                        .relative()
+                        .flex()
+                        .items_center()
+                        .gap(px(6.0))
+                        .text_sm()
+                        .children(crumbs)
+                        .child(crumb_hover_guard(cx.entity())),
+                )
                 .into_any_element(),
         })
         .child(
@@ -276,6 +315,157 @@ pub fn render(
                         ),
                 ),
         )
+}
+
+type CrumbAction = Box<dyn Fn(&mut ExplorerPane, &ClickEvent, &mut Window, &mut Context<ExplorerPane>)>;
+
+fn push_crumb(
+    crumbs: &mut Vec<AnyElement>,
+    page: &ExplorerPane,
+    id: &mut usize,
+    label: impl Into<SharedString>,
+    color: u32,
+    font_family: Option<&'static str>,
+    action: Option<CrumbAction>,
+    cx: &mut Context<ExplorerPane>,
+) {
+    if !crumbs.is_empty() {
+        crumbs.push(
+            Icon::new(IconName::ChevronRight)
+                .size_3p5()
+                .text_color(rgb(theme::muted()))
+                .into_any_element(),
+        );
+    }
+    crumbs.push(path_crumb(page, *id, label, color, font_family, action, cx));
+    *id += 1;
+}
+
+fn path_crumb(
+    page: &ExplorerPane,
+    id: usize,
+    label: impl Into<SharedString>,
+    color: u32,
+    font_family: Option<&'static str>,
+    action: Option<CrumbAction>,
+    cx: &mut Context<ExplorerPane>,
+) -> AnyElement {
+    let clickable = action.is_some();
+    let item = div()
+        .id(("path-crumb", id))
+        .px(px(4.0))
+        .py(px(3.0))
+        .rounded(px(5.0))
+        .text_sm()
+        .text_color(rgb(color))
+        .when_some(font_family, |item, family| item.font_family(family))
+        .child(label.into());
+    if !clickable {
+        return item.into_any_element();
+    }
+    // Where it is drawn, for `crumb_hover_guard` to tell which crumb the
+    // pointer is on. gpui's own hover events were not used: a crumb switching
+    // to its animated form reported "hover ended" with the pointer still on
+    // it, and the listing swallowed the move that left the bar downwards.
+    let bounds_list = page.crumb_bounds.clone();
+    let item = item
+        .relative()
+        .cursor_pointer()
+        .child(
+            canvas(
+                move |bounds, _, _| {
+                    let mut list = bounds_list.borrow_mut();
+                    if list.len() <= id {
+                        list.resize(id + 1, Bounds::default());
+                    }
+                    list[id] = bounds;
+                },
+                |_, _, _, _| {},
+            )
+            // Pinned to the crumb's corner: an absolute box without insets
+            // sits where the text flow leaves it, below the label.
+            .absolute()
+            .top_0()
+            .left_0()
+            .size_full(),
+        )
+        .on_click(cx.listener(move |page, event, window, cx| {
+            cx.stop_propagation();
+            if let Some(action) = &action {
+                action(page, event, window, cx);
+            }
+        }));
+    let Some((_, generation)) = page
+        .crumb_hover_animation
+        .filter(|(animated, _)| *animated == id && page.hovered_crumb == Some(id))
+    else {
+        return item.into_any_element();
+    };
+    // The highlight fades in rather than switching on: the background from
+    // clear to the accent tint and the text from its colour to the accent.
+    let tint = theme::accent_subtle();
+    let accent = theme::accent();
+    item.with_animation(
+        (ElementId::from(("path-crumb-hover", id)), generation.to_string()),
+        Animation::new(Duration::from_millis(160)).with_easing(ease_out_quint()),
+        move |item, progress| {
+            let alpha = (progress.clamp(0.0, 1.0) * 255.0).round() as u32;
+            item.bg(rgba((tint << 8) | alpha)).text_color(rgb(mix_rgb(color, accent, progress)))
+        },
+    )
+    .into_any_element()
+}
+
+// Clears the crumb highlight once the pointer is anywhere off the crumbs. In
+// the capture phase, which every move goes through: the listing consumes the
+// moves over it, so a crumb's own "hover ended" never came when the pointer
+// left the bar downwards and the highlight stayed lit.
+fn crumb_hover_guard(entity: Entity<ExplorerPane>) -> impl IntoElement {
+    canvas(
+        |_, _, _| (),
+        move |_, (), window, _cx| {
+            window.on_mouse_event(move |event: &MouseMoveEvent, phase, _window, cx| {
+                if phase != DispatchPhase::Capture {
+                    return;
+                }
+                entity.update(cx, |page, cx| {
+                    let under = page
+                        .crumb_bounds
+                        .borrow()
+                        .iter()
+                        .position(|bounds| bounds.contains(&event.position));
+                    set_crumb_hover(page, under, cx);
+                });
+            });
+        },
+    )
+    .absolute()
+    .top_0()
+    .left_0()
+    .size_full()
+}
+
+fn set_crumb_hover(page: &mut ExplorerPane, next: Option<usize>, cx: &mut Context<ExplorerPane>) {
+    if page.hovered_crumb == next {
+        return;
+    }
+    page.hovered_crumb = next;
+    if let Some(id) = next {
+        let generation = page
+            .crumb_hover_animation
+            .map_or(1, |(_, generation)| generation.wrapping_add(1));
+        page.crumb_hover_animation = Some((id, generation));
+    }
+    cx.notify();
+}
+
+fn mix_rgb(from: u32, to: u32, amount: f32) -> u32 {
+    let channel = |shift: u32| {
+        let from = ((from >> shift) & 0xff) as f32;
+        let to = ((to >> shift) & 0xff) as f32;
+        (from + (to - from) * amount).round() as u32
+    };
+    (channel(16) << 16) | (channel(8) << 8) | channel(0)
 }
 
 // "Open in": the folder on screen in the Command Prompt, PowerShell,

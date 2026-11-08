@@ -12,19 +12,28 @@
 //! show matching rows from every section at once, and what keeps the layout
 //! decisions — side list or tabs on top, control beside or under its text —
 //! in one place that follows the window's width.
+//!
+//! The sections are one long column, not pages: scrolling down runs from one
+//! into the next, and the side list lights up the one under the top of the
+//! view. Picking a section there glides the column to it.
 
 use gpui::{
     AnyElement, Context, Div, ElementId, Entity, FocusHandle, KeyDownEvent, Render, SharedString, Stateful, Window,
     div, prelude::*, px, rgb,
 };
+use gpui_component::color_picker::{ColorPicker, ColorPickerEvent, ColorPickerState};
 use gpui_component::input::{Input, InputState};
 use gpui_component::{Icon, Sizable as _};
-use nohrs_core::config::{self, Config, DockSide, SortOrder, SplitDirection, ThemeMode};
+use nohrs_core::config::{self, Config, DockSide, OpenFromOtherApps, SortOrder, SplitDirection, ThemeMode};
 use nohrs_core::i18n::{self, Lang, tr};
 use nohrs_core::telemetry::LogErr;
 use nohrs_core::shortcuts::{self, Action, Chord};
 use nohrs_core::{k, t, tf};
 use nohrs_ui::theme::theme;
+
+// The live previews: layout, compact mode, the file menu, sounds on hover.
+#[path = "settings_preview.rs"]
+pub(crate) mod preview;
 
 /// The sections of the settings page, in the order the side list shows them.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -53,10 +62,6 @@ pub enum SettingsSection {
 
 impl SettingsSection {
     /// Every section, in the side list's order.
-    pub(crate) fn all() -> [Self; 10] {
-        Self::ALL
-    }
-
     const ALL: [Self; 10] = [
         Self::General,
         Self::Appearance,
@@ -119,7 +124,22 @@ impl SettingsSection {
 }
 
 // Portuguese names for the accents `theme::NAMED_ACCENTS` knows, same order.
-pub(crate) const ACCENT_LABELS: &[&str] = &[k!("Laranja"), k!("Azul"), k!("Verde-água"), k!("Verde"), k!("Roxo"), k!("Rosa"), k!("Vermelho")];
+pub(crate) const ACCENT_LABELS: &[&str] = &[
+    k!("Laranja"),
+    k!("Amarelo"),
+    k!("Lima"),
+    k!("Verde"),
+    k!("Verde-água"),
+    k!("Ciano"),
+    k!("Azul"),
+    k!("Índigo"),
+    k!("Roxo"),
+    k!("Magenta"),
+    k!("Rosa"),
+    k!("Vermelho"),
+    k!("Marrom"),
+    k!("Cinza"),
+];
 
 // Keys that are not commands of the shortcut table: typing filters, Enter
 // opens, the wheel zooms. Listed beside the editable ones so the page still
@@ -145,6 +165,8 @@ enum Pick {
     Listary(bool),
     // Waits for the next key press to become this command's shortcut.
     RecordShortcut(Action),
+    // Waits for the next key press to become the quick search's shortcut.
+    RecordQuickShortcut,
     // Leaves the command without a shortcut.
     ClearShortcut(Action),
     // Gives the command its built-in keys back.
@@ -167,11 +189,14 @@ struct Row {
     // The control is laid out under the text even when there is room beside
     // it: a row of colours or of many chips reads badly squeezed to the side.
     wide: bool,
+    // The whole story, behind a "?" by the name: the row itself keeps one
+    // short line (the owner wants little text in view).
+    more: Option<SharedString>,
 }
 
 impl Row {
     fn new(label: &'static str, hint: Option<SharedString>, control: impl IntoElement) -> Self {
-        Self { label, hint, control: control.into_any_element(), reset: None, wide: false }
+        Self { label, hint, control: control.into_any_element(), reset: None, wide: false, more: None }
     }
 
     fn hint(label: &'static str, hint: impl Into<SharedString>, control: impl IntoElement) -> Self {
@@ -183,6 +208,11 @@ impl Row {
         self
     }
 
+    fn more(mut self, text: impl Into<SharedString>) -> Self {
+        self.more = Some(text.into());
+        self
+    }
+
     // A reset to `default` (TOML) for `[section] key`, offered when `current`
     // is not already it.
     fn reset(mut self, (section, key): (&'static str, &'static str), is_default: bool, default: &'static str) -> Self {
@@ -191,6 +221,31 @@ impl Row {
         }
         self
     }
+}
+
+// The "?" by a row's name: its explanation, wrapped, while the pointer is on it.
+fn more_mark(label: &'static str, text: SharedString) -> Stateful<Div> {
+    div()
+        .id(ElementId::Name(SharedString::from(format!("more-{label}"))))
+        .size(px(16.0))
+        .flex()
+        .flex_shrink_0()
+        .items_center()
+        .justify_center()
+        .rounded_full()
+        .border_1()
+        .border_color(rgb(theme::border()))
+        .text_size(px(10.0))
+        .text_color(rgb(theme::muted()))
+        .hover(|style| style.text_color(rgb(theme::fg())).border_color(rgb(theme::fg_secondary())))
+        .child("?")
+        .tooltip(move |window, cx| {
+            let text = text.clone();
+            gpui_component::tooltip::Tooltip::element(move |_, _| {
+                div().max_w(px(340.0)).py(px(4.0)).text_xs().line_height(px(17.0)).child(text.clone())
+            })
+            .build(window, cx)
+        })
 }
 
 // A card of rows under an optional heading.
@@ -227,15 +282,81 @@ pub struct SettingsPage {
     updater: Entity<crate::updater::Updater>,
     // The search field, made on the first render (it needs a `Window`).
     search: Option<Entity<InputState>>,
+    // The "any colour" pickers beside the named accents: Appearance's and
+    // the home card's. Two, since a picker anchors its popup to where it was
+    // last drawn, and both are on the column at once.
+    accent_pickers: Option<[Entity<ColorPickerState>; 2]>,
+    // The accent the pickers were last set to. Compared every frame
+    // against the pickers' own value, a colour that does not come back
+    // exactly from the picker set it again on each frame, and each set
+    // drew the page again: the page redrew without end and dragged
+    // (07/11/2026).
+    accent_synced: Option<String>,
     // Takes the key presses that record a shortcut.
     focus_handle: FocusHandle,
     // The command whose new keys are being waited for.
     recording: Option<Action>,
-    // The content's scroll: back to the top on another section. Kept, a
-    // section opened scrolled to where the previous one was, and a short one
-    // looked empty or started halfway down.
+    // Waiting for the quick search's shortcut (`[launcher] hotkey`).
+    recording_quick: bool,
+    // The sidebar's width, which its right edge drags, and the drag under
+    // way: where it started and the width then.
+    nav_width: f32,
+    nav_drag: Option<(f32, f32)>,
+    // The column's scroll. Its children are the status line, then the blocks
+    // of every section in `SettingsSection::ALL` order (heading, group
+    // titles, rows; see `section_blocks`), then a spacer. A block's place is
+    // read from the bounds gpui keeps for each child.
     scroll: gpui::ScrollHandle,
+    // The column on its way somewhere: a section picked, or wheel notches.
+    glide: Option<Glide>,
+    // The width and block count of the last frame's column, when it showed
+    // the sections: the bounds gpui kept are only good for that layout.
+    drawn: Option<(gpui::Pixels, usize)>,
+    // The child index of each section's heading, as of the last frame.
+    section_starts: Vec<usize>,
+    // Whether the column has room for the home's three cards side by side.
+    home_wide: bool,
+    // The previews' own state (`settings_preview.rs`).
+    compact_demo: preview::CompactDemo,
+    menu_test: preview::MenuTest,
+    hover_demo: preview::HoverDemo,
+    // The window's size, for placing the test menu.
+    viewport: gpui::Size<gpui::Pixels>,
+    // The column's width inside its padding, for previews that fit their
+    // content to it.
+    column_width: f32,
 }
+
+// One child of the scrolled column: what it shows and the space above it.
+struct Block {
+    pad: f32,
+    body: Div,
+}
+
+// Where the column is gliding to, with the explorer's ease
+// (`ui.scroll_smoothness`): a wheel's notches step three lines at a time,
+// which on this long column read as jumps.
+struct Glide {
+    // A section picked in the side list or on a home card: its place is read
+    // again every frame, and the side list shows it as current until the
+    // column arrives, rather than flicking through every section on the way.
+    // `None` for the wheel, which glides to `target`.
+    section: Option<SettingsSection>,
+    target: gpui::Pixels,
+    // The offset the last frame set: anything else moving the column (the
+    // scrollbar, a touchpad) ends the glide rather than fight it.
+    last_set: Option<gpui::Pixels>,
+    last_tick: Option<std::time::Instant>,
+}
+
+/// The glide's time constant, in seconds, as the listing's: up to 0.16 s.
+fn glide_time(smoothness: u32) -> f32 {
+    smoothness.min(100) as f32 * 0.0016
+}
+
+/// How far below the top of the view a section's start may be and still be
+/// the current one: a heading just scrolled into view already counts.
+const CURRENT_MARGIN: f32 = 96.0;
 
 impl SettingsPage {
     /// Creates a new settings page on its first section.
@@ -254,9 +375,23 @@ impl SettingsPage {
             listary: None,
             updater,
             search: None,
+            accent_pickers: None,
+            accent_synced: None,
             focus_handle: cx.focus_handle(),
             scroll: gpui::ScrollHandle::new(),
+            glide: None,
+            drawn: None,
+            section_starts: Vec::new(),
+            home_wide: true,
+            compact_demo: Default::default(),
+            menu_test: Default::default(),
+            hover_demo: Default::default(),
+            viewport: gpui::Size::default(),
+            column_width: 900.0,
             recording: None,
+            recording_quick: false,
+            nav_width: load_nav_width(),
+            nav_drag: None,
         };
         page.refresh_default_explorer(cx);
         page.refresh_listary(cx);
@@ -394,6 +529,12 @@ impl SettingsPage {
             Pick::Listary(enable) => self.set_listary(enable, cx),
             Pick::RecordShortcut(action) => {
                 self.recording = if self.recording == Some(action) { None } else { Some(action) };
+                self.recording_quick = false;
+                cx.notify();
+            }
+            Pick::RecordQuickShortcut => {
+                self.recording_quick = !self.recording_quick;
+                self.recording = None;
                 cx.notify();
             }
             Pick::ClearShortcut(action) => {
@@ -479,6 +620,10 @@ impl SettingsPage {
     // A key pressed while a command waits for its shortcut. Modifiers alone
     // wait for the rest; Esc gives up.
     fn record_key(&mut self, event: &KeyDownEvent, cx: &mut Context<Self>) {
+        if self.recording_quick {
+            self.record_quick_key(event, cx);
+            return;
+        }
         let Some(action) = self.recording else {
             return;
         };
@@ -523,14 +668,160 @@ impl SettingsPage {
         self.edit_keybindings(edits, Some(message), cx);
     }
 
-    /// Shows `section`, for the menu entries that lead to one directly.
+    /// Scrolls the column to `section`: the side list, the home cards and
+    /// the menu entries that lead to one directly.
     pub fn show_section(&mut self, section: SettingsSection, cx: &mut Context<Self>) {
-        if self.section != section {
-            self.scroll.set_offset(gpui::point(px(0.0), px(0.0)));
-        }
         self.section = section;
+        self.glide = Some(Glide { section: Some(section), target: px(0.0), last_set: None, last_tick: None });
         self.confirm_reset = false;
         cx.notify();
+    }
+
+    // Takes a mouse wheel's `delta` into the glide. False when smoothing is
+    // off, so gpui scrolls in steps as before.
+    fn smooth_wheel(&mut self, delta: gpui::Pixels, cx: &mut Context<Self>) -> bool {
+        if glide_time(self.config.ui.scroll_smoothness) <= 0.0 {
+            return false;
+        }
+        let current = self.scroll.offset().y;
+        // Notches in a row add up: each one moves on from where the last
+        // was headed, not from where the column is now.
+        let (from, last_tick) = match &self.glide {
+            Some(glide) if glide.section.is_none() && glide.last_set == Some(current) => {
+                (glide.target, glide.last_tick)
+            }
+            _ => (current, None),
+        };
+        let max = self.scroll.max_offset().height;
+        let target = (from + delta).clamp(-max, px(0.0));
+        self.glide = Some(Glide { section: None, target, last_set: Some(current), last_tick });
+        cx.notify();
+        true
+    }
+
+    // Moves the column one frame along the glide; called on every render.
+    fn tick_glide(&mut self, window: &mut Window) {
+        let Some((section, wheel_target, last_set, last_tick)) =
+            self.glide.as_ref().map(|glide| (glide.section, glide.target, glide.last_set, glide.last_tick))
+        else {
+            return;
+        };
+        let offset = self.scroll.offset();
+        if last_set.is_some_and(|last| last != offset.y) {
+            self.glide = None;
+            return;
+        }
+        let max = self.scroll.max_offset().height;
+        let target = match section {
+            None => wheel_target.clamp(-max, px(0.0)),
+            Some(section) => {
+                let child = self
+                    .section_child(section)
+                    .and_then(|ix| self.scroll.bounds_for_item(ix))
+                    .filter(|_| self.drawn.is_some());
+                let Some(child) = child else {
+                    // No place measured yet: the page was never drawn, or
+                    // the last frame showed search results. The first
+                    // section is the top; any other waits for a frame of
+                    // the column to measure where it is.
+                    if section == SettingsSection::ALL[0] {
+                        self.scroll.set_offset(gpui::point(px(0.0), px(0.0)));
+                        self.glide = None;
+                    } else {
+                        window.request_animation_frame();
+                    }
+                    return;
+                };
+                (self.scroll.bounds().top() - child.top()).clamp(-max, px(0.0))
+            }
+        };
+        let now = std::time::Instant::now();
+        let dt = last_tick.map_or(1.0 / 60.0, |last| (now - last).as_secs_f32()).min(0.1);
+        let tau = glide_time(self.config.ui.scroll_smoothness);
+        let y = if tau <= 0.0 {
+            target
+        } else {
+            let y = offset.y + (target - offset.y) * (1.0 - (-dt / tau).exp());
+            if (target - y).abs() < px(0.5) { target } else { y }
+        };
+        self.scroll.set_offset(gpui::point(offset.x, y));
+        if let Some(glide) = self.glide.as_mut() {
+            glide.last_set = Some(y);
+            glide.last_tick = Some(now);
+        }
+        if y == target {
+            self.glide = None;
+            window.refresh();
+        } else {
+            window.request_animation_frame();
+        }
+    }
+
+    pub(crate) fn home_wide(&self) -> bool {
+        self.home_wide
+    }
+
+    // The child index of `section`'s heading, as of the last frame.
+    fn section_child(&self, section: SettingsSection) -> Option<usize> {
+        let ix = SettingsSection::ALL.iter().position(|s| *s == section)?;
+        self.section_starts.get(ix).copied()
+    }
+
+    // For each block, the height to leave in its place instead of drawing it:
+    // those away from the view. Laying out and painting every row of the ten
+    // sections took 85-100 ms a frame (07/11/2026), and whole sections near
+    // the view still 25-40 ms (Atalhos alone is some forty rows), so the
+    // wheel and the glides moved at ten to thirty frames a second. Rows are
+    // what costs: with only them left out a frame took the 16.7 ms of the
+    // screen. Building them stays cheap (under a millisecond for all).
+    // The heights kept are last frame's, so the column and its scrollbar
+    // keep their length.
+    fn kept_heights(&mut self, count: usize) -> Vec<Option<gpui::Pixels>> {
+        let mut kept = vec![None; count];
+        let view = self.scroll.bounds();
+        let layout = (view.size.width, count);
+        // Nothing measured yet, search results last frame, another width
+        // (heights change with it) or another set of rows: draw all once.
+        let reuse = view.size.height > px(0.0)
+            && self.drawn == Some(layout)
+            && self.scroll.bounds_for_item(count).is_some();
+        self.drawn = Some(layout);
+        if !reuse {
+            return kept;
+        }
+        // The view in the children's coordinates, with half a screen of
+        // margin each way, so a turn of the wheel never shows a gap.
+        let top = view.top() - self.scroll.offset().y;
+        let margin = view.size.height * 0.5;
+        let (from, to) = (top - margin, top + view.size.height + margin);
+        for (ix, kept) in kept.iter_mut().enumerate() {
+            let Some(bounds) = self.scroll.bounds_for_item(ix + 1) else { return vec![None; count] };
+            if bounds.bottom() < from || bounds.top() > to {
+                *kept = Some(bounds.size.height);
+            }
+        }
+        kept
+    }
+
+    // The section whose start is at (or just above) the top of the view.
+    fn current_section(&self) -> SettingsSection {
+        if let Some(section) = self.glide.as_ref().and_then(|glide| glide.section) {
+            return section;
+        }
+        if self.drawn.is_none() {
+            return self.section;
+        }
+        let view_top = self.scroll.bounds().top() - self.scroll.offset().y + px(CURRENT_MARGIN);
+        let mut current = self.section;
+        for section in SettingsSection::ALL {
+            match self.section_child(section).and_then(|ix| self.scroll.bounds_for_item(ix)) {
+                Some(bounds) if bounds.top() <= view_top => current = section,
+                Some(_) => break,
+                // Bounds of another layout (search results): keep the last.
+                None => return self.section,
+            }
+        }
+        current
     }
 
     /// Takes the config the window now runs on, so the controls show it.
@@ -694,12 +985,42 @@ impl SettingsPage {
                         ),
                     )
                     .reset(("explorer", "split_direction"), explorer.split_direction == SplitDirection::Vertical, "\"vertical\""),
+                    // Said the other way round from the key: the switch is
+                    // on when the new tab comes to the front, the default.
                     Row::hint(
-                        t!("Abas novas ao fundo"),
-                        t!("O botão do meio abre a pasta numa aba atrás da atual, como num navegador. \"Abrir em nova aba\" do menu sempre vai para ela."),
-                        self.switch("background-tabs", explorer.background_tabs, ("explorer", "background_tabs"), cx),
+                        t!("Ir para a aba nova"),
+                        t!("O botão do meio abre a pasta numa aba nova e já mostra ela. Desligado, a aba abre atrás da atual, como num navegador."),
+                        self.switch_pick(
+                            "front-tabs",
+                            !explorer.background_tabs,
+                            Pick::Config(
+                                "explorer",
+                                "background_tabs",
+                                SharedString::from(if explorer.background_tabs { "false" } else { "true" }),
+                            ),
+                            cx,
+                        ),
                     )
-                    .reset(("explorer", "background_tabs"), explorer.background_tabs, "true"),
+                    .reset(("explorer", "background_tabs"), !explorer.background_tabs, "false"),
+                    Row::hint(
+                        t!("Pastas abertas de outros programas"),
+                        t!("Onde abre uma pasta mandada pela Área de Trabalho, pelo Win+E ou por outro programa."),
+                        self.config_choice(
+                            "open-from-other-apps",
+                            &[
+                                (t!("Nova aba"), explorer.open_from_other_apps == OpenFromOtherApps::NewTab, "\"new-tab\""),
+                                (t!("Aba atual"), explorer.open_from_other_apps == OpenFromOtherApps::CurrentTab, "\"current-tab\""),
+                                (t!("Nova janela"), explorer.open_from_other_apps == OpenFromOtherApps::NewWindow, "\"new-window\""),
+                            ],
+                            ("explorer", "open_from_other_apps"),
+                            cx,
+                        ),
+                    )
+                    .reset(
+                        ("explorer", "open_from_other_apps"),
+                        explorer.open_from_other_apps == OpenFromOtherApps::NewTab,
+                        "\"new-tab\"",
+                    ),
                     Row::hint(
                         t!("Painéis sincronizados"),
                         t!("Navegar num painel leva o outro para a mesma pasta."),
@@ -711,6 +1032,7 @@ impl SettingsPage {
             Group::titled(
                 t!("Layout"),
                 vec![
+                    Row::hint(t!("Prévia"), t!("Muda na hora conforme as opções abaixo."), self.layout_preview()).wide(),
                     self.dock_row("sidebar", "dock-sidebar", t!("Barra lateral"), layout.sidebar, DockSide::Left, cx),
                     self.dock_row("preview", "dock-preview", t!("Visualizador"), layout.preview, DockSide::Right, cx),
                     self.dock_row("terminal", "dock-terminal", t!("Terminal"), layout.terminal, DockSide::Bottom, cx),
@@ -836,6 +1158,11 @@ impl SettingsPage {
                     t!("Estilo do menu"),
                     t!("Um ponto de partida; depois ajuste cada item abaixo."),
                     self.chips("menu-preset", &presets, false, cx),
+                ),
+                Row::hint(
+                    t!("Testar"),
+                    t!("Clique com o botão direito no arquivo para abrir o menu como ele está agora."),
+                    self.menu_tester(cx),
                 ),
             ]),
             Group::titled(
@@ -1076,7 +1403,8 @@ impl SettingsPage {
                             .child(tr(label)),
                     )
             }),
-        );
+        )
+        .child(self.custom_accent(false, cx));
 
         vec![
             Group::titled(
@@ -1115,7 +1443,7 @@ impl SettingsPage {
                 vec![
                     Row::hint(
                         t!("Rolagem suave"),
-                        t!("Quanto a roda do mouse desliza a lista em vez de pular. Desligada rola em degraus."),
+                        t!("Deslizar em vez de pular a cada giro da roda."),
                         self.config_choice(
                             "scroll-smoothness",
                             &[
@@ -1129,7 +1457,6 @@ impl SettingsPage {
                             cx,
                         ),
                     )
-                    .wide()
                     .reset(("ui", "scroll_smoothness"), ui.scroll_smoothness == 50, "50"),
                     Row::hint(
                         t!("Linhas do nome nos ícones"),
@@ -1166,6 +1493,19 @@ impl SettingsPage {
             )
             .reset(("compact", "enabled"), !enabled, "false"),
         ])];
+        groups.push(Group::titled(
+            t!("Prévia"),
+            vec![Row::hint(
+                t!("Teste nas bordas"),
+                if enabled {
+                    t!("Passe o mouse nas bordas da janela de exemplo: as barras escondidas saem com a espera e a animação escolhidas.")
+                } else {
+                    t!("O modo está desligado, mas dá para testar: passe o mouse nas bordas da janela de exemplo.")
+                },
+                self.compact_preview(cx),
+            )
+            .wide()],
+        ));
         // Always listed, even with the mode off: hidden behind the switch they
         // looked removed, and they can be set up before turning the mode on.
         groups.push(Group::titled(
@@ -1173,7 +1513,7 @@ impl SettingsPage {
             vec![
                 Row::hint(
                     t!("Barras"),
-                    t!("Abas e barra de rota saem do topo, a barra lateral da esquerda, o visualizador da direita e a barra de baixo (filtro, contagem, zoom) de baixo. Só as abas é o jeito antigo."),
+                    t!("Somem até o mouse encostar na borda."),
                     self.config_toggles(
                         "compact-hide",
                         "compact",
@@ -1186,11 +1526,10 @@ impl SettingsPage {
                         ],
                         cx,
                     ),
-                )
-                .wide(),
+                ),
                 Row::hint(
                     t!("Como as barras aparecem"),
-                    t!("Por cima da lista, sem mexer nela, ou empurrando a lista para abrir espaço, sem cobrir nada dela."),
+                    t!("Por cima da lista ou empurrando ela."),
                     self.config_choice(
                         "compact-overlay",
                         &[(t!("Por cima"), compact.overlay, "true"), (t!("Empurrando"), !compact.overlay, "false")],
@@ -1201,7 +1540,7 @@ impl SettingsPage {
                 .reset(("compact", "overlay"), compact.overlay, "true"),
                 Row::hint(
                     t!("Moldura"),
-                    t!("A lista fica num cartão de cantos arredondados, com uma borda da cor da janela em volta, como no Zen."),
+                    t!("Cantos arredondados em volta da lista, como no Zen."),
                     self.config_choice(
                         "compact-frame",
                         &[
@@ -1360,8 +1699,15 @@ impl SettingsPage {
                         cx,
                     ),
                 )
-                .wide()
                 .reset(("ui", "hover_audio_delay_ms"), delay == 400, "400"),
+            );
+            hover.push(
+                Row::hint(
+                    t!("Testar o tempo"),
+                    t!("Passe o mouse pelos arquivos: cada um começa a tocar depois do tempo escolhido."),
+                    self.hover_audio_preview(cx),
+                )
+                .wide(),
             );
         }
         vec![
@@ -1479,48 +1825,151 @@ impl SettingsPage {
 
     fn integrations(&self, cx: &mut Context<Self>) -> Vec<Group> {
         let reveal = self.config.explorer.reveal_from_other_apps;
-        vec![Group::new(vec![
-            Row::hint(
-                t!("\"Mostrar na pasta\" abre aqui"),
-                t!("Premiere (Revelar no Explorador), Chrome, Edge e Firefox (Mostrar na pasta, depois de baixar) e o menu Iniciar (Abrir local do arquivo) abrem a pasta no Prime Files, com o arquivo selecionado e piscando em destaque."),
-                self.switch("reveal-from-other-apps", reveal, ("explorer", "reveal_from_other_apps"), cx),
+        let listary_control = match self.listary {
+            None => checking().into_any_element(),
+            Some(crate::listary::State::NotInstalled) => div()
+                .text_xs()
+                .text_color(rgb(theme::fg_secondary()))
+                .child(t!("Não instalado"))
+                .into_any_element(),
+            Some(state) => {
+                let ours = state == crate::listary::State::Ours;
+                self.switch_pick("listary", ours, Pick::Listary(!ours), cx).into_any_element()
+            }
+        };
+        // Three cards by what they are about, each row one short line with
+        // the rest behind its "?".
+        vec![
+            Group::titled(t!("Pastas do Windows"), vec![
+                Row::hint(
+                    t!("Explorador padrão do Windows"),
+                    t!("Pastas, drives e Win+E abrem no Prime Files."),
+                    match self.default_explorer {
+                        Some(is_default) => self
+                            .switch_pick("default-explorer", is_default, Pick::DefaultExplorer(!is_default), cx)
+                            .into_any_element(),
+                        None => checking().into_any_element(),
+                    },
+                )
+                .more(t!("Pastas, drives, Win+E e o ícone do Explorador na barra de tarefas abrem no Prime Files. Só neste usuário do Windows; desligar devolve tudo ao Explorador.")),
+                Row::hint(
+                    t!("\"Mostrar na pasta\" abre aqui"),
+                    t!("Premiere, navegadores e o menu Iniciar mostram o arquivo aqui."),
+                    self.switch("reveal-from-other-apps", reveal, ("explorer", "reveal_from_other_apps"), cx),
+                )
+                .more(t!("Premiere (Revelar no Explorador), Chrome, Edge e Firefox (Mostrar na pasta, depois de baixar) e o menu Iniciar (Abrir local do arquivo) abrem a pasta no Prime Files, com o arquivo selecionado e piscando em destaque."))
+                .reset(("explorer", "reveal_from_other_apps"), reveal, "true"),
+                Row::hint(
+                    t!("Iniciar com o Windows"),
+                    t!("Fica pronto, minimizado, desde a entrada no Windows."),
+                    match self.starts_with_windows {
+                        Some(on) => self.switch_pick("start-with-windows", on, Pick::StartWithWindows(!on), cx).into_any_element(),
+                        None => checking().into_any_element(),
+                    },
+                )
+                .more(t!("Abre minimizado quando você entra no Windows, para que \"Mostrar na pasta\" de qualquer programa caia aqui na hora.")),
+            ]),
+            Group::titled(t!("Busca rápida"), vec![
+                Row::hint(
+                    t!("Atalho"),
+                    t!("Abre a busca do computador por cima de qualquer programa."),
+                    self.quick_shortcut_control(cx),
+                )
+                .more(t!("Abre a busca do computador por cima de qualquer programa, como o Listary. Numa janela de abrir ou salvar arquivo, o que você escolher vai para ela. Ctrl+K também abre, dentro do Prime Files.")),
+            ]),
+            Group::titled("Listary", vec![
+                Row::hint(t!("Abrir as pastas do Listary aqui"), t!("O Listary é reiniciado ao mudar."), listary_control)
+                    .more(t!("Pastas abertas pelo Listary abrem no Prime Files. O Listary é reiniciado ao mudar.")),
+            ]),
+        ]
+    }
+
+    // A key pressed while the quick search waits for its shortcut: a
+    // combination (Ctrl, Alt or Win with a key, or an F key) becomes it; Esc
+    // gives up. Ctrl or Shift twice is chosen from the chips instead.
+    fn record_quick_key(&mut self, event: &KeyDownEvent, cx: &mut Context<Self>) {
+        cx.stop_propagation();
+        let keystroke = &event.keystroke;
+        let key = keystroke.key.to_lowercase();
+        if shortcuts::MODIFIER_KEYS.contains(&key.as_str()) {
+            return;
+        }
+        let modifiers = keystroke.modifiers;
+        self.recording_quick = false;
+        if key == "escape" && !(modifiers.control || modifiers.alt || modifiers.shift) {
+            cx.notify();
+            return;
+        }
+        match crate::quick_keys::from_keystroke(modifiers.control, modifiers.shift, modifiers.alt, modifiers.platform, &key) {
+            Some(setting) => self.write("launcher", "hotkey", format!("\"{setting}\""), cx),
+            None => {
+                self.status = Some((
+                    t!("Esse atalho não serve: use Ctrl, Alt ou Win com uma tecla, ou uma tecla F sozinha.").to_string(),
+                    true,
+                ));
+            }
+        }
+        cx.notify();
+    }
+
+    // The quick search's shortcut: the usual ones as chips, and any other
+    // combination recorded.
+    fn quick_shortcut_control(&self, cx: &mut Context<Self>) -> Div {
+        let current = crate::quick_keys::resolve(&self.config.launcher.hotkey);
+        let presets: [(&'static str, &'static str, &'static str); 6] = [
+            ("off", "\"off\"", t!("Desligado")),
+            ("double-ctrl", "\"double-ctrl\"", "Ctrl 2x"),
+            ("double-shift", "\"double-shift\"", "Shift 2x"),
+            ("double-alt", "\"double-alt\"", "Alt 2x"),
+            ("ctrl+space", "\"ctrl+space\"", t!("Ctrl+Espaço")),
+            ("shift+space", "\"shift+space\"", t!("Shift+Espaço")),
+        ];
+        let custom = !presets.iter().any(|(value, _, _)| *value == current);
+        let options: Vec<(&'static str, bool, &'static str)> =
+            presets.iter().map(|(value, toml, label)| (*label, *value == current, *toml)).collect();
+        let recording = self.recording_quick;
+        let record_label = if recording {
+            t!("Aperte o atalho… (Esc desiste)").to_string()
+        } else if custom {
+            crate::quick_keys::describe(&current)
+        } else {
+            t!("Gravar outro…").to_string()
+        };
+        div()
+            .flex()
+            .items_center()
+            .justify_end()
+            .gap(px(8.0))
+            .child(self.config_choice("quick-shortcut", &options, ("launcher", "hotkey"), cx))
+            .child(
+                div()
+                    .id("quick-shortcut-record")
+                    .h(px(30.0))
+                    .px(px(11.0))
+                    .flex()
+                    .flex_shrink_0()
+                    .items_center()
+                    .gap(px(6.0))
+                    .rounded(px(7.0))
+                    .border_1()
+                    .cursor_pointer()
+                    .text_sm()
+                    .whitespace_nowrap()
+                    .map(|this| {
+                        if custom || recording {
+                            this.border_color(rgb(theme::accent()))
+                                .bg(rgb(theme::accent_subtle()))
+                                .text_color(rgb(theme::accent()))
+                        } else {
+                            this.border_color(rgb(theme::border()))
+                                .text_color(rgb(theme::fg_secondary()))
+                                .hover(|style| style.bg(rgb(theme::bg_hover())))
+                        }
+                    })
+                    .on_click(cx.listener(|page, _, _, cx| page.pick(Pick::RecordQuickShortcut, cx)))
+                    .child(Icon::new(Icon::empty()).path("icons/keyboard.svg").size_4())
+                    .child(record_label),
             )
-            .reset(("explorer", "reveal_from_other_apps"), reveal, "true"),
-            Row::hint(
-                t!("Iniciar com o Windows"),
-                t!("Abre minimizado quando você entra no Windows, para que \"Mostrar na pasta\" de qualquer programa caia aqui na hora."),
-                match self.starts_with_windows {
-                    Some(on) => self.switch_pick("start-with-windows", on, Pick::StartWithWindows(!on), cx).into_any_element(),
-                    None => checking().into_any_element(),
-                },
-            ),
-            Row::hint(
-                t!("Explorador padrão do Windows"),
-                t!("Pastas, drives, Win+E e o ícone do Explorador na barra de tarefas abrem no Prime Files. Só neste usuário do Windows; desligar devolve tudo ao Explorador."),
-                match self.default_explorer {
-                    Some(is_default) => {
-                        self.switch_pick("default-explorer", is_default, Pick::DefaultExplorer(!is_default), cx).into_any_element()
-                    }
-                    None => checking().into_any_element(),
-                },
-            ),
-            Row::hint(
-                "Listary",
-                t!("Pastas abertas pelo Listary abrem no Prime Files. O Listary é reiniciado ao mudar."),
-                match self.listary {
-                    None => checking().into_any_element(),
-                    Some(crate::listary::State::NotInstalled) => div()
-                        .text_xs()
-                        .text_color(rgb(theme::fg_secondary()))
-                        .child(t!("Não instalado"))
-                        .into_any_element(),
-                    Some(state) => {
-                        let ours = state == crate::listary::State::Ours;
-                        self.switch_pick("listary", ours, Pick::Listary(!ours), cx).into_any_element()
-                    }
-                },
-            ),
-        ])]
     }
 
     fn shortcuts(&self, cx: &mut Context<Self>) -> Vec<Group> {
@@ -1854,7 +2303,8 @@ impl SettingsPage {
     fn chips(&self, id: &'static str, options: &[(&'static str, bool, Pick)], toggles: bool, cx: &mut Context<Self>) -> Div {
         div()
             .flex()
-            // Only long rows wrap: a short row beside its text measured at
+            // Only long rows wrap (the languages; six fit beside the text):
+            // a short row beside its text measured at
             // its narrowest and broke onto two lines.
             // A long row wraps within the width it is given: as a flex item
             // that may shrink, in a parent that is itself a flex row. In a
@@ -1863,7 +2313,7 @@ impl SettingsPage {
             // Toggles wrap too: their labels change width with the check, and
             // in English the five bars did not fit, so "Preview" was squeezed
             // under "Bottom bar".
-            .when(options.len() > 5 || toggles, |this| this.flex_wrap().flex_1().min_w(px(0.0)))
+            .when(options.len() > 6, |this| this.flex_wrap().flex_1().min_w(px(0.0)))
             .p(px(2.0))
             .gap(px(2.0))
             .rounded(px(7.0))
@@ -1916,6 +2366,115 @@ impl SettingsPage {
         // Set each render: the language may have changed since.
         input.update(cx, |state, cx| state.set_placeholder(t!("Buscar uma configuração…"), window, cx));
         input
+    }
+
+    // The accent pickers, made on the first render (they need a `Window`)
+    // and kept showing the accent the config has now.
+    fn ensure_accent_pickers(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let current = theme::parse_accent(&self.config.theme.accent).unwrap_or_else(theme::palette_accent);
+        let pickers = match &self.accent_pickers {
+            Some(pickers) => pickers.clone(),
+            None => {
+                let make = |window: &mut Window, cx: &mut Context<Self>| {
+                    let picker = cx.new(|cx| ColorPickerState::new(window, cx).default_value(accent_hsla(current)));
+                    cx.subscribe(&picker, |page, _picker, event: &ColorPickerEvent, cx| {
+                        let ColorPickerEvent::Change(Some(color)) = event else { return };
+                        page.write("theme", "accent", format!("\"{}\"", hex_of(*color)), cx);
+                    })
+                    .detach();
+                    picker
+                };
+                let pickers = [make(window, cx), make(window, cx)];
+                self.accent_pickers = Some(pickers.clone());
+                pickers
+            }
+        };
+        if self.accent_synced.as_deref() == Some(self.config.theme.accent.as_str()) {
+            return;
+        }
+        self.accent_synced = Some(self.config.theme.accent.clone());
+        for picker in pickers {
+            let shown = picker.read(cx).value().map(hex_of);
+            if shown.as_deref() != Some(hex_of(accent_hsla(current)).as_str()) {
+                picker.update(cx, |state, cx| state.set_value(accent_hsla(current), window, cx));
+            }
+        }
+    }
+
+    /// The "any colour" choice beside the named accents. `home` picks the
+    /// home card's picker and its smaller look.
+    pub(crate) fn custom_accent(&self, home: bool, _cx: &mut Context<Self>) -> AnyElement {
+        let Some(pickers) = &self.accent_pickers else { return div().into_any_element() };
+        let picker = pickers[if home { 1 } else { 0 }].clone();
+        let custom = self.config.theme.accent.trim().starts_with('#');
+        let featured: Vec<gpui::Hsla> = theme::NAMED_ACCENTS
+            .iter()
+            .map(|(_, color)| accent_hsla(color.unwrap_or_else(theme::palette_accent)))
+            .collect();
+        let tip: SharedString = t!("Qualquer cor: escolha na paleta ou digite o código (#RRGGBB).").into();
+        // A dot like the named ones, with a palette in it: the picker's own
+        // square button looked like a stray tile beside the round swatches.
+        // Filled with the chosen colour once there is one.
+        let dot = if home { 22.0 } else { 28.0 };
+        let fill = theme::parse_accent(&self.config.theme.accent).filter(|_| custom);
+        // Dark ink on a light colour, light ink on a dark one.
+        let ink = match fill {
+            Some(color) => {
+                let channel = |shift: u32| ((color >> shift) & 0xFF) as f32;
+                let luma = 0.299 * channel(16) + 0.587 * channel(8) + 0.114 * channel(0);
+                if luma > 150.0 { 0x1B1C1F } else { 0xFFFFFF }
+            }
+            None => theme::fg_secondary(),
+        };
+        let control = ColorPicker::new(&picker)
+            .featured_colors(featured)
+            .icon(Icon::new(Icon::empty()).path("icons/palette.svg").text_color(rgb(ink)))
+            .with_size(gpui_component::Size::Size(px(dot)));
+        let ring = |inner: AnyElement| {
+            div()
+                .flex()
+                .items_center()
+                .justify_center()
+                .rounded_full()
+                .border_2()
+                .border_color(rgb(if custom { theme::fg() } else { theme::bg_secondary() }))
+                .child(
+                    div()
+                        .size(px(dot))
+                        .flex()
+                        .items_center()
+                        .justify_center()
+                        .rounded_full()
+                        .overflow_hidden()
+                        .bg(rgb(fill.unwrap_or_else(theme::bg_hover)))
+                        .child(inner),
+                )
+        };
+        if home {
+            div()
+                .id("home-accent-custom")
+                .tooltip(move |window, cx| gpui_component::tooltip::Tooltip::new(tip.clone()).build(window, cx))
+                .child(ring(control.into_any_element()))
+                .into_any_element()
+        } else {
+            div()
+                .id("accent-custom")
+                .w(px(88.0))
+                .py(px(2.0))
+                .flex()
+                .flex_col()
+                .items_center()
+                .gap_1()
+                .tooltip(move |window, cx| gpui_component::tooltip::Tooltip::new(tip.clone()).build(window, cx))
+                .child(ring(control.into_any_element()))
+                .child(
+                    div()
+                        .text_xs()
+                        .text_color(rgb(if custom { theme::fg() } else { theme::fg_secondary() }))
+                        .child(t!("Personalizada")),
+                )
+                .into_any_element()
+        }
     }
 
     fn render_search_field(&self, input: &Entity<InputState>) -> Div {
@@ -1975,16 +2534,7 @@ impl SettingsPage {
             .flex()
             .flex_col()
             .gap(px(8.0))
-            .when_some(group.title, |this, title| {
-                this.child(
-                    div()
-                        .px(px(4.0))
-                        .text_xs()
-                        .font_weight(gpui::FontWeight::SEMIBOLD)
-                        .text_color(rgb(theme::fg_secondary()))
-                        .child(title),
-                )
-            })
+            .when_some(group.title, |this, title| this.child(group_title(title)))
             .child(
                 div()
                     .flex()
@@ -2032,6 +2582,7 @@ impl SettingsPage {
                     .items_center()
                     .gap_1()
                     .child(div().text_sm().font_weight(gpui::FontWeight::MEDIUM).text_color(rgb(theme::fg())).child(row.label))
+                    .when_some(row.more, |this, more| this.child(more_mark(row.label, more)))
                     // Stacked, the reset sits by the name: under it is the control.
                     .children(reset_by_label),
             )
@@ -2059,10 +2610,14 @@ impl SettingsPage {
 }
 
 impl SettingsPage {
-    fn render_section(&self, section: SettingsSection, stacked: bool, cx: &mut Context<Self>) -> Div {
+    // A section as blocks of the column: its heading, then each group's
+    // title and each row on its own, so only the rows near the view are
+    // drawn (`kept_heights`). A group's card is drawn piece by piece: the
+    // first row carries its top edge and the last its bottom.
+    fn section_blocks(&self, section: SettingsSection, first: bool, stacked: bool, cx: &mut Context<Self>) -> Vec<Block> {
         let groups = self.groups(section, cx);
         let home = section == SettingsSection::General;
-        div()
+        let heading = div()
             .flex()
             .flex_col()
             .gap(px(22.0))
@@ -2108,7 +2663,33 @@ impl SettingsPage {
                             .child(div().text_sm().text_color(rgb(theme::fg_secondary())).child(section.description())),
                     ),
             ))
-            .children(groups.into_iter().map(|group| self.render_group(group, stacked, cx)))
+;
+        let mut blocks = vec![Block { pad: if first { 24.0 } else { 56.0 }, body: heading }];
+        for group in groups {
+            let titled = group.title.is_some();
+            if let Some(title) = group.title {
+                blocks.push(Block { pad: 22.0, body: group_title(title) });
+            }
+            let count = group.rows.len();
+            for (ix, row) in group.rows.into_iter().enumerate() {
+                let (top, bottom) = (ix == 0, ix + 1 == count);
+                let body = self
+                    .render_row(row, stacked, !bottom, cx)
+                    .bg(rgb(theme::bg_secondary()))
+                    .border_l_1()
+                    .border_r_1()
+                    .border_color(rgb(theme::border()))
+                    .when(top, |this| this.border_t_1().rounded_t(px(10.0)))
+                    .when(bottom, |this| this.border_b_1().rounded_b(px(10.0)));
+                let pad = match (top, titled) {
+                    (true, true) => 8.0,
+                    (true, false) => 22.0,
+                    _ => 0.0,
+                };
+                blocks.push(Block { pad, body });
+            }
+        }
+        blocks
     }
 
     // Every row whose name, explanation or section matches `query`, under its
@@ -2225,6 +2806,28 @@ impl SettingsPage {
 // Lowercase without accents, so "audio" finds "Áudio" and "configuracao"
 // finds "configuração".
 // A list of strings in TOML: `["a", "b"]`.
+/// `0xrrggbb` as gpui's colour.
+fn accent_hsla(color: u32) -> gpui::Hsla {
+    gpui::Hsla::from(gpui::rgb(color))
+}
+
+/// A colour as the `#RRGGBB` that `theme.accent` takes.
+fn hex_of(color: gpui::Hsla) -> String {
+    let rgba = gpui::Rgba::from(color);
+    let channel = |value: f32| (value.clamp(0.0, 1.0) * 255.0).round() as u8;
+    format!("#{:02X}{:02X}{:02X}", channel(rgba.r), channel(rgba.g), channel(rgba.b))
+}
+
+// A group's name above its card.
+fn group_title(title: &'static str) -> Div {
+    div()
+        .px(px(4.0))
+        .text_xs()
+        .font_weight(gpui::FontWeight::SEMIBOLD)
+        .text_color(rgb(theme::fg_secondary()))
+        .child(title)
+}
+
 fn toml_list(items: &[String]) -> String {
     let quoted: Vec<String> = items
         .iter()
@@ -2326,22 +2929,96 @@ fn button(id: &'static str, label: &'static str, danger: bool) -> Stateful<Div> 
 const NARROW: f32 = 760.0;
 /// Content narrower than this puts each control under its text.
 const STACK: f32 = 620.0;
+/// The sidebar's width until it is dragged, and how far it goes.
 const NAV_WIDTH: f32 = 232.0;
+const NAV_MIN: f32 = 180.0;
+const NAV_MAX: f32 = 420.0;
+/// The strip between the sidebar and the column that drags the sidebar.
+const NAV_HANDLE: f32 = 5.0;
+
+fn nav_width_file() -> std::path::PathBuf {
+    config::paths::data_dir().join("settings-nav-width")
+}
+
+#[allow(clippy::disallowed_methods)]
+fn load_nav_width() -> f32 {
+    std::fs::read_to_string(nav_width_file())
+        .ok()
+        .and_then(|text| text.trim().parse::<f32>().ok())
+        .map_or(NAV_WIDTH, |width| width.clamp(NAV_MIN, NAV_MAX))
+}
+
+fn save_nav_width(width: f32, cx: &mut gpui::App) {
+    cx.background_spawn(async move {
+        let path = nav_width_file();
+        let written = path.parent().map_or(Ok(()), std::fs::create_dir_all).and_then(|()| {
+            #[allow(clippy::disallowed_methods)]
+            std::fs::write(&path, format!("{width:.0}"))
+        });
+        if let Err(error) = written {
+            tracing::warn!("could not keep the settings sidebar's width: {error}");
+        }
+    })
+    .detach();
+}
 
 impl Render for SettingsPage {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let input = self.search_input(window, cx);
+        self.ensure_accent_pickers(window, cx);
+        self.viewport = window.viewport_size();
+        self.tick_compact_demo(window);
+        // The media preview's bar fills, then its bars bob, while hovered.
+        if self.hover_demo.is_active() {
+            self.tick_hover_demo();
+            window.request_animation_frame();
+        }
         let query = input.read(cx).value().to_string();
         let searching = !query.trim().is_empty();
+        self.tick_glide(window);
+        if !searching {
+            let current = self.current_section();
+            if current != self.section {
+                self.section = current;
+                self.confirm_reset = false;
+            }
+        }
         let width = f32::from(window.viewport_size().width);
         let narrow = width < NARROW;
-        let content_width = if narrow { width } else { width - NAV_WIDTH };
+        let nav_width = self.nav_width;
+        let content_width = if narrow { width } else { width - nav_width - NAV_HANDLE };
         let stacked = content_width < STACK;
+        // The column inside its side padding, up to its maximum width; three
+        // cards need their 300 + 250 + 250 px and the gaps.
+        let column = (content_width - if narrow { 34.0 } else { 68.0 }).min(1280.0);
+        self.home_wide = column >= 860.0;
+        self.column_width = column;
 
-        let body = if searching {
-            self.render_results(&query, stacked, cx)
+        let blocks: Vec<Result<Block, gpui::Pixels>> = if searching {
+            // Another set of children: nothing measured carries over.
+            self.drawn = None;
+            if self.glide.as_ref().is_some_and(|glide| glide.section.is_some()) {
+                self.glide = None;
+            }
+            vec![Ok(Block { pad: 24.0, body: self.render_results(&query, stacked, cx) })]
         } else {
-            self.render_section(self.section, stacked, cx)
+            let mut blocks = Vec::new();
+            let mut starts = Vec::with_capacity(SettingsSection::ALL.len());
+            for (ix, section) in SettingsSection::ALL.into_iter().enumerate() {
+                // Child 0 is the status line.
+                starts.push(blocks.len() + 1);
+                blocks.extend(self.section_blocks(section, ix == 0, stacked, cx));
+            }
+            self.section_starts = starts;
+            let kept = self.kept_heights(blocks.len());
+            blocks
+                .into_iter()
+                .zip(kept)
+                .map(|(block, kept)| match kept {
+                    Some(height) => Err(height),
+                    None => Ok(block),
+                })
+                .collect()
         };
         let status = self.render_status(cx);
 
@@ -2372,7 +3049,7 @@ impl Render for SettingsPage {
                 )
         } else {
             div()
-                .w(px(NAV_WIDTH))
+                .w(px(nav_width))
                 .flex_shrink_0()
                 .h_full()
                 .flex()
@@ -2395,7 +3072,14 @@ impl Render for SettingsPage {
             .bg(rgb(theme::bg()))
             .track_focus(&self.focus_handle)
             .on_key_down(cx.listener(|page, event: &KeyDownEvent, _window, cx| page.record_key(event, cx)))
+            // The sidebar's edge, dragged anywhere over the page.
+            .on_mouse_move(cx.listener(|page, event: &gpui::MouseMoveEvent, _window, cx| page.drag_nav(event, cx)))
+            .on_mouse_up(
+                gpui::MouseButton::Left,
+                cx.listener(|page, _: &gpui::MouseUpEvent, _window, cx| page.end_nav_drag(cx)),
+            )
             .child(nav)
+            .when(!narrow, |this| this.child(self.nav_handle(cx)))
             // The scroll area and its bar, always shown, beside each other in
             // a relative box: the bar is drawn over the box's right edge, in
             // the gutter the area's own padding leaves free.
@@ -2407,7 +3091,8 @@ impl Render for SettingsPage {
                     .min_h(px(0.0))
                     .flex()
                     .flex_col()
-                    .child(self.render_content(narrow, status, body))
+                    .child(self.wheel_catcher(cx))
+                    .child(self.render_content(narrow, status, blocks, cx))
                     .child(
                         gpui_component::scroll::Scrollbar::vertical(&self.scroll)
                             .id("settings-scrollbar")
@@ -2418,38 +3103,144 @@ impl Render for SettingsPage {
 }
 
 impl SettingsPage {
-    fn render_content(&self, narrow: bool, status: Option<Div>, body: Div) -> impl IntoElement + use<> {
-                div()
-                    .id("settings-content")
-                    .flex_1()
-                    .min_w(px(0.0))
-                    .min_h(px(0.0))
-                    .overflow_y_scroll()
-                    .track_scroll(&self.scroll)
-                    .pl(px(if narrow { 14.0 } else { 32.0 }))
-                    // Room for the bar on the right, and below the last card
-                    // so it never ends glued to the window's edge.
-                    .pr(px(if narrow { 20.0 } else { 36.0 }))
-                    .pt(px(24.0))
-                    .pb(px(48.0))
-                    // A plain block: as a flex column, the scroll area fitted
-                    // its child to its own height, and the cards were spaced
-                    // out or stretched to fill it (06/11/2026). The column is
-                    // centred by a flex row inside it instead, where it grows
-                    // up to its maximum width.
-                    .child(
-                        div().w_full().flex().justify_center().child(
-                            div()
-                                .flex_1()
-                                .min_w(px(0.0))
-                                .max_w(px(820.0))
-                                .flex()
-                                .flex_col()
-                                .gap_4()
-                                .children(status)
-                                .child(body),
-                        ),
-                    )
+    // The strip right of the sidebar: dragged, it sets the sidebar's width;
+    // a double click puts the width back.
+    fn nav_handle(&self, cx: &mut Context<Self>) -> Stateful<Div> {
+        let dragging = self.nav_drag.is_some();
+        div()
+            .id("settings-nav-handle")
+            .w(px(NAV_HANDLE))
+            .h_full()
+            .flex_shrink_0()
+            .cursor_col_resize()
+            .when(dragging, |this| this.bg(rgb(theme::accent())))
+            .when(!dragging, |this| this.hover(|style| style.bg(rgb(theme::accent_subtle()))))
+            .on_mouse_down(
+                gpui::MouseButton::Left,
+                cx.listener(|page, event: &gpui::MouseDownEvent, _window, cx| {
+                    cx.stop_propagation();
+                    if event.click_count >= 2 {
+                        page.nav_drag = None;
+                        page.nav_width = NAV_WIDTH;
+                        save_nav_width(NAV_WIDTH, cx);
+                    } else {
+                        page.nav_drag = Some((f32::from(event.position.x), page.nav_width));
+                    }
+                    cx.notify();
+                }),
+            )
+    }
+
+    fn drag_nav(&mut self, event: &gpui::MouseMoveEvent, cx: &mut Context<Self>) {
+        let Some((start, width)) = self.nav_drag else {
+            return;
+        };
+        // The button came up outside the window: the drag is over.
+        if event.pressed_button != Some(gpui::MouseButton::Left) {
+            self.end_nav_drag(cx);
+            return;
+        }
+        let next = (width + f32::from(event.position.x) - start).clamp(NAV_MIN, NAV_MAX).round();
+        if next != self.nav_width {
+            self.nav_width = next;
+            cx.notify();
+        }
+    }
+
+    fn end_nav_drag(&mut self, cx: &mut Context<Self>) {
+        if self.nav_drag.take().is_some() {
+            save_nav_width(self.nav_width, cx);
+            cx.notify();
+        }
+    }
+
+    // Catches a mouse wheel over the column before gpui's own scrolling
+    // does, and hands its notches to the glide. A touchpad's pixels and
+    // Shift/Ctrl+wheel go on to gpui untouched.
+    fn wheel_catcher(&self, cx: &mut Context<Self>) -> impl IntoElement + use<> {
+        let entity = cx.entity().downgrade();
+        gpui::canvas(
+            // A hitbox of its own, so a menu or tooltip over the column
+            // keeps its wheel.
+            |bounds, window, _cx| window.insert_hitbox(bounds, gpui::HitboxBehavior::Normal),
+            move |bounds, hitbox, window, _cx| {
+                window.on_mouse_event(move |event: &gpui::ScrollWheelEvent, phase, window, cx| {
+                    if phase != gpui::DispatchPhase::Capture
+                        || !bounds.contains(&event.position)
+                        || !hitbox.is_hovered(window)
+                        || event.modifiers.shift
+                        || event.modifiers.secondary()
+                    {
+                        return;
+                    }
+                    let gpui::ScrollDelta::Lines(_) = event.delta else { return };
+                    let delta = event.delta.pixel_delta(window.line_height()).y;
+                    if entity.update(cx, |page, cx| page.smooth_wheel(delta, cx)).unwrap_or(false) {
+                        cx.stop_propagation();
+                    }
+                });
+            },
+        )
+        .absolute()
+        .size_full()
+    }
+
+    // The scrolled column: the status line, then each body (every section in
+    // order, or the search results) as its own child of the scroll area, so
+    // the handle knows where each section starts.
+    fn render_content(
+        &self,
+        narrow: bool,
+        status: Option<Div>,
+        blocks: Vec<Result<Block, gpui::Pixels>>,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement + use<> {
+        // Centred by a flex row in each child, where the column grows up to
+        // its maximum width. The area itself is a plain block: as a flex
+        // column it fitted its children to its own height, and the cards were
+        // spaced out or stretched to fill it (06/11/2026).
+        let centred = |inner: Div| {
+            div()
+                .w_full()
+                .flex()
+                .justify_center()
+                .child(div().flex_1().min_w(px(0.0)).max_w(px(1280.0)).flex().flex_col().child(inner))
+        };
+        // Room under the last section for its heading to reach the top, so
+        // the glide can bring it there and the side list can light it like
+        // any other; without it the column stopped with it halfway down.
+        let view_height = self.scroll.bounds().size.height;
+        let spacer = match (self.section_starts.last(), self.drawn) {
+            (Some(&start), Some((_, count))) if blocks.len() > 1 => {
+                let first = self.scroll.bounds_for_item(start);
+                let last = self.scroll.bounds_for_item(count);
+                match (first, last) {
+                    (Some(first), Some(last)) => (view_height - (last.bottom() - first.top())).max(px(48.0)),
+                    _ => view_height,
+                }
+            }
+            _ => px(48.0),
+        };
+        div()
+            .id("settings-content")
+            .flex_1()
+            .min_w(px(0.0))
+            .min_h(px(0.0))
+            .overflow_y_scroll()
+            .track_scroll(&self.scroll)
+            // What reaches gpui's own scrolling (a touchpad, Shift+wheel)
+            // takes over from a glide under way.
+            .on_scroll_wheel(cx.listener(|page, _event, _window, _cx| page.glide = None))
+            .pl(px(if narrow { 14.0 } else { 32.0 }))
+            // Room for the bar on the right.
+            .pr(px(if narrow { 20.0 } else { 36.0 }))
+            .child(centred(div().children(status.map(|status| status.mt(px(24.0))))))
+            .children(blocks.into_iter().map(move |block| match block {
+                Ok(block) => centred(block.body).pt(px(block.pad)),
+                // Off screen: only its place, padding included.
+                Err(height) => div().w_full().h(height),
+            }))
+            .child(div().w_full().h(spacer))
     }
 }
 
@@ -2467,3 +3258,4 @@ mod tests {
         assert!(super::fold("Configuração").contains(&super::fold("configuracao")));
     }
 }
+

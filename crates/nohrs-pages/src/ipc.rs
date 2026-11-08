@@ -308,8 +308,30 @@ impl RootView {
             }
             Request::Open { path } => match folder_and_selection(Path::new(&path)) {
                 Some((folder, select)) => {
-                    self.show_explorer(cx);
-                    explorer.update(cx, |page, cx| page.open_path(folder, select, window, cx));
+                    use nohrs_core::config::OpenFromOtherApps;
+                    match explorer.read(cx).open_from_other_apps {
+                        // A window of its own, on the path as given: it
+                        // selects a file in its folder, as the tab would.
+                        OpenFromOtherApps::NewWindow => {
+                            let request = crate::windows::WindowRequest {
+                                path: Some(std::path::PathBuf::from(&path)),
+                                bounds: None,
+                                background: false,
+                            };
+                            return match crate::windows::open_window(request, cx) {
+                                Ok(_) => json!({ "ok": true }),
+                                Err(error) => json!({ "ok": false, "error": error.to_string() }),
+                            };
+                        }
+                        OpenFromOtherApps::CurrentTab => {
+                            self.show_explorer(cx);
+                            explorer.update(cx, |page, cx| page.open_path_in_place(folder, select, window, cx));
+                        }
+                        OpenFromOtherApps::NewTab => {
+                            self.show_explorer(cx);
+                            explorer.update(cx, |page, cx| page.open_path(folder, select, window, cx));
+                        }
+                    }
                     window.activate_window();
                     json!({ "ok": true })
                 }

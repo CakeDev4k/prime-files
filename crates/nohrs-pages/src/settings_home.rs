@@ -9,13 +9,12 @@ use std::sync::{Arc, LazyLock};
 
 use gpui::prelude::FluentBuilder as _;
 use gpui::*;
-use gpui_component::Icon;
 use nohrs_core::config::ThemeMode;
 use nohrs_core::i18n::tr;
 use nohrs_core::{t, tf};
 use nohrs_ui::theme::theme;
 
-use crate::settings::{ACCENT_LABELS, SettingsPage, SettingsSection};
+use crate::settings::{ACCENT_LABELS, SettingsPage};
 
 // The app's own icon, the one of its window and installer.
 static APP_ICON: LazyLock<Arc<Image>> = LazyLock::new(|| {
@@ -46,24 +45,19 @@ impl SettingsPage {
             .gap(px(22.0))
             .child(self.home_hero(cx))
             .child(heading(t!("Ajustes rápidos")))
-            .child(
-                div()
-                    .flex()
-                    .flex_wrap()
-                    .gap(px(12.0))
-                    .child(self.theme_card(cx))
-                    .child(self.accent_card(cx))
-                    .child(self.explorer_card(cx)),
-            )
-            .child(heading(t!("Todas as configurações")))
-            .child(
-                div().flex().flex_wrap().gap(px(10.0)).children(
-                    SettingsSection::all()
-                        .into_iter()
-                        .filter(|section| *section != SettingsSection::General)
-                        .map(|section| self.section_tile(section, cx)),
-                ),
-            )
+            // Three columns or one under the other, picked from the width
+            // (`home_wide`), never a wrapping row: with cards that wrap
+            // inside (the colour dots), a wrapping row had every card
+            // measured over and over each frame, about 5 ms of a scroll
+            // frame that has 16 (07/11/2026).
+            .child({
+                let cards = [self.theme_card(cx), self.accent_card(cx), self.explorer_card(cx)];
+                if self.home_wide() {
+                    div().flex().gap(px(12.0)).children(cards.map(|card| card.flex_1().min_w(px(0.0))))
+                } else {
+                    div().flex().flex_col().gap(px(12.0)).children(cards.map(|card| card.w_full()))
+                }
+            })
     }
 
     // The app, its version, and where its updates stand.
@@ -157,7 +151,7 @@ impl SettingsPage {
     // Dark, light or as Windows, each a miniature window.
     fn theme_card(&self, cx: &mut Context<Self>) -> Div {
         let mode = self.config().theme.mode;
-        card(t!("Tema"), None).flex_grow().min_w(px(300.0)).child(
+        card(t!("Tema"), None).child(
             div()
                 .flex()
                 .gap(px(10.0))
@@ -256,7 +250,7 @@ impl SettingsPage {
                 .child(div().size(px(22.0)).rounded_full().bg(rgb(swatch)))
         });
         card(t!("Cor de destaque"), Some(t!("Seleção, abas ativas e botões.")))
-            .child(div().flex().flex_wrap().gap(px(6.0)).children(dots))
+            .child(div().flex().flex_wrap().items_center().gap(px(6.0)).children(dots).child(self.custom_accent(true, cx)))
     }
 
     // Taking folders over from Windows' Explorer, the one switch most
@@ -267,68 +261,6 @@ impl SettingsPage {
             Some(t!("Pastas, Win+E e o ícone do Explorador na barra de tarefas abrem no Prime Files.")),
         )
         .child(div().flex().justify_end().child(self.default_explorer_switch(cx)))
-    }
-
-    // A tile that opens another section, with what is in it.
-    fn section_tile(&self, section: SettingsSection, cx: &mut Context<Self>) -> Stateful<Div> {
-        div()
-            .id(ElementId::Name(SharedString::from(format!("home-tile-{section:?}"))))
-            // A third of the line each (less the gaps): the nine other
-            // sections are three full lines, not four and one left alone.
-            .flex_grow()
-            .flex_basis(relative(0.31))
-            .min_w(px(220.0))
-            .flex()
-            .items_start()
-            .gap(px(12.0))
-            .p(px(14.0))
-            .rounded(px(12.0))
-            .bg(rgb(theme::bg_secondary()))
-            .border_1()
-            .border_color(rgb(theme::border()))
-            .cursor_pointer()
-            .hover(|style| style.border_color(rgb(theme::accent())).bg(rgb(theme::bg_hover())))
-            .on_click(cx.listener(move |page, _event, _window, cx| page.show_section(section, cx)))
-            .child(
-                div()
-                    .size(px(34.0))
-                    .flex()
-                    .flex_shrink_0()
-                    .items_center()
-                    .justify_center()
-                    .rounded(px(9.0))
-                    .bg(rgb(theme::accent_subtle()))
-                    .text_color(rgb(theme::accent()))
-                    .child(Icon::new(Icon::empty()).path(section.icon()).size_4()),
-            )
-            .child(
-                div()
-                    .flex_1()
-                    .min_w(px(0.0))
-                    .flex()
-                    .flex_col()
-                    .gap(px(3.0))
-                    .child(
-                        div()
-                            .text_sm()
-                            .font_weight(FontWeight::MEDIUM)
-                            .text_color(rgb(theme::fg()))
-                            .child(section.label()),
-                    )
-                    .child(
-                        div()
-                            .text_xs()
-                            .line_height(px(17.0))
-                            .text_color(rgb(theme::fg_secondary()))
-                            .child(section.description()),
-                    ),
-            )
-            .child(
-                Icon::new(Icon::empty())
-                    .path("icons/chevron-right.svg")
-                    .size_4()
-                    .text_color(rgb(theme::muted())),
-            )
     }
 }
 
@@ -346,8 +278,6 @@ fn heading(text: &'static str) -> Div {
 // One of the quick choices: a titled card that grows to share the row.
 fn card(title: &'static str, hint: Option<&'static str>) -> Div {
     div()
-        .flex_1()
-        .min_w(px(250.0))
         .flex()
         .flex_col()
         .gap(px(12.0))
@@ -433,3 +363,4 @@ fn secondary_button(id: &'static str, label: &'static str) -> Stateful<Div> {
         .hover(|style| style.bg(rgb(theme::bg_hover())))
         .child(label)
 }
+

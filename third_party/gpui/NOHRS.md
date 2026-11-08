@@ -61,3 +61,45 @@ UI font from the icon-title font of Windows (`SPI_GETICONTITLELOGFONT`); a
 user with that set to a font without Arabic saw Arabic file names as boxes
 (Prime Files issue #1). Not reproduced here: on this machine the font is
 Segoe UI and Arabic already showed.
+
+Another, for files dragged in from another program (07/11/2026). gpui
+answered Windows "Copy" in `DragEnter`, `DragOver` and `Drop` whatever the
+app was going to do, so the cursor said "Copy" over a folder where the drop
+moved, and it ignored the `grfKeyState` OLE passes: the window is usually not
+the focused one then, so `Window::modifiers()` kept whatever it was when it
+last had the keyboard, and Shift-to-move did nothing. Now:
+
+- `src/platform/windows/window.rs`, `WindowsDragDropHandler`: each of the
+  three reports the keys as a `ModifiersChanged` before the move it
+  dispatches (`report_drag_keys`), and `DragEnter`/`DragOver` answer the
+  effect the app set during that move (`dispatch_drag_move`), "Copy" when it
+  set none. `Drop` still answers "Copy" when the app moves: the app moves the
+  files itself, and "Move" would have Explorer delete the originals too.
+- `src/interactive.rs`: `FileDropEffect`. `src/platform.rs`:
+  `PlatformWindow::set_file_drop_effect`, a no-op except on Windows.
+  `src/window.rs`: `Window::set_file_drop_effect`, and the mouse events made
+  from a file drop carry `self.modifiers` instead of none.
+
+When gpui is upgraded: check whether its drop target still answers a fixed
+`DROPEFFECT_COPY` and drops `grfKeyState` (the lines are marked `NOHRS`).
+
+## Startup: one Direct3D device, the cached font list (07/11/2026)
+
+Two calls made before the first frame, timed in probes that make the same
+calls in a fresh process, 5 rounds alternated, on the owner's machine
+(RTX 5050 driving the monitor, 1,530 fonts installed):
+
+- `src/platform/windows/directx_devices.rs`, `get_adapter`: upstream created a
+  full Direct3D 11 device on each adapter only to see that it could, dropped
+  it, and created it again in `DirectXDevices::new`. Now the device made while
+  choosing the adapter is the one kept. Both: 317 ms (median); one: 181 ms.
+- `src/platform/windows/direct_write.rs`, `DirectWriteTextSystem::new`:
+  `GetSystemFontCollection(.., checkForUpdates)` passed `true`, which makes
+  DirectWrite look for fonts installed since its cache last did: 134 ms
+  against 1.8 ms with `false`, the same 388 families either way.
+  `update_system_font_collection` still passes `true`, so a font missing at
+  lookup is still looked for.
+
+When gpui is upgraded: check whether `get_adapter` still makes a throwaway
+device and the first `GetSystemFontCollection` still checks for updates (the
+lines are marked `NOHRS`).

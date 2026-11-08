@@ -29,7 +29,12 @@ pub fn render(page: &ExplorerPane, window: &mut Window, cx: &mut Context<Explore
     let (vw, vh) = (f32::from(viewport.width), f32::from(viewport.height));
 
     let mut layers: Vec<AnyElement> = Vec::new();
-    // Clicks outside every level close the menu, as Windows' do.
+    // Clicks outside every level close the menu and go no further, as
+    // Windows' do. The backdrop does not occlude: the pointer still lights up
+    // what it passes over (issue #34). So the click is stopped in the capture
+    // phase, before anything under it sees it, and the wheel is stopped too,
+    // so the listing does not scroll away from the menu. Over a level the
+    // backdrop is not hovered (the levels occlude) and none of this fires.
     layers.push(
         div()
             .id("menu-backdrop")
@@ -38,9 +43,11 @@ pub fn render(page: &ExplorerPane, window: &mut Window, cx: &mut Context<Explore
             .left_0()
             .w(px(vw))
             .h(px(vh))
-            .occlude()
-            .on_mouse_down(MouseButton::Left, cx.listener(|page, _, _, cx| page.close_menu(cx)))
-            .on_mouse_down(MouseButton::Right, cx.listener(|page, _, _, cx| page.close_menu(cx)))
+            .capture_any_mouse_down(cx.listener(|page, _, _, cx| {
+                page.close_menu(cx);
+                cx.stop_propagation();
+            }))
+            .on_scroll_wheel(|_, _, cx| cx.stop_propagation())
             .into_any_element(),
     );
 

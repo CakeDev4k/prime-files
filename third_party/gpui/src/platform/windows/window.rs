@@ -53,6 +53,9 @@ pub struct WindowsWindowState {
     pub click_state: ClickState,
     pub current_cursor: Option<HCURSOR>,
     pub nc_button_pressed: Option<u32>,
+    /// NOHRS: what the app said a drop of external files would do under the
+    /// pointer (`Window::set_file_drop_effect`), cleared before each move.
+    pub file_drop_effect: Option<FileDropEffect>,
 
     pub display: WindowsDisplay,
     fullscreen: Option<StyleAndBounds>,
@@ -139,6 +142,7 @@ impl WindowsWindowState {
             click_state,
             current_cursor,
             nc_button_pressed,
+            file_drop_effect: None,
             display,
             fullscreen,
             initial_placement,
@@ -595,6 +599,10 @@ impl PlatformWindow for WindowsWindow {
         current_capslock()
     }
 
+    fn set_file_drop_effect(&self, effect: FileDropEffect) {
+        self.0.state.borrow_mut().file_drop_effect = Some(effect);
+    }
+
     fn set_input_handler(&mut self, input_handler: PlatformInputHandler) {
         self.0.state.borrow_mut().input_handler = Some(input_handler);
     }
@@ -874,6 +882,50 @@ impl WindowsDragDropHandler {
             self.0.state.borrow_mut().callbacks.input = Some(func);
         }
     }
+
+    // NOHRS: the keys held during the drag, as OLE reports them. The window
+    // is usually not the focused one while files come in from another
+    // program, so its own idea of the modifiers is whatever they were when
+    // it last had the keyboard: Shift to move did nothing.
+    fn report_drag_keys(&self, keys: MODIFIERKEYS_FLAGS) {
+        let modifiers = Modifiers {
+            control: keys.0 & MK_CONTROL.0 != 0,
+            alt: keys.0 & MK_ALT != 0,
+            shift: keys.0 & MK_SHIFT.0 != 0,
+            platform: false,
+            function: false,
+        };
+        let mut state = self.0.state.borrow_mut();
+        if state.last_reported_modifiers == Some(modifiers) {
+            return;
+        }
+        state.last_reported_modifiers = Some(modifiers);
+        drop(state);
+        self.handle_drag_drop(PlatformInput::ModifiersChanged(ModifiersChangedEvent {
+            modifiers,
+            capslock: current_capslock(),
+        }));
+    }
+
+    // NOHRS: dispatches a move of the drag and returns the effect the app
+    // set for where it is, among those the source allows; "Copy" when the
+    // app said nothing, which is all gpui ever answered.
+    fn dispatch_drag_move(&self, input: PlatformInput, allowed: DROPEFFECT) -> DROPEFFECT {
+        self.0.state.borrow_mut().file_drop_effect = None;
+        self.handle_drag_drop(input);
+        let wanted = match self.0.state.borrow().file_drop_effect {
+            Some(FileDropEffect::Move) => DROPEFFECT_MOVE,
+            Some(FileDropEffect::None) => return DROPEFFECT_NONE,
+            Some(FileDropEffect::Copy) | None => DROPEFFECT_COPY,
+        };
+        if allowed.0 & wanted.0 != 0 {
+            wanted
+        } else if allowed.0 & DROPEFFECT_COPY.0 != 0 {
+            DROPEFFECT_COPY
+        } else {
+            DROPEFFECT_NONE
+        }
+    }
 }
 
 #[allow(non_snake_case)]
@@ -881,11 +933,13 @@ impl IDropTarget_Impl for WindowsDragDropHandler_Impl {
     fn DragEnter(
         &self,
         pdataobj: windows::core::Ref<IDataObject>,
-        _grfkeystate: MODIFIERKEYS_FLAGS,
+        grfkeystate: MODIFIERKEYS_FLAGS,
         pt: &POINTL,
         pdweffect: *mut DROPEFFECT,
     ) -> windows::core::Result<()> {
+        self.report_drag_keys(grfkeystate);
         unsafe {
+            let allowed = *pdweffect;
             let idata_obj = pdataobj.ok()?;
             let config = FORMATETC {
                 cfFormat: CF_HDROP.0,
@@ -929,7 +983,7 @@ impl IDropTarget_Impl for WindowsDragDropHandler_Impl {
                     ),
                     paths: ExternalPaths(paths),
                 });
-                self.handle_drag_drop(input);
+                *pdweffect = self.dispatch_drag_move(input, allowed);
             } else {
                 *pdweffect = DROPEFFECT_NONE;
             }
@@ -943,17 +997,14 @@ impl IDropTarget_Impl for WindowsDragDropHandler_Impl {
 
     fn DragOver(
         &self,
-        _grfkeystate: MODIFIERKEYS_FLAGS,
+        grfkeystate: MODIFIERKEYS_FLAGS,
         pt: &POINTL,
         pdweffect: *mut DROPEFFECT,
     ) -> windows::core::Result<()> {
-        let mut cursor_position = POINT { x: pt.x, y: pt.y };
+        self.report_drag_keys(grfkeystate);
+        let screen_position = POINT { x: pt.x, y: pt.y };
+        let mut cursor_position = screen_position;
         unsafe {
-            *pdweffect = DROPEFFECT_COPY;
-            self.0
-                .drop_target_helper
-                .DragOver(&cursor_position, *pdweffect)
-                .log_err();
             ScreenToClient(self.0.hwnd, &mut cursor_position)
                 .ok()
                 .log_err();
@@ -966,7 +1017,15 @@ impl IDropTarget_Impl for WindowsDragDropHandler_Impl {
                 scale_factor,
             ),
         });
-        self.handle_drag_drop(input);
+        // NOHRS: the app is asked first, so the cursor and the drag image
+        // show the effect for where the pointer is now.
+        unsafe {
+            *pdweffect = self.dispatch_drag_move(input, *pdweffect);
+            self.0
+                .drop_target_helper
+                .DragOver(&screen_position, *pdweffect)
+                .log_err();
+        }
 
         Ok(())
     }
@@ -984,14 +1043,23 @@ impl IDropTarget_Impl for WindowsDragDropHandler_Impl {
     fn Drop(
         &self,
         pdataobj: windows::core::Ref<IDataObject>,
-        _grfkeystate: MODIFIERKEYS_FLAGS,
+        grfkeystate: MODIFIERKEYS_FLAGS,
         pt: &POINTL,
         pdweffect: *mut DROPEFFECT,
     ) -> windows::core::Result<()> {
+        // NOHRS: the drop handler reads the modifiers (Shift moves).
+        self.report_drag_keys(grfkeystate);
         let idata_obj = pdataobj.ok()?;
         let mut cursor_position = POINT { x: pt.x, y: pt.y };
         unsafe {
-            *pdweffect = DROPEFFECT_COPY;
+            // NOHRS: "Copy" even when the app moves. The app moves the files
+            // itself, after this returns; answering "Move" would have the
+            // source (Explorer) delete the originals too, racing that move.
+            // A spot the app refused stays refused.
+            *pdweffect = match self.0.state.borrow().file_drop_effect {
+                Some(FileDropEffect::None) => DROPEFFECT_NONE,
+                _ => DROPEFFECT_COPY,
+            };
             self.0
                 .drop_target_helper
                 .Drop(idata_obj, &cursor_position, *pdweffect)

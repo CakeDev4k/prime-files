@@ -1,6 +1,32 @@
-## Prime Files 0.3.8
+## Prime Files 0.3.9
 
 Explorador de arquivos para Windows, rápido, escrito em Rust.
+
+### Novidades da 0.3.9
+
+- **Desfazer e refazer tudo**: Ctrl+Z agora também desfaz renomear e criar pasta, além de excluir, mover e copiar. Ctrl+Y (ou Ctrl+Shift+Z) refaz o que foi desfeito, quantas vezes quiser. O botão direito mostra "Desfazer…" com o nome da ação e "Refazer".
+- **Renomear vários de uma vez**: com vários itens selecionados, F2 (ou Renomear) abre uma janela com duas formas: um nome com número ("Viagem (1).jpg", "Viagem (2).jpg"…) ou trocar um texto em todos os nomes. Uma lista mostra cada nome antigo ao lado do novo antes de aplicar, e um Ctrl+Z desfaz tudo junto.
+- **Vários itens na prévia de pasta**: Ctrl+clique e Shift+clique selecionam vários arquivos na lista do visualizador; arrastar um deles leva todos (para o Premiere, o Explorador, outra pasta).
+- **Busca rápida de qualquer programa**: um atalho abre a busca do computador por cima do programa em que você está, como o Listary. Pode ser Ctrl, Shift ou Alt duas vezes, ou qualquer combinação que você gravar. Numa janela de abrir ou salvar arquivo, o que você escolher vai direto para ela; em qualquer outro lugar, o arquivo abre no programa dele e a pasta abre no Prime Files.
+- **Janela de abrir do navegador mais completa**: quando o Prime Files escolhe o arquivo para um navegador, a barra de baixo tem o campo Nome (dá para digitar um nome ou caminho), os tipos de arquivo e os botões Abrir e Cancelar, como na janela do Windows.
+- **Prévia na busca do Ctrl+T**: clicar num vídeo ou som toca ali mesmo, com linha do tempo e forma de onda clicáveis, e botões para abrir, mostrar na pasta ou copiar. O botão direito num resultado abre o menu do Windows.
+- **Tela de boas-vindas nova**: sete passos curtos (aparência, janela, pastas, mídia, Windows, busca e um resumo), com uma prévia ao lado que mostra cada escolha antes de você chegar à janela. Ela volta por Configurações › Sobre.
+- **Configurações numa coluna só**: todas as seções numa página que rola, com a lista ao lado para pular entre elas. Prévias do layout, do modo compacto, do menu do botão direito e dos sons no hover.
+- **Mais cores de destaque**: 14 cores prontas e uma personalizada, com seletor e código #hex.
+- **O botão do meio leva para a aba nova** por padrão (dá para voltar ao jeito antigo em Configurações).
+- **Abre mais rápido**: menos trabalho de placa de vídeo e de fontes ao abrir a janela.
+- **Busca do computador mais rápida** a cada tecla digitada.
+
+### Correções da 0.3.9
+
+- O campo de renomear ficava torto em relação ao nome; agora é uma caixa centralizada na linha e, nos ícones, centrada embaixo da miniatura.
+- O vídeo aberto com Espaço agora ocupa o maior tamanho possível no formato dele e acompanha o tamanho da janela.
+- Zoom do visualizador: num PDF, aproximar com Ctrl+roda não joga mais a leitura de volta para o topo, e algumas imagens que não respondiam à roda agora aproximam.
+- Desfazer uma cópia com Ctrl+Z agora manda as cópias para a Lixeira.
+- Com o menu do botão direito aberto, cliques e a roda do mouse atravessavam para os arquivos atrás dele; agora só fecham o menu. Clicar no X com o menu aberto fecha a janela.
+- "Abrir local do arquivo" em atalhos (.lnk) abre a pasta do arquivo de verdade.
+
+## Prime Files 0.3.8
 
 ### Novidades da 0.3.8
 

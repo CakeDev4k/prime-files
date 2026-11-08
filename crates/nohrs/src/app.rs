@@ -27,6 +27,8 @@ impl NohrsApp {
         // itself recorded, which means the file sink uses its defaults rather
         // than anything the user set — see `docs/logging.md` §4.
         let _log_guard = init_logging_with_file(&FileLogConfig::default());
+        nohrs_pages::startup::logging_ready();
+        nohrs_pages::startup::mark("logging");
 
         // Load configuration before opening the window: defaults < file < env <
         // CLI (config.md §3). A missing file is created with defaults so users
@@ -48,6 +50,7 @@ impl NohrsApp {
         nohrs_pages::locale::detect_and_record();
         nohrs_core::i18n::apply_preference(&config.ui.language);
         nohrs_core::shortcuts::apply(&config.keybindings.bindings);
+        nohrs_pages::startup::mark("config");
 
         // GPUI drives the app (replacing `#[tokio::main]`; ADR 0004, async-runtime.md
         // §7). The search service is now tokio-free — its file watcher and progress
@@ -58,18 +61,22 @@ impl NohrsApp {
         let background = cli.background;
 
         Application::new().with_assets(Assets).run(move |app: &mut App| {
+            // Direct3D and DirectWrite are up by now (gpui's platform).
+            nohrs_pages::startup::mark("gpui");
             gpui_component::init(app);
             apply_theme_mode(config.theme.mode, app);
 
             // The name index is built once for the whole run and shared by every
             // launcher window, so summoning the launcher never waits on a scan.
-            let launcher = LauncherIndex::start(app);
-            // Two ways in (docs/launcher.md §2): a chord the OS routes to nohrs
-            // from any application, and one GPUI handles while nohrs is in front.
-            launcher.install_global_hotkey(app);
-            install_in_app_launcher_key(launcher.clone(), app);
-
             if launcher_only {
+                let launcher = LauncherIndex::start(app);
+                // Two ways in (docs/launcher.md §2): a chord the OS routes to
+                // nohrs from any application, and one GPUI handles while nohrs
+                // is in front. Only here: with the explorer, the quick search
+                // (`nohrs_pages::quick_search`) answers both, as Prime Files'
+                // own Listary, and the main window installs it.
+                launcher.install_global_hotkey(app);
+                install_in_app_launcher_key(launcher.clone(), app);
                 // Resident mode: nohrs is a background process whose only job is
                 // to answer the global hotkey, so it must outlive each dismissal
                 // of the launcher window.
@@ -123,6 +130,7 @@ impl NohrsApp {
                 config_path: config_path.clone(),
                 config_overrides: config_overrides.clone(),
             });
+            nohrs_pages::startup::mark("services");
             let opened = nohrs_pages::windows::open_window(
                 nohrs_pages::windows::WindowRequest { path: initial_path.clone(), bounds: None, background },
                 app,
@@ -130,6 +138,7 @@ impl NohrsApp {
             if let Err(error) = opened {
                 tracing::error!("failed to open main window: {error}");
             }
+            nohrs_pages::startup::mark("window");
         });
     }
 }

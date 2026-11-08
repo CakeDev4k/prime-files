@@ -200,6 +200,9 @@ pub struct ExplorerPage {
     synced_panes: bool,
     // `[explorer] background_tabs`: a tab opened from an item stays behind.
     background_tabs: bool,
+    /// `[explorer] open_from_other_apps`: where a folder sent by another
+    /// program opens (`ipc.rs`).
+    pub(crate) open_from_other_apps: nohrs_core::config::OpenFromOtherApps,
     /// The Ctrl+T search box, while it is open.
     pub(crate) palette: Option<super::palette::Palette>,
     /// The search box's pictures and size, kept between openings.
@@ -284,7 +287,8 @@ impl ExplorerPage {
             group,
             tab_subscriptions: HashMap::new(),
             synced_panes: false,
-            background_tabs: true,
+            background_tabs: false,
+            open_from_other_apps: Default::default(),
             palette: None,
             palette_media: Default::default(),
             ui: Ui::default(),
@@ -678,6 +682,7 @@ impl ExplorerPage {
         let enabling = explorer.synced_panes && !self.synced_panes;
         self.synced_panes = explorer.synced_panes;
         self.background_tabs = explorer.background_tabs;
+        self.open_from_other_apps = explorer.open_from_other_apps;
         if enabling {
             let active_id = self.group.active_pane().entity_id();
             let path = self.group.active_pane().read(cx).cwd.clone();

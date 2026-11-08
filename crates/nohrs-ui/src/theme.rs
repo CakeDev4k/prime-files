@@ -45,12 +45,19 @@ pub mod theme {
     /// palettes tune it separately, which a single base colour cannot.
     pub const NAMED_ACCENTS: &[(&str, Option<u32>)] = &[
         ("orange", None),
-        ("blue", Some(0x3B82F6)),
-        ("teal", Some(0x14B8A6)),
+        ("yellow", Some(0xEAB308)),
+        ("lime", Some(0x84CC16)),
         ("green", Some(0x22C55E)),
+        ("teal", Some(0x14B8A6)),
+        ("cyan", Some(0x06B6D4)),
+        ("blue", Some(0x3B82F6)),
+        ("indigo", Some(0x6366F1)),
         ("purple", Some(0x8B5CF6)),
+        ("magenta", Some(0xD946EF)),
         ("pink", Some(0xEC4899)),
         ("red", Some(0xEF4444)),
+        ("brown", Some(0xA16B47)),
+        ("gray", Some(0x94A3B8)),
     ];
 
     /// The colour a `theme.accent` value names: one of [`NAMED_ACCENTS`] or a

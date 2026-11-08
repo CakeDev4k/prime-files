@@ -637,3 +637,204 @@ seu teste (o de renomear na thread também reprova
 **Não conferido.** Nada visto na tela. A vantagem de renomear em segundo plano
 num compartilhamento travado não foi provocada; o renomear de caixa não foi
 testado em FAT32/exFAT nem no Google Drive (`I:`).
+
+---
+
+### 9. A busca do Everything a cada tecla (07/11/2026)
+
+**Sintoma.** Nenhum relatado; saiu da leitura de 07/11, pedida pelo dono
+("procure pontos que falha na otimização do Prime Files"). A busca global
+(`explorer/everything.rs`, a do Ctrl+T e a da barra) entrou em 05/11 e nenhuma
+passada a tinha medido. Três itens: ordenar todos os acertos para ler 5.000,
+montar um caminho por entrada nos filtros de caminho e a busca aproximada
+alocando por nome.
+
+**Base.** `explorer/everything_pass9.rs`, que guarda o código de antes
+**literal** (`old_gather`, `old_search`, `old_rank`, `old_subsequence`; só os
+nomes mudaram) para o benchmark rodar o código antigo e não uma reescrita
+(OTIMIZACAO.md §1.3):
+- `pass_9_speed`: a busca inteira, 18 consultas (larga, estreita, cada filtro,
+  termos de caminho, `em:`, sigma final, a aproximada), mediana de 5 rodadas
+  alternadas, release, num índice sintético de 2,5 milhões de nomes com a
+  profundidade de um disco real (`C:\Pasta\Users\editor\Documents\Projetos
+  2026\subNN\arquivo`). Recusa medir se os dois lados derem resultados
+  diferentes. `NOHRS_PASS9_INDEX=<everything.idx>` roda no índice salvo; não
+  rodou: o do dono tem 346 MB e a máquina tinha 0,4–3,6 GB livres.
+- `pass_9_parts_speed`: os itens 2 e 3 sozinhos, numa thread.
+
+Controle A/A antes de mudar (os dois lados com o código antigo): mesmos tempos,
+com até ~20% de ruído numa linha (`em:` 42 contra 51 ms). Entre rodadas o
+estado da máquina mudou o "antes" da mesma consulta de 155 para 43 ms (o
+Premiere e outra sessão disputando memória), então só a comparação **dentro**
+de uma rodada vale.
+
+#### Ordenar só o que vai ser lido
+
+`gather` ordenava todos os acertos e lia os 5.000 primeiros (a paleta mostra
+60). Uma letra casa quase todo nome do disco. Agora `in_order_while` separa os
+primeiros com `select_nth_unstable` (linear) e ordena só esse bloco; se a
+deduplicação (o mesmo arquivo na tabela do disco e na do vigia) pedir mais, o
+bloco seguinte, com o dobro do tamanho, sai do que sobrou. Cada acerto é único
+(a fonte e a posição fazem parte dele), então a ordem é exatamente a de
+ordenar tudo.
+
+Armadilha que o benchmark pegou: no passo da busca aproximada, a primeira
+versão passava um `keep` que sempre dizia "continue", e o laço acabava
+ordenando tudo em blocos dobrados: `rendr` ficou **mais lento** (25 → 35 ms)
+nas quatro rodadas até a correção. Nenhum teste de igualdade veria isso; o
+resultado era o mesmo.
+
+#### Caminho do pai montado uma vez (§7.6)
+
+Termo de caminho (`em:`, `pasta\`, `-node_modules\`) montava o caminho de cada
+entrada cujo nome passou: subir pelos pais, juntar, passar para minúsculas,
+duas alocações por entrada. Sem palavra de nome ao lado, isso vale para todas.
+Agora cada worker guarda o caminho do último pai (`LowerPaths`): a varredura
+adiciona os filhos de uma pasta juntos, então o próximo nome quase sempre tem o
+mesmo pai, e o caminho dele é o do pai, um `\` e o nome, num buffer
+reaproveitado.
+
+Minúsculas parte por parte dão o mesmo texto que minúsculas do caminho inteiro:
+a única regra do `to_lowercase` que olha os vizinhos (o sigma final) não
+atravessa o `\`. Há uma consulta com sigma no fim de pasta (`σας\ kick`) entre
+as de igualdade.
+
+Este item quase foi descartado por uma medida errada: a primeira consulta de
+caminho do benchmark não achava nada (`projeto\sub0`, numa árvore onde a pasta
+se chamava `Projetos 2026`) e media 15 ms dos dois lados. Uma consulta que
+**acha** (`2026\sub0`, 500 mil nomes) mostrou o custo real.
+
+#### Busca aproximada sem copiar o nome
+
+`subsequence` roda em todo nome que a passada aproximada olha (quando a exata
+dá menos de 20) e copiava o termo e o nome em `Vec<char>`. Agora percorre os
+dois no lugar, com iteradores.
+
+| Isolado, uma thread, 2,5 milhões de nomes | Antes | Depois |
+|---|---:|---:|
+| caminho em minúsculas de cada nome (item 2) | 495 ms | 19 ms |
+| teste aproximado de `rendr` em cada nome (item 3) | 470 ms | 57 ms |
+
+| Busca inteira, mesma rodada, 2,5 milhões | Antes | Depois |
+|---|---:|---:|
+| `a` (casa quase tudo) | 142 ms | 63 ms |
+| `ext:wav` | 46 ms | 25 ms |
+| `ext:wav -kick` | 45 ms | 26 ms |
+| `2026\sub0` (só caminho) | 44 ms | 26 ms |
+| `rendr` (exata vazia, entra a aproximada) | 21 ms | 15 ms |
+| `-sub1\ glow` | 21 ms | 14 ms |
+| `re` / `render` | 22 ms | 14 ms |
+| `bonk render`, `kick 0001`, `em:… wav` | 5–11 ms | iguais |
+
+O que os números sustentam: as consultas largas e as de caminho ficaram ~2×
+mais rápidas dentro de cada rodada, em todas as rodadas; as estreitas, que já
+eram baratas, não mudaram. Na busca inteira os itens 2 e 3 aparecem diluídos:
+são 12 threads, e o filtro de letras (`mask`) barra a maioria dos nomes antes
+deles.
+
+**Cobertura.**
+- `the_search_finds_what_it_found_before_pass_9`: as 18 consultas, código novo
+  contra o antigo literal, resultado e ordem idênticos; recusa consulta que
+  não acha nada (três delas não achavam e foram trocadas).
+- `the_hits_come_in_the_order_of_sorting_them_all` (tamanhos de 0 a 20 mil,
+  paradas sorteadas), `reading_the_first_hits_does_not_sort_them_all` (conta
+  as comparações: ler 5.000 de um milhão fica abaixo de 6 milhões; ordenar tudo
+  são ~20 milhões).
+- `a_folder_path_is_built_once_for_all_its_children` (cada caminho igual ao
+  antigo, e no máximo dois pais montados por pasta).
+- `the_near_miss_test_answers_as_before`: 200 mil pares sorteados (acentos,
+  sigma, separadores), nova contra antiga.
+- Mutantes: ver abaixo.
+
+**Não conferido.**
+- O índice real do dono (346 MB) não rodou: faltava memória livre.
+- Nada visto na tela; a busca é a mesma função, mas a tecla no Ctrl+T não foi
+  cronometrada.
+- O desvio do `keep` da aproximada não tem teste que o reprove; só o benchmark
+  o vê.
+- A varredura em si (os ~60 ms que sobram em `a`) e o "digitar estreita"
+  (§7.2) ficaram de fora: a busca aproximada não é monotônica, e o estreitamento
+  precisa da mesma exceção do PrimeSearch.
+
+**Lição.** Consulta de benchmark que não acha nada mede o caminho barato: aqui
+ela quase descartou um ganho de 26×. A §1.3 já diz "rápido porque não fez
+nada"; vale também para "barato porque não casou".
+
+---
+
+### 10. Abrir o app: um dispositivo Direct3D e a lista de fontes do cache (07/11/2026)
+
+**Sintoma.** Pedido do dono: "otimizar o tempo pra abrir a tela do Prime
+Files", com base no OTIMIZACAO.md, no Open Salamander e no EdenExplorer.
+
+**Base.** A linha do tempo das aberturas reais, tirada do log do próprio app
+(`~/.local/state/nohrs/logs`; t0 = "interface language detected"), em cinco
+aberturas de 07–08/11: GPU escolhida em 11–28 ms, "Created device" em
+260–470 ms, "Use Segoe UI" em 420–810 ms, primeira `fs.list_dir` em
+490–1.290 ms. Os dois maiores pedaços antes das fontes foram cronometrados em
+sondas (C++, no scratchpad da sessão) que fazem as mesmas chamadas do gpui num
+processo novo, sem janela, 5 rodadas alternadas, Premiere fechado.
+
+#### O gpui criava o dispositivo Direct3D duas vezes
+
+`get_adapter` criava um dispositivo D3D11 completo em cada placa só para ver
+se dava, soltava, e `DirectXDevices::new` criava de novo. Agora o dispositivo
+feito ao escolher a placa é o que fica (`third_party/gpui/.../directx_devices.rs`,
+marcado `NOHRS`). A placa que falha continua passando para a próxima, como
+antes.
+
+#### O DirectWrite conferia fontes novas a cada abertura
+
+`GetSystemFontCollection(.., checkForUpdates = true)` faz o DirectWrite
+procurar fontes instaladas desde a última leitura do cache. A abertura agora
+pede `false`; `update_system_font_collection`, chamada quando uma fonte não é
+achada, continua pedindo `true`.
+
+| Sonda (mediana de 5, processo novo) | Antes | Depois |
+|---|---:|---:|
+| Dispositivo D3D11 na RTX 5050 | 317 ms | 181 ms |
+| Lista de fontes do sistema (1.530 instaladas) | 134 ms | 1,8 ms |
+
+Mesmas 388 famílias de fontes nos dois casos.
+
+#### Marcas da abertura no log
+
+`nohrs_pages::startup` grava, no alvo `nohrs::startup`, os milissegundos
+desde a **criação do processo** (`GetProcessTimes`, não o `main`: o que o
+carregador faz antes do `main` também é espera) em cada etapa: `main`,
+`logging`, `config`, `gpui` (Direct3D e DirectWrite prontos), `services`,
+`window`, `first-render`, `first-frame` (o quadro seguinte ao primeiro
+desenho) e `first-listing`. As marcas feitas antes de o log existir ficam
+guardadas e saem quando ele sobe. É a base que faltava para a próxima
+passada: hoje ninguém sabe o que acontece antes do t0 nem nos 30–470 ms entre
+as fontes e a primeira lista.
+
+**Descartado.** O filtro por letra recalcula a chave de ordenação
+(`LCMapStringW`) de cada linha visível em `sort_entries_with`. A leitura de
+07/11 estimou 35–40 ms por letra numa pasta de 35 mil, tirando o número do
+`sort_timing` da passada 1 — que mede a ordenação inteira, não só as chaves.
+Medido (35 mil linhas já em ordem, mediana de 7 alternadas, 3 rodadas): fazer
+as chaves 5,2–6,1 ms; um cache de chave por nome, 3,4–3,7 ms (o `HashMap` de
+`String` custa quase o mesmo que o `LCMapStringW`). ~2 ms por letra não se
+sentem e o cache custava memória por nome; a mudança foi desfeita. Se o filtro
+de uma pasta grande parecer lento, o custo está em outro lugar (as cópias de
+`FileEntryDto` em `apply_filter`, o desenho), e é lá que se mede.
+
+Também medidos e sem custo de abertura: o syntect que cada aba
+carrega (`SyntaxService::new`, 1–2 ms; o campo nem é usado), abrir o índice
+tantivy e o escritor de 50 MB (1,2–1,5 ms, numa cópia do índice), o tamanho
+do exe (38 MB nasce em ~40 ms, um exe mínimo em ~23).
+
+**Cobertura.** Nenhum teste: é inicialização da plataforma, e os testes do
+gpui não criam dispositivo. A prova é o log da próxima abertura: "Created
+device" e "Use Segoe UI" devem chegar ~265 ms mais cedo.
+
+**Não conferido.**
+- O app não foi aberto com a mudança (o dono pediu para não testar na tela
+  dele); os números são das sondas, não do app.
+- Máquina com duas placas onde a primeira falha: o caminho de passar para a
+  próxima não foi exercitado.
+- Fonte instalada com o app aberto: depende de `update_system_font_collection`
+  ser chamada; não provado.
+- O que vem antes do t0 (processo, log, config) e os 30–470 ms entre as fontes
+  e a primeira lista continuam sem medida.

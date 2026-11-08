@@ -12,6 +12,9 @@ pub mod explorer;
 pub mod git;
 /// Picking files for a browser's "Open" dialog from Nohrs.
 pub mod file_dialog;
+pub mod picking_bar;
+pub mod quick_keys;
+pub mod quick_search;
 /// The local channel other programs (a second `nohrs.exe`, the Listary
 /// plugin) reach the running instance through.
 pub mod ipc;
@@ -34,6 +37,7 @@ pub mod s3;
 // removed search
 /// The settings page.
 pub mod settings;
+pub mod startup;
 mod settings_home;
 /// The right-click menu: the Windows context menu with Nohrs's entries.
 pub(crate) mod shell_menu;

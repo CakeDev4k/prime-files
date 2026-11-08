@@ -2,8 +2,6 @@ use crate::explorer::grouping::{self, GridRow};
 use crate::explorer::{ExplorerPane, zoom};
 use gpui::prelude::*;
 use gpui::*;
-use gpui_component::Sizable as _;
-use gpui_component::input::Input;
 use gpui_component::v_virtual_list;
 use gpui_component::{Icon, IconName};
 use nohrs_services::fs::listing::FileEntryDto;
@@ -413,19 +411,21 @@ fn render_grid_item(
                 .child(super::row::cloud_badge(state))
         }))
         .child(match rename_input {
-            Some(input) => div()
-                .w_full()
-                .h(px(20.0))
-                .flex_shrink_0()
-                .child(
-                    Input::new(&input)
-                        .small()
-                        .appearance(false)
-                        .px(px(0.0))
-                        .text_xs()
-                        .text_color(rgb(theme::fg())),
-                )
-                .into_any_element(),
+            // Centered under the icon like the name it replaces, as wide as
+            // what is typed (it grows with it) up to the tile's width.
+            Some(input) => {
+                let typed = input.read(cx).value().to_string();
+                let field_width = (typed_width(&typed, window) + 2.0 * super::row::RENAME_FIELD_INSET + 8.0)
+                    .clamp(56.0, tile.width - 2.0 * TILE_PADDING);
+                div()
+                    .w_full()
+                    .h(px(20.0))
+                    .flex_shrink_0()
+                    .flex()
+                    .justify_center()
+                    .child(super::row::rename_field(&input, true).w(px(field_width)))
+                    .into_any_element()
+            }
             // The whole name, centered under the icon as Explorer draws it.
             // Each line is laid out by `wrap_name` rather than by gpui's
             // wrapping, which does not break a run with no spaces
@@ -504,6 +504,18 @@ fn cap_lines(lines: &mut Vec<String>, max_lines: u32) {
         let kept: String = last.chars().take(chars.saturating_sub(2)).collect();
         *last = format!("{}…", kept.trim_end());
     }
+}
+
+/// How wide `text` is in the label's font. For the rename field, which
+/// changes on each key: not kept with the names' layouts.
+fn typed_width(text: &str, window: &Window) -> f32 {
+    if text.is_empty() {
+        return 0.0;
+    }
+    let style = window.text_style();
+    let font_size = rems(0.75).to_pixels(window.rem_size());
+    let layout = window.text_system().layout_line(text, font_size, &[style.to_run(text.len())], None);
+    f32::from(layout.width)
 }
 
 /// `name` shaped in the label's font, once per name.

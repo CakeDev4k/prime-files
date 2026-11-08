@@ -72,6 +72,13 @@ pub(crate) fn stop() {
 
 static PLAYED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
+/// Plays `path` on the hover player at the files' volume, replacing what
+/// plays: the settings page's samples, heard as a hovered file would be.
+pub(crate) fn play(path: String) {
+    PLAYED.store(true, std::sync::atomic::Ordering::Relaxed);
+    send(Command::Play(path, super::media::shared_volume()));
+}
+
 // The file playing and how far along, 0..=1, written by the player thread
 // while it plays: the listing colours the played part of the waveform from it.
 static PROGRESS: Mutex<Option<(String, f32)>> = Mutex::new(None);

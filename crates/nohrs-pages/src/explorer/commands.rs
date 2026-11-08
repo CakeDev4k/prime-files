@@ -50,12 +50,13 @@ impl ExplorerPane {
             Action::Paste => self.paste_into_cwd(window, cx),
             Action::Rename => {
                 if let Some(index) = self.active_row() {
-                    self.begin_rename(index, window, cx);
+                    self.rename_at(index, window, cx);
                 }
             }
             Action::Refresh => self.reload(cx),
             Action::Trash => self.trash_selection(cx),
             Action::Undo => self.undo_trash(cx),
+            Action::Redo => self.redo(cx),
             Action::DeletePermanently => self.request_permanent_delete(window, cx),
             Action::NewFolder => self.create_new_folder(window, cx),
             Action::GoUp => self.go_up(window, cx),

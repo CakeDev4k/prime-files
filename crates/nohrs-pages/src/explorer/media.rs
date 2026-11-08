@@ -108,14 +108,24 @@ impl MediaPreview {
     }
 }
 
-impl ExplorerPane {
-    /// Opens `path` in the preview's player, paused on its first frame.
-    pub(crate) fn open_media_preview(&mut self, path: String, cx: &mut Context<Self>) {
+impl MediaPreview {
+    /// Starts a player for `path`, paused on its first frame unless
+    /// `autoplay`. `slot` finds it again in the view that keeps it, so what
+    /// the player sends lands there; once the slot is empty the player ends.
+    /// The pane's preview and the search box's (`palette`) both use it.
+    pub(crate) fn start<V: 'static>(
+        path: String,
+        autoplay: bool,
+        slot: fn(&mut V) -> Option<&mut MediaPreview>,
+        cx: &mut Context<V>,
+    ) -> Option<Self> {
+        load_saved_volume();
         let (commands, command_receiver) = mpsc::channel();
         let (sender, receiver) = async_channel::unbounded();
         // Queued before the engine exists; the player applies it as it starts.
+        let volume = f64::from_bits(MEDIA_VOLUME.load(Ordering::Relaxed));
         commands
-            .send(Command::Volume(effective_volume(self.media_volume(), self.media_muted())))
+            .send(Command::Volume(effective_volume(volume, MEDIA_MUTED.load(Ordering::Relaxed))))
             .ok();
         if is_audio(&path) {
             // Its own reader on its own thread: playback starts at once and
@@ -134,12 +144,12 @@ impl ExplorerPane {
             .spawn(move || platform::run(&path, &command_receiver, &sender));
         if let Err(error) = spawned {
             tracing::error!("could not start the media player: {error}");
-            return;
+            return None;
         }
         let task = cx.spawn(async move |this, cx| {
             while let Ok(update) = receiver.recv().await {
-                let alive = this.update(cx, |pane, cx| {
-                    let Some(media) = pane.preview_media.as_mut() else {
+                let alive = this.update(cx, |view, cx| {
+                    let Some(media) = slot(view) else {
                         return false;
                     };
                     match update {
@@ -179,7 +189,7 @@ impl ExplorerPane {
             frame: None,
             position: 0.0,
             duration: 0.0,
-            playing: false,
+            playing: autoplay,
             has_video: false,
             error: None,
             preparing: None,
@@ -189,27 +199,56 @@ impl ExplorerPane {
         };
         // The engine takes Play before the file is open and starts once it
         // is, so autoplay needs no wait for the first state.
-        if self.preview_autoplay {
+        if autoplay {
             media.send(Command::Play);
         }
-        self.preview_media = Some(MediaPreview { playing: self.preview_autoplay, ..media });
+        Some(media)
+    }
+
+    /// Plays or pauses.
+    pub(crate) fn toggle(&mut self) {
+        self.playing = !self.playing;
+        self.send(if self.playing { Command::Play } else { Command::Pause });
+    }
+
+    /// Jumps to `fraction` (0..=1) of the length, once it is known.
+    pub(crate) fn seek(&mut self, fraction: f64) {
+        if self.duration > 0.0 {
+            self.position = fraction.clamp(0.0, 1.0) * self.duration;
+            self.send(Command::Seek(self.position));
+        }
+    }
+
+    /// Stops the player and frees its last frame.
+    pub(crate) fn close(self, cx: &mut gpui::App) {
+        if let Some(frame) = self.frame {
+            cx.drop_image(frame, None);
+        }
+    }
+}
+
+impl ExplorerPane {
+    /// Opens `path` in the preview's player, paused on its first frame.
+    pub(crate) fn open_media_preview(&mut self, path: String, cx: &mut Context<Self>) {
+        let Some(media) = MediaPreview::start(path, self.preview_autoplay, |pane: &mut Self| pane.preview_media.as_mut(), cx)
+        else {
+            return;
+        };
+        self.preview_media = Some(media);
         cx.notify();
     }
 
     /// Stops the player and frees its last frame, when the preview moves on.
     pub(crate) fn close_media_preview(&mut self, cx: &mut gpui::App) {
-        if let Some(media) = self.preview_media.take()
-            && let Some(frame) = media.frame
-        {
-            cx.drop_image(frame, None);
+        if let Some(media) = self.preview_media.take() {
+            media.close(cx);
         }
     }
 
     /// Plays or pauses the previewed media.
     pub(crate) fn toggle_media(&mut self, cx: &mut Context<Self>) {
         if let Some(media) = self.preview_media.as_mut() {
-            media.playing = !media.playing;
-            media.send(if media.playing { Command::Play } else { Command::Pause });
+            media.toggle();
             cx.notify();
         }
     }
@@ -219,8 +258,7 @@ impl ExplorerPane {
         if let Some(media) = self.preview_media.as_mut()
             && media.duration > 0.0
         {
-            media.position = fraction.clamp(0.0, 1.0) * media.duration;
-            media.send(Command::Seek(media.position));
+            media.seek(fraction);
             cx.notify();
         }
     }
@@ -696,6 +734,18 @@ mod platform {
     }
 
     pub fn waveform(_path: &str, _updates: &async_channel::Sender<Update>) {}
+}
+
+
+/// The volume a sound plays at outside a pane, 0 when muted: the settings
+/// page's samples sound as loud as the files do.
+pub(crate) fn shared_volume() -> f64 {
+    load_saved_volume();
+    if MEDIA_MUTED.load(Ordering::Relaxed) {
+        0.0
+    } else {
+        f64::from_bits(MEDIA_VOLUME.load(Ordering::Relaxed))
+    }
 }
 
 #[cfg(test)]

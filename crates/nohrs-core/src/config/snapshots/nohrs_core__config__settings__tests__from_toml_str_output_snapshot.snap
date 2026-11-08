@@ -28,7 +28,8 @@ expression: parsed
             synced_panes: false,
             restore_tabs: true,
             reveal_from_other_apps: true,
-            background_tabs: true,
+            background_tabs: false,
+            open_from_other_apps: NewTab,
         },
         compact: Compact {
             enabled: false,
@@ -92,7 +93,7 @@ expression: parsed
             backend: Auto,
         },
         launcher: Launcher {
-            hotkey: "Cmd+Shift+Space",
+            hotkey: "auto",
             position_remember: true,
         },
         diagnostics: Diagnostics {

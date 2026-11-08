@@ -187,9 +187,14 @@ impl DirectWriteTextSystem {
         let components = DirectWriteComponent::new(directx_devices)?;
         let system_font_collection = unsafe {
             let mut result = std::mem::zeroed();
+            // NOHRS: the font cache service's collection, without asking it to
+            // look for fonts installed since. That check cost ~130 ms of every
+            // start with 1,530 fonts (median 134 ms against 1.8 ms, same 388
+            // families). `update_system_font_collection` still asks, for a
+            // font installed while the app runs (third_party/gpui/NOHRS.md).
             components
                 .factory
-                .GetSystemFontCollection(false, &mut result, true)?;
+                .GetSystemFontCollection(false, &mut result, false)?;
             result.unwrap()
         };
         let custom_font_set = unsafe { components.builder.CreateFontSet()? };

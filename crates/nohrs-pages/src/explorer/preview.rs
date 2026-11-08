@@ -170,7 +170,11 @@ fn read_preview(path: &str, show_hidden: bool, edge: u32) -> PreviewOutcome {
         return PreviewOutcome::Model;
     }
     if extension_of(path) == "zip" {
-        return match super::preview_listing::read_zip(std::path::Path::new(path)) {
+        // A zip the built-in reader refuses (split, or a header it does not
+        // know) is often one 7-Zip lists.
+        return match super::preview_listing::read_zip(std::path::Path::new(path))
+            .or_else(|_| super::preview_listing::read_archive(std::path::Path::new(path)))
+        {
             Ok(listing) => PreviewOutcome::Listing(listing),
             Err(_) => PreviewOutcome::Unsupported,
         };

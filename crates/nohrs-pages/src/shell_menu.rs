@@ -338,6 +338,40 @@ pub fn show(request: &Request) -> Choice {
     platform::show(request)
 }
 
+/// Where a `.lnk` points, as a path on disk; `None` for anything else, a
+/// shortcut that cannot be read, or one to a place with no path (an app from
+/// the Store, a Control Panel item).
+#[cfg(windows)]
+#[allow(unsafe_code)]
+pub fn shortcut_target(path: &str) -> Option<String> {
+    use windows::Win32::System::Com::{
+        CLSCTX_INPROC_SERVER, COINIT_APARTMENTTHREADED, CoCreateInstance, CoInitializeEx, IPersistFile, STGM_READ,
+    };
+    use windows::Win32::UI::Shell::{IShellLinkW, ShellLink};
+    use windows::core::{HSTRING, Interface};
+
+    if !path.to_lowercase().ends_with(".lnk") {
+        return None;
+    }
+    // Already initialized is the ordinary case on the UI thread.
+    if let Err(error) = unsafe { CoInitializeEx(None, COINIT_APARTMENTTHREADED) }.ok() {
+        tracing::debug!("CoInitializeEx: {error}");
+    }
+    let link: IShellLinkW = unsafe { CoCreateInstance(&ShellLink, None, CLSCTX_INPROC_SERVER) }.ok()?;
+    let file: IPersistFile = link.cast().ok()?;
+    unsafe { file.Load(&HSTRING::from(path), STGM_READ) }.ok()?;
+    let mut buffer = [0u16; 32768];
+    unsafe { link.GetPath(&mut buffer, std::ptr::null_mut(), 0) }.ok()?;
+    let length = buffer.iter().position(|&unit| unit == 0).unwrap_or(buffer.len());
+    let target = String::from_utf16_lossy(&buffer[..length]);
+    (!target.is_empty()).then_some(target)
+}
+
+#[cfg(not(windows))]
+pub fn shortcut_target(_path: &str) -> Option<String> {
+    None
+}
+
 #[cfg(windows)]
 #[allow(unsafe_code)]
 mod platform {
@@ -987,6 +1021,7 @@ mod platform {
     fn wide(text: &str) -> Vec<u16> {
         text.encode_utf16().chain(std::iter::once(0)).collect()
     }
+
 }
 
 #[cfg(not(windows))]

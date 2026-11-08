@@ -176,11 +176,8 @@ pub fn render_quick_look(
         return None;
     }
     let content = render(page, window, cx);
-    // Inset rather than a percentage: a percentage size under a centring
-    // parent comes out 0 in this layout engine.
-    let bounds = window.viewport_size();
-    let inset_x = (f32::from(bounds.width) * 0.07).clamp(16.0, 120.0);
-    let inset_y = (f32::from(bounds.height) * 0.06).clamp(16.0, 80.0);
+    let (inset_x, inset_y, right, bottom) = quick_look_insets(page, window);
+    let measured = page.quick_look_bounds.clone();
     Some(
         div()
             .id("quick-look")
@@ -192,14 +189,15 @@ pub fn render_quick_look(
                 MouseButton::Left,
                 cx.listener(|this, _event, _window, cx| this.close_quick_look(cx)),
             )
+            .child(crate::dock::measure(measured))
             .child(
                 div()
                     .id("quick-look-card")
                     .absolute()
                     .top(px(inset_y))
-                    .bottom(px(inset_y))
+                    .bottom(px(bottom))
                     .left(px(inset_x))
-                    .right(px(inset_x))
+                    .right(px(right))
                     .flex()
                     .flex_col()
                     .overflow_hidden()
@@ -214,6 +212,45 @@ pub fn render_quick_look(
             )
             .into_any_element(),
     )
+}
+
+/// Where the quick look's card sits in the room it covers: its (left, top,
+/// right, bottom) insets. Insets rather than a size: a percentage size under
+/// a centring parent comes out 0 in this layout engine.
+///
+/// A video gets a card of its own shape, as large as the room allows and
+/// centred, so the picture fills it at any window size; the fixed margins of
+/// everything else left a wide video in a tall card (or the other way round)
+/// small in the middle of empty bars.
+fn quick_look_insets(page: &ExplorerPane, window: &Window) -> (f32, f32, f32, f32) {
+    let measured = page.quick_look_bounds.get().size;
+    let room = if measured.width > px(0.0) && measured.height > px(0.0) { measured } else { window.viewport_size() };
+    let (width, height) = (f32::from(room.width), f32::from(room.height));
+    let inset_x = (width * 0.07).clamp(16.0, 120.0);
+    let inset_y = (height * 0.06).clamp(16.0, 80.0);
+    let fixed = (inset_x, inset_y, inset_x, inset_y);
+
+    let Some(frame) = page.preview_media.as_ref().and_then(|media| media.frame.as_ref()) else {
+        return fixed;
+    };
+    let frame = frame.size(0);
+    if frame.width.0 == 0 || frame.height.0 == 0 {
+        return fixed;
+    }
+    let aspect = frame.width.0 as f32 / frame.height.0 as f32;
+    // The card's header and the player's bar of controls, with their lines.
+    let chrome = super::listing::list::HEADER_HEIGHT + 41.0 + 2.0;
+    // A video can take more of the room than the fixed card did.
+    let margin = 24.0_f32.min(width / 10.0).min(height / 10.0);
+    let most_w = (width - 2.0 * margin).max(1.0);
+    let most_h = (height - 2.0 * margin - chrome).max(1.0);
+    let video_w = most_w.min(most_h * aspect);
+    // Wide enough for the controls.
+    let card_w = video_w.max(420.0_f32.min(most_w));
+    let card_h = video_w / aspect + chrome;
+    let left = ((width - card_w) / 2.0).max(0.0);
+    let top = ((height - card_h) / 2.0).max(0.0);
+    (left, top, left, top)
 }
 
 // Calculate the maximum line width in characters for horizontal scroll sizing
@@ -535,8 +572,12 @@ fn with_preview_wheel(content: AnyElement, cx: &mut Context<ExplorerPane>) -> An
                         // text scrolls with it and zooms with Ctrl.
                         let plain = {
                             let page = entity.read(cx);
+                            // The decoded picture too: it was left out, and a
+                            // picture shown that way scrolled nothing and
+                            // zoomed nothing with the wheel.
                             page.preview_model.is_some()
                                 || page.preview_image_path.is_some()
+                                || page.preview_picture.is_some()
                                 || page.preview_media.is_some()
                         };
                         if !event.modifiers.secondary() && !plain {
@@ -617,8 +658,25 @@ impl ExplorerPane {
                 .map_or(point(bounds.size.width / 2.0, bounds.size.height / 2.0), |anchor| {
                     anchor - bounds.origin
                 });
-            self.preview_scroll
-                .set_offset(anchored_offset(self.preview_scroll.offset(), bounds.size, local, old, zoom));
+            // What scrolls now, as laid out at the old zoom, and how it grows.
+            let reach = self.preview_scroll.max_offset();
+            let content = size(bounds.size.width + reach.width, bounds.size.height + reach.height);
+            let grows = zoom.max(1.0) / old.max(1.0);
+            let growth = if self.preview_pdf.is_some() {
+                // The pages are as wide as the zoom says, below 1 too.
+                (zoom / old, zoom / old)
+            } else if self.preview_is_waveform() {
+                (grows, 1.0)
+            } else {
+                (grows, grows)
+            };
+            self.preview_scroll.set_offset(anchored_offset_in(
+                self.preview_scroll.offset(),
+                bounds.size,
+                content,
+                local,
+                growth,
+            ));
             self.draw_model(cx);
         }
         cx.notify();
@@ -650,6 +708,7 @@ impl ExplorerPane {
 /// coordinates) under it when the zoom goes from `old` to `new`. Content only
 /// grows past the view above 1, so the scale between the two is that of the
 /// part above 1; the result stays within what the grown content can scroll.
+#[cfg(test)]
 fn anchored_offset(
     offset: Point<Pixels>,
     view: Size<Pixels>,
@@ -658,15 +717,31 @@ fn anchored_offset(
     new: f32,
 ) -> Point<Pixels> {
     let factor = new.max(1.0) / old.max(1.0);
-    let axis = |offset: Pixels, view: Pixels, anchor: Pixels| {
-        let (offset, view, anchor) = (f32::from(offset), f32::from(view), f32::from(anchor));
+    let content = size(view.width * old.max(1.0), view.height * old.max(1.0));
+    anchored_offset_in(offset, view, content, anchor, (factor, factor))
+}
+
+/// [`anchored_offset`] for content of any size (`content`, before the zoom)
+/// that grows by `growth` along each axis. A PDF is many views tall and
+/// grows in both; a waveform grows only sideways. Taking the content as the
+/// view's size times the zoom held a tall PDF's offset to a view's height or
+/// two, and every zoom with the wheel threw the reading back to the top.
+fn anchored_offset_in(
+    offset: Point<Pixels>,
+    view: Size<Pixels>,
+    content: Size<Pixels>,
+    anchor: Point<Pixels>,
+    growth: (f32, f32),
+) -> Point<Pixels> {
+    let axis = |offset: Pixels, view: Pixels, content: Pixels, anchor: Pixels, factor: f32| {
+        let (offset, view, content, anchor) = (f32::from(offset), f32::from(view), f32::from(content), f32::from(anchor));
         let under = anchor - offset;
-        let most = view * (new.max(1.0) - 1.0);
+        let most = (content * factor - view).max(0.0);
         px((anchor - under * factor).clamp(-most, 0.0))
     };
     point(
-        axis(offset.x, view.width, anchor.x),
-        axis(offset.y, view.height, anchor.y),
+        axis(offset.x, view.width, content.width, anchor.x, growth.0),
+        axis(offset.y, view.height, content.height, anchor.y, growth.1),
     )
 }
 
@@ -957,16 +1032,24 @@ fn render_media(page: &ExplorerPane, cx: &mut Context<ExplorerPane>) -> AnyEleme
             (Some(error), _) => screen.child(
                 div().px(px(16.0)).text_sm().text_color(rgb(theme::muted())).child(error.clone()),
             ),
-            (None, Some(frame)) => screen.child(zoom_frame(
-                page,
-                "preview-media-frame",
-                img(ImageSource::Render(frame.clone()))
-                    .size_full()
-                    .object_fit(gpui::ObjectFit::Contain)
-                    .into_any_element(),
-                false,
-                cx,
-            )),
+            (None, Some(frame)) => {
+                // Stretched, as the waveform below: the frame then takes the
+                // screen's whole width at any size of the panel or the quick
+                // look, instead of depending on how a percentage width
+                // resolves under `items_center`.
+                let mut screen = screen;
+                screen.style().align_items = Some(gpui::AlignItems::Stretch);
+                screen.child(zoom_frame(
+                    page,
+                    "preview-media-frame",
+                    img(ImageSource::Render(frame.clone()))
+                        .size_full()
+                        .object_fit(gpui::ObjectFit::Contain)
+                        .into_any_element(),
+                    false,
+                    cx,
+                ))
+            }
             (None, None) if !media.peaks.is_empty() => {
                 // Stretched across the screen rather than `w_full`: under the
                 // screen's `items_center` a percentage width came out 0 and the
@@ -1386,26 +1469,101 @@ fn render_listing(
 
 // A press on an item of the listing, which becomes a drag out if the pointer
 // moves (`drag::preview_drag_moved`, wired on the listing around the items).
-// An archive's entries are not on disk, so there is nothing to hand over.
+// Archive entries are staged to a temporary file before the native drag.
 fn listing_press(
     item: &crate::explorer::preview_listing::ListingItem,
     cx: &mut Context<ExplorerPane>,
 ) -> Option<impl Fn(&MouseDownEvent, &mut Window, &mut App) + 'static> {
-    let path = item.path.clone()?;
+    let archive_member = item.archive_member.clone();
+    let path = item.path.clone();
+    let item_is_dir = item.is_dir;
+    if archive_member.is_none() && path.is_none() {
+        return None;
+    }
     Some(cx.listener(move |this, event: &MouseDownEvent, _window, _cx| {
-        this.press_preview_item(&path, event.position);
+        if let Some((archive, member)) = &archive_member {
+            this.press_preview_archive_item(archive.clone(), member.clone(), item_is_dir, event.position);
+        } else if let Some(path) = &path {
+            this.press_preview_item(path, event.position);
+        }
     }))
 }
 
-// What a click on an item of the listing does: open it in the preview. An
-// archive's entries are not on disk, so they have nothing to open.
+// Whether `item` is the archive entry a drag out is still extracting.
+fn extracting_entry(page: &ExplorerPane, item: &crate::explorer::preview_listing::ListingItem) -> bool {
+    page.archive_extracting.is_some() && page.archive_extracting == item.archive_member
+}
+
+// A thin stripe sweeping along the bottom of an entry being extracted. There
+// is no percentage to show (7-Zip runs out of sight, and a zip entry's own
+// inflate is too quick to need one); what the eye needs is that it is still
+// going, and when it stops.
+fn extracting_bar(ix: usize) -> AnyElement {
+    div()
+        .absolute()
+        .left_0()
+        .right_0()
+        .bottom_0()
+        .h(px(2.0))
+        .overflow_hidden()
+        .rounded(px(1.0))
+        .child(
+            div()
+                .absolute()
+                .top_0()
+                .h_full()
+                .w(relative(0.35))
+                .bg(rgb(theme::accent()))
+                .with_animation(
+                    ("archive-extracting-bar", ix),
+                    Animation::new(std::time::Duration::from_millis(1100)).repeat(),
+                    |bar, delta| bar.left(relative(-0.35 + 1.35 * delta)),
+                ),
+        )
+        .into_any_element()
+}
+
+// "Extracting…" where the entry's size was, pulsing with the stripe.
+fn extracting_label(ix: usize) -> AnyElement {
+    div()
+        .flex_shrink_0()
+        .text_xs()
+        .text_color(rgb(theme::accent()))
+        .child(t!("Extraindo…"))
+        .with_animation(
+            ("archive-extracting-label", ix),
+            Animation::new(std::time::Duration::from_millis(1100))
+                .repeat()
+                .with_easing(pulsating_between(0.45, 1.0)),
+            |label, delta| label.opacity(delta),
+        )
+        .into_any_element()
+}
+
+// What a click on an item of the listing does: open it in the preview; with
+// Ctrl, pick it (or drop it) to drag out with others; with Shift, pick
+// everything from the last item clicked to it. An archive's entries are not
+// on disk, so they have nothing to open or pick.
 fn listing_click(
+    listing: &std::rc::Rc<crate::explorer::preview_listing::PreviewListing>,
     item: &crate::explorer::preview_listing::ListingItem,
+    ix: usize,
     cx: &mut Context<ExplorerPane>,
 ) -> Option<impl Fn(&ClickEvent, &mut Window, &mut App) + 'static> {
     let path = item.path.clone()?;
-    Some(cx.listener(move |this, _event: &ClickEvent, window, cx| {
-        this.preview_into(path.clone(), window, cx);
+    let listing = listing.clone();
+    Some(cx.listener(move |this, event: &ClickEvent, window, cx| {
+        let modifiers = event.modifiers();
+        if modifiers.shift {
+            this.preview_listing_selection.extend_to(&listing, ix);
+            cx.notify();
+        } else if modifiers.secondary() {
+            this.preview_listing_selection.toggle(&listing, ix);
+            cx.notify();
+        } else {
+            this.preview_listing_selection.clear();
+            this.preview_into(path.clone(), window, cx);
+        }
     }))
 }
 
@@ -1434,11 +1592,14 @@ fn render_listing_rows(
                         .path
                         .as_deref()
                         .and_then(|path| page.thumbnails.icon(path, item.is_dir, icon_px, cx));
-                    let click = listing_click(&item, cx);
+                    let extracting = extracting_entry(page, &item);
+                    let click = listing_click(&rows, &item, ix, cx);
                     let press = listing_press(&item, cx);
+                    let picked = page.preview_listing_selection.contains(&rows, ix);
                     Some(
                         div()
                             .id(("preview-listing-row", ix))
+                            .when(picked, |row| row.bg(rgb(theme::accent_subtle())))
                             .when_some(press, |row, press| row.on_mouse_down(MouseButton::Left, press))
                             .h(px(row))
                             .w_full()
@@ -1450,6 +1611,7 @@ fn render_listing_rows(
                             .rounded(px(4.0))
                             .text_size(px(13.0 * zoom.min(2.0)))
                             .hover(|style| style.bg(rgb(theme::bg_hover())))
+                            .when(item.archive_member.is_some(), |row| row.cursor_pointer())
                             .when_some(click, |row, click| row.cursor_pointer().on_click(click))
                             .child(listing_icon(&item, shell_icon, icon))
                             .child(
@@ -1462,7 +1624,7 @@ fn render_listing_rows(
                                     .whitespace_nowrap()
                                     .child(item.name.clone()),
                             )
-                            .when_some(item.size, |row, bytes| {
+                            .when_some(item.size.filter(|_| !extracting), |row, bytes| {
                                 row.child(
                                     div()
                                         .flex_shrink_0()
@@ -1470,6 +1632,9 @@ fn render_listing_rows(
                                         .text_color(rgb(theme::muted()))
                                         .child(crate::explorer::preview_listing::human_size(bytes)),
                                 )
+                            })
+                            .when(extracting, |row| {
+                                row.relative().child(extracting_label(ix)).child(extracting_bar(ix))
                             })
                             .into_any_element(),
                     )
@@ -1532,11 +1697,14 @@ fn render_listing_grid(
                                 page.thumbnails.get(path, thumb_px, cx)
                             }
                         });
-                        let click = listing_click(&item, cx);
+                        let extracting = extracting_entry(page, &item);
+                        let click = listing_click(&rows, &item, ix, cx);
                         let press = listing_press(&item, cx);
+                        let picked = page.preview_listing_selection.contains(&rows, ix);
                         Some(
                             div()
                                 .id(("preview-listing-cell", ix))
+                                .when(picked, |cell| cell.bg(rgb(theme::accent_subtle())))
                                 .when_some(press, |cell, press| cell.on_mouse_down(MouseButton::Left, press))
                                 .w(px(cell_w))
                                 .h(px(cell_h))
@@ -1548,6 +1716,8 @@ fn render_listing_grid(
                                 .p(px(GAP))
                                 .rounded(px(6.0))
                                 .hover(|style| style.bg(rgb(theme::bg_hover())))
+                                .when(item.archive_member.is_some(), |cell| cell.cursor_pointer())
+                                .when(extracting, |cell| cell.relative().child(extracting_bar(ix)))
                                 .when_some(click, |cell, click| cell.cursor_pointer().on_click(click))
                                 .child(
                                     div()
@@ -1651,5 +1821,21 @@ mod zoom_anchor_tests {
         assert_eq!(corner, point(px(-400.0), px(-300.0)));
         let back = anchored_offset(point(px(-400.0), px(-300.0)), view, point(px(0.0), px(0.0)), 2.0, 1.0);
         assert_eq!(back, point(px(0.0), px(0.0)));
+    }
+
+    // A PDF ten views tall, read halfway down: zooming in keeps the line
+    // under the mouse there instead of throwing the reading to the top.
+    #[test]
+    fn a_tall_document_keeps_its_place() {
+        use super::anchored_offset_in;
+        let view = size(px(400.0), px(300.0));
+        let content = size(px(400.0), px(3000.0));
+        let offset = point(px(0.0), px(-1500.0));
+        let anchor = point(px(200.0), px(150.0));
+        let after = anchored_offset_in(offset, view, content, anchor, (1.2, 1.2));
+        let line_before = 150.0 + 1500.0;
+        let line_after = (150.0 - f32::from(after.y)) / 1.2;
+        assert!((line_before - line_after).abs() < 0.5, "{line_before} against {line_after}");
+        assert!(f32::from(after.y) < -1500.0, "still far down: {after:?}");
     }
 }

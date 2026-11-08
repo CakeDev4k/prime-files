@@ -1,6 +1,7 @@
 mod audio_session;
+mod batch_rename;
 pub(crate) mod commands;
-mod palette;
+pub(crate) mod palette;
 pub(crate) mod context_menu;
 mod creative;
 mod documents;
@@ -52,6 +53,7 @@ pub use state::ExplorerPane;
 // Part of `status_for_footer`'s signature, so it has to travel with it. The rest
 // of `types` stays internal.
 pub use types::StatusLevel;
+pub(crate) use navigation::open_with_default;
 /// The name the footer shows for a listing zoom value.
 pub use zoom::label as zoom_label;
 /// The footer zoom menu's views.

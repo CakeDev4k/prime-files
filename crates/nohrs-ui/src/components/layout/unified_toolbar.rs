@@ -1,4 +1,3 @@
-use nohrs_core::t;
 use crate::theme::theme;
 use gpui::{
     Action, Context, IntoElement, Pixels, Render, Window, WindowControlArea, div, prelude::*, px,
@@ -7,7 +6,6 @@ use gpui::{
 use gpui_component::{
     Icon, IconName, Sizable, Size,
     button::{Button, ButtonRounded, ButtonVariant, ButtonVariants},
-    menu::DropdownMenu,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -17,8 +15,8 @@ use std::fmt;
 pub const UNIFIED_TOOLBAR_HEIGHT: Pixels = px(36.0);
 const ACCOUNT_BUTTON_ID: &str = "unified-toolbar-account-button";
 
-/// Build the unified toolbar element: a draggable window region plus the
-/// settings button with its menu.
+/// Build the unified toolbar element: a draggable window region plus a button
+/// that opens settings directly.
 pub fn unified_toolbar<V: Render>(
     window: &Window,
     _cx: &mut Context<V>,
@@ -45,7 +43,7 @@ pub fn unified_toolbar<V: Render>(
         .child(title_bar_controls(window))
 }
 
-/// The right end of the title bar: the settings button with its menu and,
+/// The right end of the title bar: the settings button and,
 /// on Windows, minimize, maximize and close. Drawn by the toolbar above and,
 /// when the explorer has one pane, at the end of its tab row, which then is
 /// the title bar, as in the Explorer of Windows 11.
@@ -60,23 +58,8 @@ pub fn title_bar_controls(window: &Window) -> impl IntoElement + use<> {
         .compact()
         .with_variant(ButtonVariant::Ghost)
         .with_size(Size::Small)
-        .dropdown_menu(move |menu, _window, _cx| {
-            menu.min_w(px(200.0))
-                .menu_with_icon(
-                    t!("Configurações"),
-                    Icon::new(IconName::Settings),
-                    AccountMenuAction::boxed(AccountMenuCommand::Settings),
-                )
-                .menu_with_icon(
-                    t!("Atalhos"),
-                    Icon::new(IconName::CaseSensitive),
-                    AccountMenuAction::boxed(AccountMenuCommand::Keymap),
-                )
-                .menu_with_icon(
-                    t!("Temas"),
-                    Icon::new(IconName::Palette),
-                    AccountMenuAction::boxed(AccountMenuCommand::Themes),
-                )
+        .on_click(|_, window, cx| {
+            window.dispatch_action(AccountMenuAction::boxed(AccountMenuCommand::Settings), cx);
         });
 
     div()

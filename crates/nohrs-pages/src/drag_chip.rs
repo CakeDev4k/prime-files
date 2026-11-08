@@ -27,17 +27,20 @@ struct Chip {
 
 impl Render for Chip {
     fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
-        div().size_full().flex().items_center().child(
+        div().size_full().px(px(3.0)).py(px(4.0)).flex().items_center().child(
             div()
-                .px(px(10.0))
-                .py(px(4.0))
-                .rounded(px(6.0))
+                .w_full()
+                .h_full()
+                .px(px(12.0))
+                .rounded(px(8.0))
+                .flex()
+                .items_center()
                 .bg(rgb(theme::toolbar_active_bg()))
-                .border_1()
-                .border_color(rgb(theme::border()))
                 .text_color(rgb(theme::toolbar_active_text()))
                 .text_sm()
                 .whitespace_nowrap()
+                .overflow_hidden()
+                .text_ellipsis()
                 .child(self.title.clone()),
         )
     }
@@ -50,11 +53,11 @@ pub fn show(title: SharedString, cx: &mut App) {
         return;
     };
     // Wide enough for the name; the chip's own box is drawn inside it.
-    let width = (title.chars().count() as f32 * 7.5 + 28.0).clamp(60.0, 320.0);
+    let width = (title.chars().count() as f32 * 8.5 + 34.0).clamp(72.0, 360.0);
     let scale = platform::scale_at(cursor).max(1.0);
     let origin = point(px(cursor.0 as f32 / scale + 14.0), px(cursor.1 as f32 / scale + 10.0));
     let options = WindowOptions {
-        window_bounds: Some(WindowBounds::Windowed(Bounds::new(origin, size(px(width), px(30.0))))),
+        window_bounds: Some(WindowBounds::Windowed(Bounds::new(origin, size(px(width), px(38.0))))),
         titlebar: None,
         focus: false,
         show: true,

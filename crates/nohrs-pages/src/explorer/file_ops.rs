@@ -141,6 +141,17 @@ fn write_system_clipboard(_mode: ClipMode, _paths: &[PathBuf], text: String, cx:
     cx.write_to_clipboard(ClipboardItem::new_string(text));
 }
 
+/// Copies `paths` as Ctrl+C in a listing does, from outside a pane (the
+/// search box): pasted here or in the Explorer, the files are copied.
+pub(crate) fn copy_files(paths: &[PathBuf], cx: &mut App) {
+    if paths.is_empty() {
+        return;
+    }
+    let text = paths.iter().map(|path| path.to_string_lossy()).collect::<Vec<_>>().join("\n");
+    write_system_clipboard(ClipMode::Copy, paths, text, cx);
+    ExplorerClipboard::write(Some((ClipMode::Copy, paths.to_vec())), cx);
+}
+
 // Whether the explorer's own clipboard is still the newest thing copied: after a
 // copy in another program, Paste takes that instead.
 #[cfg(all(windows, not(test)))]
@@ -590,6 +601,11 @@ impl OpReport {
         self.failures.push(message);
     }
 
+    #[cfg(test)]
+    pub(crate) fn failures(&self) -> &[String] {
+        &self.failures
+    }
+
     // Records whichever of the two an [`Applied`] turned out to be.
     fn applied(&mut self, applied: Applied) {
         if let Applied::WithLeftover(left) = applied {
@@ -918,7 +934,7 @@ impl ExplorerPane {
     // outcome owning process-wide state is not dropped along with the pane that
     // started the work. It returns the paths the batch put somewhere: the pane
     // selects the ones in its folder and asks for their pictures again.
-    fn run_fs_op_with<T, F, G>(
+    pub(crate) fn run_fs_op_with<T, F, G>(
         &mut self,
         total: usize,
         success_label: String,
@@ -1098,86 +1114,213 @@ impl ExplorerPane {
         self.preview_selection_pending = false;
     }
 
-    /// Ctrl+Z: undoes the last deletion (issue #8) or move — a cut and paste,
-    /// or files dragged to another folder (issue #28). Batches from every tab
+    /// Ctrl+Z: takes back the last batch — a deletion (issue #8), a move or a
+    /// drop (issue #28), a copy (issue #33), a rename or a new folder. What is
+    /// taken back goes on the redo list, for Ctrl+Y. Batches from every tab
     /// share one history, newest first, as Explorer's do.
     pub(crate) fn undo_trash(&mut self, cx: &mut Context<Self>) {
-        let batch = match with_history(Vec::pop).flatten() {
-            Some(Undo::Trashed(batch)) => batch,
-            Some(Undo::Moved(moves)) => {
-                self.undo_moves(moves, cx);
-                return;
-            }
+        match with_history(|history| history.undo.pop()).flatten() {
+            Some(batch) => self.replay(batch, true, cx),
             None => {
                 self.set_status(StatusLevel::Info, t!("Nada para desfazer").to_string());
                 cx.notify();
-                return;
             }
-        };
-        let total = batch.len();
-        let label = i18n::plural(total, k!("{n} item restaurado"), k!("{n} itens restaurados"));
-        self.run_fs_op(total, label, cx, move || {
-            // On a thread of its own: the `trash` crate initializes COM as a
-            // single-threaded apartment and panics on a pool thread already in
-            // the multithreaded one, and a panic on gpui's pool aborts the app
-            // (as for deleting, `ops::os_trash_delete`).
-            let restored = std::thread::Builder::new().name("trash-restore".into()).spawn(move || restore_batch(batch));
-            match restored.map(|thread| thread.join()) {
-                Ok(Ok(report)) => report,
-                Ok(Err(_)) | Err(_) => {
-                    let mut report = OpReport::default();
-                    report.failed(t!("A restauração falhou").to_string());
-                    report
-                }
-            }
-        });
+        }
     }
 
-    // Moves each item of a move back where it came from. A name taken there
-    // since is left alone, as the Explorer does, and said in the footer.
-    fn undo_moves(&mut self, moves: Vec<(PathBuf, PathBuf)>, cx: &mut Context<Self>) {
-        let total = moves.len();
-        let label = i18n::plural(total, k!("{n} item movido de volta"), k!("{n} itens movidos de volta"));
+    /// Ctrl+Y (or Ctrl+Shift+Z): does again what Ctrl+Z took back. A new
+    /// operation empties the list, as in any editor: redoing over it would
+    /// act on files that are no longer where the batch left them.
+    pub(crate) fn redo(&mut self, cx: &mut Context<Self>) {
+        match with_history(|history| history.redo.pop()).flatten() {
+            Some(batch) => self.replay(batch, false, cx),
+            None => {
+                self.set_status(StatusLevel::Info, t!("Nada para refazer").to_string());
+                cx.notify();
+            }
+        }
+    }
+
+    // Plays a batch backwards (`back`, Ctrl+Z) or forwards again (Ctrl+Y).
+    // Each kind has two moves that are each other's opposite: a deletion is
+    // undone by restoring and redone by deleting; a copy or a new folder is
+    // undone by sending it to the Recycle Bin, from where redoing brings it
+    // back; a move or a rename goes one way or the other. Only what worked
+    // goes on the other list.
+    fn replay(&mut self, batch: Undo, back: bool, cx: &mut Context<Self>) {
+        let kind = batch.kind();
+        match batch {
+            Undo::Moved(pairs) | Undo::Renamed(pairs) => self.replay_moves(kind, pairs, back, cx),
+            Undo::Trashed(paths) if back => self.replay_restore(kind, paths, back, cx),
+            Undo::Trashed(paths) => self.replay_trash(kind, paths, back, cx),
+            Undo::Copied(paths) | Undo::Created(paths) if back => self.replay_trash(kind, paths, back, cx),
+            Undo::Copied(paths) | Undo::Created(paths) => self.replay_restore(kind, paths, back, cx),
+        }
+    }
+
+    // Brings items back from the Recycle Bin.
+    fn replay_restore(&mut self, kind: UndoKind, paths: Vec<PathBuf>, back: bool, cx: &mut Context<Self>) {
+        let total = paths.len();
+        let label = i18n::plural(total, k!("{n} item restaurado"), k!("{n} itens restaurados"));
+        self.run_fs_op_with(
+            total,
+            label,
+            cx,
+            move || {
+                // On a thread of its own: the `trash` crate initializes COM as a
+                // single-threaded apartment and panics on a pool thread already
+                // in the multithreaded one, and a panic on gpui's pool aborts
+                // the app (as for deleting, `ops::os_trash_delete`).
+                let restored = std::thread::Builder::new().name("trash-restore".into()).spawn(move || restore_batch(paths));
+                match restored.map(|thread| thread.join()) {
+                    Ok(Ok(outcome)) => outcome,
+                    Ok(Err(_)) | Err(_) => {
+                        let mut report = OpReport::default();
+                        report.failed(t!("A restauração falhou").to_string());
+                        (report, Vec::new())
+                    }
+                }
+            },
+            move |restored, _| {
+                file_replayed(Undo::items(kind, restored.clone()), back);
+                restored
+            },
+        );
+    }
+
+    // Sends items to the Recycle Bin: a deletion done again, or a copy or a
+    // new folder taken back (from there a wrong undo can still be taken back).
+    fn replay_trash(&mut self, kind: UndoKind, paths: Vec<PathBuf>, back: bool, cx: &mut Context<Self>) {
+        let ledger = self.trash_ledger.clone();
+        if let Err(error) = ledger.to_record() {
+            self.set_status(StatusLevel::Error, tf!("Não dá para mandar para a Lixeira: {error}", error = error));
+            cx.notify();
+            return;
+        }
+        let total = paths.len();
+        let label = if kind == UndoKind::Copied {
+            i18n::plural(total, k!("{n} cópia enviada para a Lixeira"), k!("{n} cópias enviadas para a Lixeira"))
+        } else {
+            i18n::plural(total, k!("{n} item enviado para a Lixeira"), k!("{n} itens enviados para a Lixeira"))
+        };
         self.run_fs_op_with(
             total,
             label,
             cx,
             move || {
                 let mut report = OpReport::default();
-                let mut back = Vec::new();
-                // Newest first, so a folder moved after its parent is undone
-                // before the parent it went into.
-                for (from, to) in moves.into_iter().rev() {
-                    if !ops::would_conflict(&to) {
-                        report.failed(tf!("{path}: não está mais onde foi movido", path = to.display()));
+                let record = match ledger.to_record() {
+                    Ok(record) => record,
+                    Err(error) => {
+                        report.failed(error.to_string());
+                        return (report, Vec::new());
+                    }
+                };
+                let (present, gone): (Vec<PathBuf>, Vec<PathBuf>) =
+                    paths.into_iter().partition(|path| std::fs::symlink_metadata(path).is_ok());
+                for path in &gone {
+                    report.failed(tf!("{path}: não está mais onde estava", path = path.display()));
+                }
+                let failed = ops::trash_paths(&present, record);
+                for (path, error) in &failed {
+                    report.failed(format!("{}: {error}", path.display()));
+                }
+                let trashed: Vec<PathBuf> =
+                    present.into_iter().filter(|path| !failed.iter().any(|(gone, _)| gone == path)).collect();
+                (report, trashed)
+            },
+            move |trashed, _| {
+                file_replayed(Undo::items(kind, trashed), back);
+                Vec::new()
+            },
+        );
+    }
+
+    // Moves each item of a move or rename back where it came from (`back`),
+    // or to where it went again. A name taken there since is left alone, as
+    // the Explorer does, and said in the footer.
+    fn replay_moves(&mut self, kind: UndoKind, pairs: Vec<(PathBuf, PathBuf)>, back: bool, cx: &mut Context<Self>) {
+        let total = pairs.len();
+        let label = match (kind, back) {
+            (UndoKind::Renamed, true) => i18n::plural(total, k!("{n} nome desfeito"), k!("{n} nomes desfeitos")),
+            (UndoKind::Renamed, false) => i18n::plural(total, k!("{n} item renomeado"), k!("{n} itens renomeados")),
+            (_, true) => i18n::plural(total, k!("{n} item movido de volta"), k!("{n} itens movidos de volta")),
+            (_, false) => i18n::plural(total, k!("{n} item movido"), k!("{n} itens movidos")),
+        };
+        self.run_fs_op_with(
+            total,
+            label,
+            cx,
+            move || {
+                let mut report = OpReport::default();
+                let mut done = Vec::new();
+                // Undone newest first, so a folder moved after its parent is
+                // undone before the parent it went into; redone in order.
+                let ordered: Vec<(PathBuf, PathBuf)> = if back { pairs.into_iter().rev().collect() } else { pairs };
+                for (from, to) in ordered {
+                    let (src, dst) = if back { (&to, &from) } else { (&from, &to) };
+                    if !ops::would_conflict(src) {
+                        report.failed(tf!("{path}: não está mais onde estava", path = src.display()));
                         continue;
                     }
-                    if ops::would_conflict(&from) {
-                        report.failed(tf!("{path}: o lugar de origem já está ocupado", path = from.display()));
+                    // A rename that only changed capitals (`foto.jpg` to
+                    // `Foto.jpg`) finds its own source at the destination.
+                    if !same_place(src, dst) && ops::would_conflict(dst) {
+                        report.failed(tf!("{path}: o lugar de destino já está ocupado", path = dst.display()));
                         continue;
                     }
-                    match apply_to_free_name(ClipMode::Cut, &to, &from) {
+                    match apply_to_free_name(ClipMode::Cut, src, dst) {
                         Ok(applied) => {
                             report.applied(applied);
-                            back.push(from);
+                            done.push((from, to));
                         }
-                        Err(error) => report.failed(format!("{}: {error}", to.display())),
+                        Err(error) => report.failed(format!("{}: {error}", src.display())),
                     }
                 }
-                (report, back)
+                if back {
+                    done.reverse();
+                }
+                (report, done)
             },
-            |back, _| back,
+            move |done, cx| {
+                let landed: Vec<PathBuf> =
+                    done.iter().map(|(from, to)| if back { from.clone() } else { to.clone() }).collect();
+                // Tags follow the item, as they do on a rename.
+                for (from, to) in &done {
+                    let (old, new) = if back { (to, from) } else { (from, to) };
+                    super::tags::Tags::moved(&old.to_string_lossy(), &new.to_string_lossy(), cx);
+                }
+                file_replayed(Undo::pairs(kind, done), back);
+                landed
+            },
         );
     }
 
     /// Whether Ctrl+Z has something to undo.
     pub(crate) fn can_undo_trash(&self) -> bool {
-        with_history(|history| !history.is_empty()).unwrap_or(false)
+        with_history(|history| !history.undo.is_empty()).unwrap_or(false)
+    }
+
+    /// Whether Ctrl+Y has something to redo.
+    pub(crate) fn can_redo(&self) -> bool {
+        with_history(|history| !history.redo.is_empty()).unwrap_or(false)
+    }
+
+    /// What Ctrl+Z would take back, for the menu to name it.
+    pub(crate) fn undo_kind(&self) -> Option<UndoKind> {
+        with_history(|history| history.undo.last().map(Undo::kind)).flatten()
     }
 
     /// Whether what Ctrl+Z would undo is a move (the menu names it).
+    #[cfg(test)]
     pub(crate) fn undo_is_move(&self) -> bool {
-        with_history(|history| matches!(history.last(), Some(Undo::Moved(_)))).unwrap_or(false)
+        self.undo_kind() == Some(UndoKind::Moved)
+    }
+
+    /// Whether what Ctrl+Z would undo is a copy (the menu names it).
+    #[cfg(test)]
+    pub(crate) fn undo_is_copy(&self) -> bool {
+        self.undo_kind() == Some(UndoKind::Copied)
     }
 
     pub(crate) fn delete_permanent_paths(&mut self, paths: Vec<String>, cx: &mut Context<Self>) {
@@ -1493,14 +1636,19 @@ impl ExplorerPane {
                     retain_failed_cut(failed, generation, cx);
                     ExplorerClipboard::end_cut(cx);
                 }
-                if mode == ClipMode::Cut {
-                    remember(Undo::Moved(
+                // An item that replaced one already there is left out of both:
+                // taking it back would not bring the replaced one back.
+                match mode {
+                    ClipMode::Cut => remember(Undo::Moved(
                         landed
                             .iter()
                             .filter(|(_, _, undoable)| *undoable)
                             .map(|(from, to, _)| (from.clone(), to.clone()))
                             .collect(),
-                    ));
+                    )),
+                    ClipMode::Copy => remember(Undo::Copied(
+                        landed.iter().filter(|(_, _, undoable)| *undoable).map(|(_, to, _)| to.clone()).collect(),
+                    )),
                 }
                 landed.into_iter().map(|(_, to, _)| to).collect()
             },
@@ -1665,6 +1813,11 @@ impl ExplorerPane {
                 }
                 // Its tags go with it.
                 super::tags::Tags::moved(&old, &new, cx);
+                // Naming the folder "Nova pasta" just made is part of making
+                // it; any other rename is a batch of its own for Ctrl+Z.
+                if !rename_created(original_path, &renamed) {
+                    remember(Undo::Renamed(vec![(original_path.to_path_buf(), renamed.clone())]));
+                }
                 self.reload(cx);
                 self.set_status(StatusLevel::Info, tf!("Renomeado para {name}", name = final_name));
             }
@@ -1734,6 +1887,7 @@ impl ExplorerPane {
         let name = ops::unique_name(&parent, t!("Nova pasta"));
         match ops::create_dir(&parent, &name) {
             Ok(path) => {
+                remember(Undo::Created(vec![path.clone()]));
                 // The listing is read on its own thread and may not have the
                 // folder yet: it is selected, scrolled to and put in rename
                 // mode once it does (`take_rename_when_listed`), instead of
@@ -1761,13 +1915,13 @@ impl ExplorerPane {
 // click, and only after it does a click on the selected item rename.
 #[cfg(windows)]
 #[allow(unsafe_code)]
-fn double_click_time() -> std::time::Duration {
+pub(crate) fn double_click_time() -> std::time::Duration {
     let millis = unsafe { windows::Win32::UI::Input::KeyboardAndMouse::GetDoubleClickTime() };
     std::time::Duration::from_millis(u64::from(millis.clamp(200, 2000)))
 }
 
 #[cfg(not(windows))]
-fn double_click_time() -> std::time::Duration {
+pub(crate) fn double_click_time() -> std::time::Duration {
     std::time::Duration::from_millis(500)
 }
 
@@ -2208,32 +2362,83 @@ impl ExplorerPane {
     }
 }
 
-// One batch Ctrl+Z can take back.
+// What a batch was, for the menu to name what Ctrl+Z would take back.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum UndoKind {
+    Trashed,
+    Moved,
+    Renamed,
+    Copied,
+    Created,
+}
+
+// One batch Ctrl+Z can take back and Ctrl+Y do again.
 enum Undo {
     /// Sent to the Recycle Bin, by original path.
     Trashed(Vec<PathBuf>),
     /// Moved, as (from, to). A move over an item it replaced is not here:
     /// moving it back would not bring the replaced one back.
     Moved(Vec<(PathBuf, PathBuf)>),
+    /// Renamed, as (old path, new path): a move in the same folder, named
+    /// apart in the menu.
+    Renamed(Vec<(PathBuf, PathBuf)>),
+    /// Copies a paste or a drop made, by their path. One that replaced an
+    /// item already there is not here, as for a move.
+    Copied(Vec<PathBuf>),
+    /// A new folder, by its path (the name it was given, once renamed).
+    Created(Vec<PathBuf>),
 }
 
 impl Undo {
+    fn kind(&self) -> UndoKind {
+        match self {
+            Undo::Trashed(_) => UndoKind::Trashed,
+            Undo::Moved(_) => UndoKind::Moved,
+            Undo::Renamed(_) => UndoKind::Renamed,
+            Undo::Copied(_) => UndoKind::Copied,
+            Undo::Created(_) => UndoKind::Created,
+        }
+    }
+
+    // A batch of single items of this kind.
+    fn items(kind: UndoKind, paths: Vec<PathBuf>) -> Self {
+        match kind {
+            UndoKind::Copied => Undo::Copied(paths),
+            UndoKind::Created => Undo::Created(paths),
+            _ => Undo::Trashed(paths),
+        }
+    }
+
+    // A batch of (from, to) pairs of this kind.
+    fn pairs(kind: UndoKind, pairs: Vec<(PathBuf, PathBuf)>) -> Self {
+        match kind {
+            UndoKind::Renamed => Undo::Renamed(pairs),
+            _ => Undo::Moved(pairs),
+        }
+    }
+
     fn is_empty(&self) -> bool {
         match self {
-            Undo::Trashed(paths) => paths.is_empty(),
-            Undo::Moved(moves) => moves.is_empty(),
+            Undo::Trashed(paths) | Undo::Copied(paths) | Undo::Created(paths) => paths.is_empty(),
+            Undo::Moved(pairs) | Undo::Renamed(pairs) => pairs.is_empty(),
         }
     }
 }
 
-// What was deleted or moved, a batch per operation, newest last; Ctrl+Z
-// takes the last one back. Kept for the app rather than a tab.
+// What was done, a batch per operation, newest last, and what Ctrl+Z took
+// back since, for Ctrl+Y. Kept for the app rather than a tab.
+#[derive(Default)]
+struct Histories {
+    undo: Vec<Undo>,
+    redo: Vec<Undo>,
+}
+
 #[cfg(not(test))]
-static HISTORY: std::sync::Mutex<Vec<Undo>> = std::sync::Mutex::new(Vec::new());
+static HISTORY: std::sync::Mutex<Histories> = std::sync::Mutex::new(Histories { undo: Vec::new(), redo: Vec::new() });
 const UNDO_DEPTH: usize = 30;
 
 #[cfg(not(test))]
-fn with_history<R>(f: impl FnOnce(&mut Vec<Undo>) -> R) -> Option<R> {
+fn with_history<R>(f: impl FnOnce(&mut Histories) -> R) -> Option<R> {
     HISTORY.lock().ok().map(|mut history| f(&mut history))
 }
 
@@ -2241,23 +2446,58 @@ fn with_history<R>(f: impl FnOnce(&mut Vec<Undo>) -> R) -> Option<R> {
 // files would hand its batch to another's Ctrl+Z.
 #[cfg(test)]
 thread_local! {
-    static HISTORY: std::cell::RefCell<Vec<Undo>> = const { std::cell::RefCell::new(Vec::new()) };
+    static HISTORY: std::cell::RefCell<Histories> = std::cell::RefCell::new(Histories::default());
 }
 
 #[cfg(test)]
-fn with_history<R>(f: impl FnOnce(&mut Vec<Undo>) -> R) -> Option<R> {
+fn with_history<R>(f: impl FnOnce(&mut Histories) -> R) -> Option<R> {
     Some(HISTORY.with(|history| f(&mut history.borrow_mut())))
 }
 
+fn push_capped(list: &mut Vec<Undo>, batch: Undo) {
+    list.push(batch);
+    let excess = list.len().saturating_sub(UNDO_DEPTH);
+    list.drain(..excess);
+}
+
+// A new operation: on the undo list, and the redo list is gone.
 fn remember(batch: Undo) {
     if batch.is_empty() {
         return;
     }
     with_history(|history| {
-        history.push(batch);
-        let excess = history.len().saturating_sub(UNDO_DEPTH);
-        history.drain(..excess);
+        push_capped(&mut history.undo, batch);
+        history.redo.clear();
     });
+}
+
+/// Renames made together (several items at once), as one step of Ctrl+Z.
+pub(crate) fn remember_renames(pairs: Vec<(PathBuf, PathBuf)>) {
+    remember(Undo::Renamed(pairs));
+}
+
+// A batch played by Ctrl+Z (`back`) goes on the redo list; by Ctrl+Y, back
+// on the undo list. Neither empties the other.
+fn file_replayed(batch: Undo, back: bool) {
+    if batch.is_empty() {
+        return;
+    }
+    with_history(|history| push_capped(if back { &mut history.redo } else { &mut history.undo }, batch));
+}
+
+// A rename of the folder just made by "Nova pasta" is part of making it:
+// one Ctrl+Z takes the folder away instead of first giving it its old name.
+// Returns whether the rename was taken in.
+fn rename_created(old: &Path, new: &Path) -> bool {
+    with_history(|history| match history.undo.last_mut() {
+        Some(Undo::Created(paths)) if paths.len() == 1 && same_place(&paths[0], old) => {
+            paths[0] = new.to_path_buf();
+            history.redo.clear();
+            true
+        }
+        _ => false,
+    })
+    .unwrap_or(false)
 }
 
 // Windows paths compare without case, and the Recycle Bin may hand one back
@@ -2268,20 +2508,21 @@ fn same_place(a: &Path, b: &Path) -> bool {
 
 // Puts each path of a batch back from the Recycle Bin: the newest item that
 // came from there, as the same name may have been deleted before.
-fn restore_batch(batch: Vec<PathBuf>) -> OpReport {
+fn restore_batch(batch: Vec<PathBuf>) -> (OpReport, Vec<PathBuf>) {
     let mut report = OpReport::default();
+    let mut restored = Vec::new();
     let mut store = match nohrs_services::fs::trash::default_store(nohrs_services::fs::trash::open_ledger) {
         Ok(store) => store,
         Err(error) => {
             report.failed(error.to_string());
-            return report;
+            return (report, restored);
         }
     };
     let items = match store.list() {
         Ok(items) => items,
         Err(error) => {
             report.failed(error.to_string());
-            return report;
+            return (report, restored);
         }
     };
     for path in &batch {
@@ -2293,12 +2534,13 @@ fn restore_batch(batch: Vec<PathBuf>) -> OpReport {
             .max_by_key(|item| item.deleted_at_unix);
         match item {
             Some(item) => {
-                if let Err(error) = store.restore(item) {
-                    report.failed(format!("{}: {error}", path.display()));
+                match store.restore(item) {
+                    Ok(()) => restored.push(path.clone()),
+                    Err(error) => report.failed(format!("{}: {error}", path.display())),
                 }
             }
             None => report.failed(tf!("{path}: não está mais na Lixeira", path = path.display())),
         }
     }
-    report
+    (report, restored)
 }

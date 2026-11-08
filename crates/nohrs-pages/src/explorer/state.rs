@@ -238,6 +238,9 @@ pub struct ExplorerPane {
     pub(crate) terminal_shown: bool,
     /// The column the PDF preview's pages fill, measured at paint.
     pub(crate) preview_pdf_bounds: std::rc::Rc<std::cell::Cell<gpui::Bounds<gpui::Pixels>>>,
+    /// The room Space's quick look covers (the pane), measured at paint: a
+    /// video's card is sized from it.
+    pub(crate) quick_look_bounds: std::rc::Rc<std::cell::Cell<gpui::Bounds<gpui::Pixels>>>,
     /// The image in the preview decoded from its file at the panel's size
     /// (`picture.rs`), replacing the Shell's lower-quality thumbnail.
     pub(crate) preview_sharp: Option<super::view::preview::SharpPicture>,
@@ -281,6 +284,13 @@ pub struct ExplorerPane {
     /// A left press on an item the preview lists (a folder's contents) that
     /// may become a drag out.
     pub(crate) preview_drag: Option<super::drag::PreviewDragCandidate>,
+    /// Items of the preview's listing picked with Ctrl or Shift, dragged out
+    /// together.
+    pub(crate) preview_listing_selection: super::preview_listing::ListingSelection,
+    /// The archive entry a drag out is still extracting (archive, member),
+    /// drawn as loading in the preview until its files are whole: the drop
+    /// waits for them, and without this the wait looked like a freeze.
+    pub(crate) archive_extracting: Option<(std::path::PathBuf, String)>,
     /// A selection rectangle being dragged over the listing (`marquee.rs`).
     pub(crate) marquee: Option<super::marquee::Marquee>,
     /// Where each entry was painted, for the rectangle's hit test.
@@ -319,6 +329,9 @@ pub struct ExplorerPane {
     pub(crate) grid_width: f32,
     /// Scroll position of the virtualized grid.
     pub(crate) grid_scroll_handle: VirtualListScrollHandle,
+    /// The sidebar's scroll, for the bar a user can grab (it only scrolled
+    /// by the wheel, and some wheels skip).
+    pub(crate) sidebar_scroll: gpui::ScrollHandle,
     /// Scroll position of the folder or archive listing in the preview. Held
     /// here because `v_virtual_list` without one makes a new handle on every
     /// render, and the listing jumped back to the top on the next frame.
@@ -372,6 +385,13 @@ pub struct ExplorerPane {
     /// the folders below as dimmed crumbs to go back down by, as File Pilot
     /// does. Another branch replaces it.
     pub(crate) crumb_trail: String,
+    /// Breadcrumb segment under the pointer, for its hover feedback.
+    pub(crate) hovered_crumb: Option<usize>,
+    /// Last breadcrumb hover entry: (segment, generation).
+    pub(crate) crumb_hover_animation: Option<(usize, u64)>,
+    /// Where each breadcrumb segment was drawn last frame, by id: the
+    /// pointer is matched against these on every move (`header.rs`).
+    pub(crate) crumb_bounds: std::rc::Rc<std::cell::RefCell<Vec<gpui::Bounds<gpui::Pixels>>>>,
     /// The header's "open in another program" menu is open.
     pub(crate) open_in_menu: bool,
     /// The file `reveal` brought forward and when: it glows for a moment so
@@ -594,6 +614,7 @@ impl ExplorerPane {
             split_available: false,
             terminal_shown: false,
             preview_pdf_bounds: Default::default(),
+            quick_look_bounds: Default::default(),
             preview_sharp: None,
             preview_model: None,
             preview_back: Vec::new(),
@@ -608,6 +629,8 @@ impl ExplorerPane {
             path_edit: None,
             drag_candidate: None,
             preview_drag: None,
+            preview_listing_selection: Default::default(),
+            archive_extracting: None,
             marquee: None,
             hit_boxes: Default::default(),
             paste_plan: None,
@@ -622,6 +645,7 @@ impl ExplorerPane {
             grid_columns: 1,
             grid_width: 0.0,
             grid_scroll_handle: VirtualListScrollHandle::new(),
+            sidebar_scroll: gpui::ScrollHandle::new(),
             preview_listing_scroll: VirtualListScrollHandle::new(),
             compact_scroll_handle: VirtualListScrollHandle::new(),
             compact_height: 400.0,
@@ -646,6 +670,9 @@ impl ExplorerPane {
             zoom_menu_hovered: false,
             view_wheel_travel: 0.0,
             crumb_trail: String::new(),
+            hovered_crumb: None,
+            crumb_hover_animation: None,
+            crumb_bounds: Default::default(),
             open_in_menu: false,
             reveal_highlight: None,
             reveal_scroll: None,
@@ -1145,12 +1172,20 @@ impl ExplorerPane {
         let show_hidden = self.show_hidden;
         let kind_filter = self.kind_filter;
         let name_filter = super::filter::NameMatcher::new(&self.name_filter);
+        // While a browser's Open dialog waits, the file type chosen for it
+        // (`picking_bar`); folders always show, to get to the files.
+        let pick = crate::file_dialog::listing_patterns();
         let visible = self
             .entries
             .iter()
             .filter(move |entry| show_hidden || !is_hidden(&entry.name))
             .filter(move |entry| kind_filter.matches(entry))
-            .filter(move |entry| name_filter.matches(&entry.name));
+            .filter(move |entry| name_filter.matches(&entry.name))
+            .filter(move |entry| {
+                pick.as_ref().is_none_or(|patterns| {
+                    entry.kind == "dir" || crate::file_dialog::matches_any(patterns, &entry.name)
+                })
+            });
 
         if self.search_query.is_empty() {
             self.filtered_entries = visible.cloned().collect();

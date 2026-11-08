@@ -190,12 +190,13 @@ impl Segment {
                 .map(|(part, entries)| {
                     scope.spawn(move || {
                         let mut found = Vec::new();
+                        let mut paths = LowerPaths::default();
                         for (offset, entry) in entries.iter().enumerate() {
                             if offset % 65_536 == 0 && cancel.load(Ordering::Relaxed) {
                                 return found;
                             }
                             let index = (part * chunk + offset) as u32;
-                            if let Some(rank) = query.rank(self, index, entry, fuzzy) {
+                            if let Some(rank) = query.rank(self, index, entry, fuzzy, &mut paths) {
                                 found.push((rank, entry.name_len, index));
                             }
                         }
@@ -205,6 +206,81 @@ impl Segment {
                 .collect();
             workers.into_iter().flat_map(|worker| worker.join().unwrap_or_default()).collect()
         })
+    }
+}
+
+/// The lowered paths a search worker asks for, built in one buffer.
+///
+/// A path term (`em:`, `pasta\`, `-node_modules\`) needs the whole path of
+/// every entry whose name passed, and with no name typed beside it that is
+/// every entry. Each used to climb its parents, join them and lower the
+/// result: a climb and two allocations per entry, 2/3 of a path-only search
+/// of 2.5 million names (docs/PERFORMANCE.md, passada 9). A walk adds a
+/// folder's children together, so the entries a worker reads in a row share
+/// a parent: its path is built once, and each child's is that, a `\` and the
+/// child's lowered name.
+///
+/// Lowering the names one by one gives the text lowering the joined path
+/// gave: the only rule of `to_lowercase` that looks at its neighbours (the
+/// final sigma) does not look across a `\`, which is neither a letter nor
+/// ignored. `the_search_finds_what_it_found_before_pass_9` holds it to that.
+#[derive(Default)]
+struct LowerPaths {
+    parent: Option<u32>,
+    // The parent's lowered path, and how many names it has.
+    parent_path: String,
+    parent_parts: usize,
+    path: String,
+    climb: Vec<u32>,
+    // Parents' paths built, for the test that holds the reuse.
+    built: usize,
+}
+
+impl LowerPaths {
+    fn of(&mut self, segment: &Segment, position: u32) -> &str {
+        self.path.clear();
+        let entry = match segment.entries.get(position as usize) {
+            Some(entry) if segment.paths.get(position as usize).is_none() => entry,
+            // The watcher's table keeps whole paths.
+            _ => {
+                self.path.push_str(&segment.path(position).to_lowercase());
+                return &self.path;
+            }
+        };
+        if self.parent != Some(entry.parent) {
+            self.parent = Some(entry.parent);
+            self.built += 1;
+            self.climb.clear();
+            let mut current = entry.parent;
+            // As in `Segment::path`: a broken table cannot loop forever.
+            while current != NO_PARENT && self.climb.len() < segment.entries.len() {
+                let Some(above) = segment.entries.get(current as usize) else {
+                    break;
+                };
+                self.climb.push(current);
+                current = above.parent;
+            }
+            self.parent_path.clear();
+            for (at, &index) in self.climb.iter().rev().enumerate() {
+                if at > 0 {
+                    self.parent_path.push('\\');
+                }
+                if let Some(above) = segment.entries.get(index as usize) {
+                    self.parent_path.push_str(segment.lower(above));
+                }
+            }
+            self.parent_parts = self.climb.len();
+        }
+        if self.parent_parts == 0 {
+            // A drive alone is "c:\", not "c:".
+            self.path.push_str(segment.lower(entry));
+            self.path.push('\\');
+        } else {
+            self.path.push_str(&self.parent_path);
+            self.path.push('\\');
+            self.path.push_str(segment.lower(entry));
+        }
+        &self.path
     }
 }
 
@@ -570,25 +646,32 @@ fn letter_mask(lower: &str) -> u64 {
 // `term`'s letters appear in `name` in order, within twice its length:
 // a typo or a dropped letter, not four letters strewn over a long name
 // (unbounded, "bonk" brought in 900 sounds of the whole computer).
+// It runs on every name the near-miss pass looks at, so it walks the two
+// texts in place: copying both into `Vec<char>` was two allocations per name
+// (docs/PERFORMANCE.md, passada 9).
 fn subsequence(term: &str, name: &str) -> bool {
-    let wanted: Vec<char> = term.chars().collect();
-    let Some(&first) = wanted.first() else {
+    let mut wanted = term.chars();
+    let Some(first) = wanted.next() else {
         return false;
     };
-    let letters: Vec<char> = name.chars().collect();
-    let reach = wanted.len() * 2;
-    letters.iter().enumerate().filter(|(_, letter)| **letter == first).any(|(start, _)| {
-        let mut next = 1;
-        for (at, letter) in letters.iter().enumerate().skip(start + 1) {
-            if next == wanted.len() || at - start >= reach {
+    let reach = term.chars().count() * 2;
+    let mut letters = name.chars();
+    // Each `first` in the name is a start; `letters` is left just past it.
+    while letters.any(|letter| letter == first) {
+        let mut rest = wanted.clone().peekable();
+        for (offset, letter) in letters.clone().enumerate() {
+            if rest.peek().is_none() || offset + 1 >= reach {
                 break;
             }
-            if wanted.get(next) == Some(letter) {
-                next += 1;
+            if rest.peek() == Some(&letter) {
+                rest.next();
             }
         }
-        next == wanted.len()
-    })
+        if rest.peek().is_none() {
+            return true;
+        }
+    }
+    false
 }
 
 // `term` begins a word of `name`: at its start or after a separator.
@@ -710,7 +793,7 @@ impl Query {
     /// The sort key of `entry` if it matches: match class, then system
     /// folders after the person's own, then recency (see `recency`).
     /// `fuzzy` is the second pass, which takes only what the first refused.
-    fn rank(&self, segment: &Segment, position: u32, entry: &Entry, fuzzy: bool) -> Option<u32> {
+    fn rank(&self, segment: &Segment, position: u32, entry: &Entry, fuzzy: bool, paths: &mut LowerPaths) -> Option<u32> {
         if entry.mask & self.mask != self.mask {
             return None;
         }
@@ -758,7 +841,7 @@ impl Query {
             return None;
         }
         if self.needs_path {
-            let path = segment.path(position).to_lowercase();
+            let path = paths.of(segment, position);
             if !self.scopes.is_empty() && !self.scopes.iter().any(|scope| path.starts_with(scope.as_str())) {
                 return None;
             }
@@ -2130,24 +2213,62 @@ fn gather(
     let mut hits = scan(false);
     if hits.len() < FUZZY_BELOW && query.fuzzy.is_some() {
         let mut near = scan(true);
-        near.sort_unstable();
-        near.truncate(FUZZY_MOST);
+        let most = near.len().min(FUZZY_MOST);
+        let mut kept = 0;
+        in_order_while(&mut near, most, |_| {
+            kept += 1;
+            kept < most
+        });
+        near.truncate(most);
         hits.extend(near);
     }
-    hits.sort_unstable();
     // A file the watcher saw may also be in a table walked since.
     let mut shown = std::collections::HashSet::new();
-    hits.into_iter()
-        .filter_map(|(_, _, source, position)| {
-            let segment = sources.iter().find(|(id, _)| *id == source)?.1;
-            let entry = segment.entries.get(position as usize)?;
-            let path = segment.path(position);
-            shown
-                .insert(path.to_lowercase())
-                .then(|| (segment.name(entry).to_string(), path, entry.flags & DIR != 0))
-        })
-        .take(MAX_RESULTS)
-        .collect()
+    let mut out = Vec::new();
+    in_order_while(&mut hits, MAX_RESULTS, |(_, _, source, position)| {
+        let Some(segment) = sources.iter().find(|(id, _)| *id == source).map(|(_, segment)| *segment) else {
+            return true;
+        };
+        let Some(entry) = segment.entries.get(position as usize) else {
+            return true;
+        };
+        let path = segment.path(position);
+        if shown.insert(path.to_lowercase()) {
+            out.push((segment.name(entry).to_string(), path, entry.flags & DIR != 0));
+        }
+        out.len() < MAX_RESULTS
+    });
+    out
+}
+
+/// Hands `items` to `keep` in order, best first, until it says stop, and
+/// sorts only as far as it read. A one-letter search matches nearly every
+/// name on the computer (2.5 million on this machine's C:) and only the
+/// first `MAX_RESULTS` are read: sorting all of them was 2/3 of the search
+/// (docs/PERFORMANCE.md, passada 9). The first `first` are picked out
+/// (`select_nth_unstable`, linear) and sorted; when `keep` wants more — the
+/// same file twice, once in the drive's table and once in the watcher's —
+/// the next block, twice as large, is picked out of what is left. The items
+/// are distinct (the source and the position are part of each), so the
+/// order is exactly that of sorting the whole.
+fn in_order_while<T: Ord + Copy>(items: &mut [T], first: usize, mut keep: impl FnMut(T) -> bool) {
+    let mut done = 0;
+    let mut step = first.max(1);
+    while done < items.len() {
+        let rest = &mut items[done..];
+        let take = step.min(rest.len());
+        if take < rest.len() {
+            rest.select_nth_unstable(take - 1);
+        }
+        rest[..take].sort_unstable();
+        for &item in &rest[..take] {
+            if !keep(item) {
+                return;
+            }
+        }
+        done += take;
+        step = step.saturating_mul(2);
+    }
 }
 
 #[cfg(target_os = "windows")]
@@ -2264,6 +2385,10 @@ mod platform {
         vec!["/".to_string()]
     }
 }
+
+#[cfg(test)]
+#[path = "everything_pass9.rs"]
+mod pass9;
 
 #[cfg(test)]
 #[allow(clippy::unwrap_used)]

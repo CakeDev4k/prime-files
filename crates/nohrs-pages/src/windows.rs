@@ -199,6 +199,17 @@ pub(crate) fn with_target<R>(
     handle.update(cx, |_, window, cx| root.update(cx, |root, cx| f(root, window, cx))).ok()
 }
 
+/// [`with_target`] from the app itself, between window updates (a deferred
+/// call): the quick search acts on the main window this way.
+pub(crate) fn with_target_now<R>(
+    cx: &mut App,
+    f: impl FnOnce(&mut RootView, &mut Window, &mut Context<RootView>) -> R,
+) -> Option<R> {
+    let (handle, root) = target(cx)?;
+    let root: Entity<RootView> = root.upgrade()?;
+    handle.update(cx, |_, window, cx| root.update(cx, |root, cx| f(root, window, cx))).ok()
+}
+
 // ---- The main window's place on screen ----
 
 #[derive(Serialize, Deserialize)]

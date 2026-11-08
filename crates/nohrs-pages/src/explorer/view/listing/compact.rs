@@ -1,8 +1,7 @@
 use crate::explorer::ExplorerPane;
 use gpui::prelude::*;
 use gpui::*;
-use gpui_component::input::Input;
-use gpui_component::{Icon, IconName, Sizable as _, h_virtual_list};
+use gpui_component::{Icon, IconName, h_virtual_list};
 use nohrs_services::fs::listing::FileEntryDto;
 use nohrs_ui::theme::theme;
 use std::rc::Rc;
@@ -218,7 +217,15 @@ fn render_item(
             Some(input) => div()
                 .flex_1()
                 .min_w(px(0.0))
-                .child(Input::new(&input).small().appearance(false).px(px(0.0)).text_sm())
+                .h_full()
+                .flex()
+                .items_center()
+                .child(
+                    super::row::rename_field(&input, false)
+                        .flex_1()
+                        .min_w(px(0.0))
+                        .ml(px(-super::row::RENAME_FIELD_INSET)),
+                )
                 .into_any_element(),
             None => div()
                 .flex_1()

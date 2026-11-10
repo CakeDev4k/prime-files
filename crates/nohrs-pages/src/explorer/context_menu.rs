@@ -173,7 +173,7 @@ pub(crate) fn menu_entry_info(id: &str) -> Option<(&'static str, &'static str)> 
         "properties" => (t!("Propriedades"), "icons/info.svg"),
         "tags" => (t!("Tags"), "icons/tag.svg"),
         "windows" => (t!("Itens do Windows"), "icons/app-window.svg"),
-        "filee" => (t!("Converter com Filee"), "icons/refresh-cw.svg"),
+        "filee" => ("Converter com Filee", "icons/refresh-cw.svg"),
         "more_options" => (t!("Mostrar mais opções"), "icons/ellipsis.svg"),
         "customize" => (t!("Personalizar este menu…"), "icons/settings.svg"),
         _ => return None,
@@ -329,7 +329,7 @@ impl ExplorerPane {
                             windows = true;
                             continue;
                         }
-                        "filee" => Entry::command(Command::ConvertWithFilee as u32, t!("Converter com Filee"))
+                        "filee" => Entry::command(Command::ConvertWithFilee as u32, "Converter com Filee")
                             .with_icon("icons/refresh-cw.svg")
                             .with_shortcut(keys_of(Action::ConvertWithFilee)),
                         "new_tab" => Entry::command(Command::OpenInNewTab as u32, t!("Abrir em nova aba"))
@@ -363,6 +363,16 @@ impl ExplorerPane {
                         after.push(entry);
                     } else {
                         before.push(entry);
+                    }
+                }
+                if !menu.items.iter().any(|id| id == "filee") {
+                    let filee_entry = Entry::command(Command::ConvertWithFilee as u32, "Converter com Filee")
+                        .with_icon("icons/refresh-cw.svg")
+                        .with_shortcut(keys_of(Action::ConvertWithFilee));
+                    if windows {
+                        after.insert(0, filee_entry);
+                    } else {
+                        before.push(filee_entry);
                     }
                 }
                 // In a tag's list, what is in it can leave it, first thing:

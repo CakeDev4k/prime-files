@@ -213,7 +213,7 @@ impl ExplorerPane {
         if paths.is_empty() {
             self.set_status(
                 StatusLevel::Info,
-                nohrs_core::t!("Selecione ao menos um arquivo para converter").to_string(),
+                "Selecione ao menos um arquivo para converter".to_string(),
             );
             cx.notify();
             return;
@@ -222,7 +222,7 @@ impl ExplorerPane {
         let Some(filee) = find_filee() else {
             self.set_status(
                 StatusLevel::Error,
-                nohrs_core::t!("Filee.exe não encontrado").to_string(),
+                "Filee.exe não encontrado".to_string(),
             );
             cx.notify();
             return;
@@ -239,13 +239,13 @@ impl ExplorerPane {
                 let count = paths.len();
                 self.set_status(
                     StatusLevel::Info,
-                    nohrs_core::tf!("{count} arquivo(s) enviado(s) para o Filee", count = count),
+                    format!("{count} arquivo(s) enviado(s) para o Filee"),
                 );
             }
             Err(error) => {
                 self.set_status(
                     StatusLevel::Error,
-                    nohrs_core::tf!("Não foi possível abrir o programa: {error}", error = error),
+                    tf!("Não foi possível abrir o programa: {error}", error = error),
                 );
             }
         }
@@ -253,7 +253,7 @@ impl ExplorerPane {
     }
 }
 
-/// Locates Filee.exe in standard installation paths or PATH.
+/// Locates Filee.exe in standard installation paths, registered install location, or PATH.
 pub(crate) fn find_filee() -> Option<PathBuf> {
     if let Some(pf) = std::env::var_os("ProgramFiles") {
         let path = PathBuf::from(pf).join("Filee").join("Filee.exe");
@@ -277,14 +277,116 @@ pub(crate) fn find_filee() -> Option<PathBuf> {
             return Some(alt);
         }
     }
+    #[cfg(windows)]
+    if let Some(path) = registered_filee() {
+        return Some(path);
+    }
     if let Some(path_var) = std::env::var_os("PATH") {
         for dir in std::env::split_paths(&path_var) {
             let candidate = dir.join("Filee.exe");
             if candidate.is_file() {
                 return Some(candidate);
             }
+            // The installer layout places Filee's `cli` directory on PATH to expose the `filee` command.
+            // When encountering the cli directory or its launcher, resolve the GUI executable in the parent folder.
+            let is_cli_dir = dir.file_name().is_some_and(|name| name.eq_ignore_ascii_case("cli"));
+            let has_filee_cmd = dir.join("filee.cmd").is_file() || dir.join("filee.bat").is_file() || dir.join("filee").is_file();
+            if is_cli_dir || has_filee_cmd {
+                if let Some(parent) = dir.parent() {
+                    let gui_candidate = parent.join("Filee.exe");
+                    if gui_candidate.is_file() {
+                        return Some(gui_candidate);
+                    }
+                }
+            }
         }
     }
+    None
+}
+
+#[cfg(windows)]
+#[allow(unsafe_code)]
+fn registered_filee() -> Option<PathBuf> {
+    use windows::core::{HSTRING, PCWSTR};
+    use windows::Win32::System::Registry::{
+        HKEY, HKEY_CURRENT_USER, HKEY_LOCAL_MACHINE, RRF_RT_REG_SZ, RegGetValueW,
+    };
+
+    let query_val = |root: HKEY, subkey: &str, value_name: Option<&str>| -> Option<PathBuf> {
+        let subkey_h = HSTRING::from(subkey);
+        let val_h = value_name.map(HSTRING::from);
+        let val_pcwstr = val_h.as_ref().map_or(PCWSTR::null(), |h| PCWSTR::from_raw(h.as_ptr()));
+        let mut buf = [0u16; 512];
+        let mut len = (buf.len() * 2) as u32;
+        let res = unsafe {
+            RegGetValueW(
+                root,
+                PCWSTR::from_raw(subkey_h.as_ptr()),
+                val_pcwstr,
+                RRF_RT_REG_SZ,
+                None,
+                Some(buf.as_mut_ptr() as *mut _),
+                Some(&mut len),
+            )
+        };
+        if res.is_ok() && len > 2 {
+            let str_len = (len as usize / 2).saturating_sub(1);
+            let raw_str = String::from_utf16_lossy(&buf[..str_len]);
+            let trimmed = raw_str.trim().trim_matches('"');
+            let p = PathBuf::from(trimmed);
+            if p.is_file() {
+                return Some(p);
+            }
+            let with_exe = p.join("Filee.exe");
+            if with_exe.is_file() {
+                return Some(with_exe);
+            }
+        }
+        None
+    };
+
+    // 1. Check App Paths
+    for root in [HKEY_CURRENT_USER, HKEY_LOCAL_MACHINE] {
+        if let Some(p) = query_val(root, r"Software\Microsoft\Windows\CurrentVersion\App Paths\Filee.exe", None) {
+            return Some(p);
+        }
+    }
+
+    // 2. Check Filee shell verb (HKCU / HKLM)
+    for root in [HKEY_CURRENT_USER, HKEY_LOCAL_MACHINE] {
+        if let Some(cmd_path) = query_val(root, r"Software\Classes\*\shell\Filee\command", None) {
+            let candidate = if let Some(first) = cmd_path.to_str().and_then(|s| s.split('"').nth(1)) {
+                PathBuf::from(first)
+            } else {
+                cmd_path
+            };
+            if candidate.is_file() {
+                return Some(candidate);
+            }
+        }
+    }
+
+    // 3. Check Uninstall registry keys
+    const UNINSTALL_KEYS: &[&str] = &[
+        r"Software\Microsoft\Windows\CurrentVersion\Uninstall\{C8686E06-8327-40A2-B0F7-3DEDD61D9248}_is1",
+        r"Software\Microsoft\Windows\CurrentVersion\Uninstall\Filee_is1",
+    ];
+    for root in [HKEY_CURRENT_USER, HKEY_LOCAL_MACHINE] {
+        for key in UNINSTALL_KEYS {
+            if let Some(p) = query_val(root, key, Some("InstallLocation")) {
+                let candidate = p.join("Filee.exe");
+                if candidate.is_file() {
+                    return Some(candidate);
+                }
+            }
+            if let Some(p) = query_val(root, key, Some("DisplayIcon")) {
+                if p.is_file() {
+                    return Some(p);
+                }
+            }
+        }
+    }
+
     None
 }
 

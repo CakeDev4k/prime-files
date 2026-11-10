@@ -67,10 +67,11 @@ enum Command {
     EmptyBin,
     RemoveFromTag,
     Redo,
+    ConvertWithFilee,
 }
 
 impl Command {
-    const ALL: [Command; 50] = [
+    const ALL: [Command; 51] = [
         Command::ViewList,
         Command::ViewGrid,
         Command::ViewTree,
@@ -121,6 +122,7 @@ impl Command {
         Command::PurgeFromBin,
         Command::EmptyBin,
         Command::RemoveFromTag,
+        Command::ConvertWithFilee,
     ];
 
     fn from_id(id: u32) -> Option<Self> {
@@ -171,6 +173,7 @@ pub(crate) fn menu_entry_info(id: &str) -> Option<(&'static str, &'static str)> 
         "properties" => (t!("Propriedades"), "icons/info.svg"),
         "tags" => (t!("Tags"), "icons/tag.svg"),
         "windows" => (t!("Itens do Windows"), "icons/app-window.svg"),
+        "filee" => (t!("Converter com Filee"), "icons/refresh-cw.svg"),
         "more_options" => (t!("Mostrar mais opções"), "icons/ellipsis.svg"),
         "customize" => (t!("Personalizar este menu…"), "icons/settings.svg"),
         _ => return None,
@@ -326,6 +329,9 @@ impl ExplorerPane {
                             windows = true;
                             continue;
                         }
+                        "filee" => Entry::command(Command::ConvertWithFilee as u32, t!("Converter com Filee"))
+                            .with_icon("icons/refresh-cw.svg")
+                            .with_shortcut(keys_of(Action::ConvertWithFilee)),
                         "new_tab" => Entry::command(Command::OpenInNewTab as u32, t!("Abrir em nova aba"))
                             .with_icon("icons/plus.svg")
                             .with_shortcut(t!("Botão do meio")),
@@ -1072,6 +1078,7 @@ impl ExplorerPane {
             Command::OpenPowerShell => self.open_in(OpenIn::PowerShell, cx),
             Command::OpenWindowsTerminal => self.open_in(OpenIn::WindowsTerminal, cx),
             Command::OpenFileExplorer => self.open_in(OpenIn::FileExplorer, cx),
+            Command::ConvertWithFilee => self.convert_selection_with_filee(cx),
         }
     }
 

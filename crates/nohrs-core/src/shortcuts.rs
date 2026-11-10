@@ -20,6 +20,7 @@ use std::sync::{OnceLock, RwLock};
 pub enum Action {
     Copy,
     CopyPath,
+    ConvertWithFilee,
     Cut,
     Paste,
     Rename,
@@ -109,6 +110,7 @@ const TAGS: &str = crate::k!("Tags");
 pub const ACTIONS: &[ActionInfo] = &[
     info(Action::Copy, "copy", FILES, crate::k!("Copiar"), &["ctrl-c"]),
     info(Action::CopyPath, "copy_path", FILES, crate::k!("Copiar como caminho"), &["ctrl-shift-c"]),
+    info(Action::ConvertWithFilee, "convert_with_filee", FILES, crate::k!("Converter com Filee"), &["alt-c"]),
     info(Action::Cut, "cut", FILES, crate::k!("Recortar"), &["ctrl-x"]),
     info(Action::Paste, "paste", FILES, crate::k!("Colar"), &["ctrl-v"]),
     info(Action::Rename, "rename", FILES, crate::k!("Renomear"), &["f2"]),

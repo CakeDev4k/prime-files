@@ -261,11 +261,11 @@ pub struct Menu {
 /// The icons the menu's row can hold, in the order of a fresh config.
 pub const MENU_QUICK_DEFAULT: &[&str] = &["cut", "copy", "copy_path", "rename", "delete"];
 /// The menu's entries, in the order of a fresh config.
-pub const MENU_ITEMS_DEFAULT: &[&str] = &["new_tab", "windows", "copy_path", "tags", "more_options", "customize"];
+pub const MENU_ITEMS_DEFAULT: &[&str] = &["new_tab", "windows", "filee", "copy_path", "tags", "more_options", "customize"];
 /// Every id `quick` may hold.
 pub const MENU_QUICK_ALL: &[&str] = &["cut", "copy", "copy_path", "rename", "delete", "new_tab", "properties"];
 /// Every id `items` may hold.
-pub const MENU_ITEMS_ALL: &[&str] = &["new_tab", "windows", "copy_path", "tags", "more_options", "customize", "properties"];
+pub const MENU_ITEMS_ALL: &[&str] = &["new_tab", "windows", "filee", "copy_path", "tags", "more_options", "customize", "properties"];
 
 impl Default for Menu {
     fn default() -> Self {

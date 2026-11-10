@@ -88,6 +88,7 @@ impl ExplorerPane {
             Action::OpenCommandPrompt => self.open_in(OpenIn::CommandPrompt, cx),
             Action::OpenPowerShell => self.open_in(OpenIn::PowerShell, cx),
             Action::OpenFileExplorer => self.open_in(OpenIn::FileExplorer, cx),
+            Action::ConvertWithFilee => self.convert_selection_with_filee(cx),
             Action::Tag1
             | Action::Tag2
             | Action::Tag3
@@ -205,6 +206,86 @@ impl ExplorerPane {
         }
         cx.notify();
     }
+
+    /// Converts the currently selected files using Filee (`Filee.exe --convert <paths>`).
+    pub(crate) fn convert_selection_with_filee(&mut self, cx: &mut Context<Self>) {
+        let paths = self.selected_paths();
+        if paths.is_empty() {
+            self.set_status(
+                StatusLevel::Info,
+                nohrs_core::t!("Selecione ao menos um arquivo para converter").to_string(),
+            );
+            cx.notify();
+            return;
+        }
+
+        let Some(filee) = find_filee() else {
+            self.set_status(
+                StatusLevel::Error,
+                nohrs_core::t!("Filee.exe não encontrado").to_string(),
+            );
+            cx.notify();
+            return;
+        };
+
+        let mut command = std::process::Command::new(filee);
+        command.arg("--convert");
+        for path in &paths {
+            command.arg(path);
+        }
+
+        match command.spawn() {
+            Ok(_) => {
+                let count = paths.len();
+                self.set_status(
+                    StatusLevel::Info,
+                    nohrs_core::tf!("{count} arquivo(s) enviado(s) para o Filee", count = count),
+                );
+            }
+            Err(error) => {
+                self.set_status(
+                    StatusLevel::Error,
+                    nohrs_core::tf!("Não foi possível abrir o programa: {error}", error = error),
+                );
+            }
+        }
+        cx.notify();
+    }
+}
+
+/// Locates Filee.exe in standard installation paths or PATH.
+pub(crate) fn find_filee() -> Option<PathBuf> {
+    if let Some(pf) = std::env::var_os("ProgramFiles") {
+        let path = PathBuf::from(pf).join("Filee").join("Filee.exe");
+        if path.is_file() {
+            return Some(path);
+        }
+    }
+    if let Some(pf86) = std::env::var_os("ProgramFiles(x86)") {
+        let path = PathBuf::from(pf86).join("Filee").join("Filee.exe");
+        if path.is_file() {
+            return Some(path);
+        }
+    }
+    if let Some(local) = std::env::var_os("LOCALAPPDATA") {
+        let path = PathBuf::from(&local).join("Programs").join("Filee").join("Filee.exe");
+        if path.is_file() {
+            return Some(path);
+        }
+        let alt = PathBuf::from(&local).join("Filee").join("Filee.exe");
+        if alt.is_file() {
+            return Some(alt);
+        }
+    }
+    if let Some(path_var) = std::env::var_os("PATH") {
+        for dir in std::env::split_paths(&path_var) {
+            let candidate = dir.join("Filee.exe");
+            if candidate.is_file() {
+                return Some(candidate);
+            }
+        }
+    }
+    None
 }
 
 // Starts a console program in a console window of its own: Prime Files has

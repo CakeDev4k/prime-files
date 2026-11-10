@@ -534,7 +534,7 @@ pub enum FileDropEvent {
     Exited,
 }
 
-/// NOHRS: what a drop of external files would do where the pointer is, as
+/// PRIME FILES: what a drop of external files would do where the pointer is, as
 /// the app decides it ([`Window::set_file_drop_effect`]). The platform shows
 /// it on the cursor ("Move", "Copy", or the no-entry sign) instead of always
 /// saying "Copy".

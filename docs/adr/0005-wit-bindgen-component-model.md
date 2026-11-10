@@ -9,7 +9,7 @@
 
 しかし、ROADMAP の検討で以下の点が浮上した:
 
-- nohrs はまだ **既存ユーザーがいない** (0.0.x、コミット 42 本)
+- Prime Files はまだ **既存ユーザーがいない** (0.0.x、コミット 42 本)
 - MVP 期間に維持すべき後方互換性が存在しない
 - ユーザー (作者) が明示的に「**WASM Preview2 の仕様**」を要件として挙げている。Extism は Preview 2 (Component Model) を経由しない
 - 2026 年現在、Component Model は wasmtime 30+ で **stable**、実用段階
@@ -26,7 +26,7 @@
 - **WASM runtime**: wasmtime 30+ + wasmtime-wasi (WASI Preview 2 ホスト)
 - **実行モデル**: wasmtime-wasi は tokio に依存するため、専用の `current_thread` tokio runtime に隔離して駆動する ([ADR 0004](./0004-remove-tokio.md))。公開プラグイン API (`Plugin` trait) は sync で、内部の async 呼び出しを `block_on` でブリッジする
 - **bindgen**: wit-bindgen
-- **WIT world**: `nohrs:plugin@0.1.0` (`crates/nohrs-plugin-host/wit/world.wit`)
+- **WIT world**: `prime-files:plugin@0.1.0` (`crates/prime-files-plugin-host/wit/world.wit`)
 - **対応言語 (P4)**: Rust + TypeScript + Python の 3 つ。Go は P5 以降 (tinygo の component model 対応待ち)
 
 詳細は [`docs/plugin-overview.md`](../plugin-overview.md), [`docs/plugin-api.md`](../plugin-api.md), [`docs/plugin-templates.md`](../plugin-templates.md) 参照。

@@ -11,13 +11,13 @@
 
 | データ種別 | 場所 |
 |-----------|------|
-| **config** | `$XDG_CONFIG_HOME/nohrs/config.toml` (Linux/macOS: `~/.config/nohrs/config.toml`) |
-| **SQLite DB** (メタデータ・履歴) | `$XDG_DATA_HOME/nohrs/db.sqlite` |
-| **redb (ホスト KV, P2)** | `$XDG_DATA_HOME/nohrs/state.redb` |
-| **Tantivy index** | `$XDG_DATA_HOME/nohrs/index/` |
-| **redb (plugin KV, P4)** | `$XDG_DATA_HOME/nohrs/plugin-kv.redb` |
-| **ログ / キャッシュ** | `$XDG_CACHE_HOME/nohrs/` |
-| **plugin インストール先** | `$XDG_DATA_HOME/nohrs/plugins/<plugin-id>/` |
+| **config** | `$XDG_CONFIG_HOME/prime-files/config.toml` (Linux/macOS: `~/.config/prime-files/config.toml`) |
+| **SQLite DB** (メタデータ・履歴) | `$XDG_DATA_HOME/prime-files/db.sqlite` |
+| **redb (ホスト KV, P2)** | `$XDG_DATA_HOME/prime-files/state.redb` |
+| **Tantivy index** | `$XDG_DATA_HOME/prime-files/index/` |
+| **redb (plugin KV, P4)** | `$XDG_DATA_HOME/prime-files/plugin-kv.redb` |
+| **ログ / キャッシュ** | `$XDG_CACHE_HOME/prime-files/` |
+| **plugin インストール先** | `$XDG_DATA_HOME/prime-files/plugins/<plugin-id>/` |
 | **window position・タブ/セッション復元など高頻度更新** | redb `state.redb` (config.toml ではない、詳細は [`docs/persistence.md`](./persistence.md)) |
 
 XDG 環境変数 `$XDG_CONFIG_HOME` / `$XDG_DATA_HOME` / `$XDG_CACHE_HOME` を直接解決し、未設定時は `~/.config` / `~/.local/share` / `~/.cache` にフォールバックして上記を組み立てる。`dirs::config_dir()` / `data_dir()` / `cache_dir()` は **使わない**: macOS では `~/Library/Application Support` 等の OS ネイティブパスを返してしまい、本プロジェクトが全プラットフォームで意図する XDG スタイルの dotfile パス (`~/.config` など) と矛盾するため。
@@ -75,7 +75,7 @@ position_remember = true
 
 [diagnostics.store]
 # パフォーマンス解析用のストア操作ログ。デフォルト全 off (本番では無音)。
-# 出力は tracing 経由 (target = "nohrs_store::sql" / "nohrs_store::redb")、RUST_LOG で絞り込み可。
+# 出力は tracing 経由 (target = "prime_files_store::sql" / "prime_files_store::redb")、RUST_LOG で絞り込み可。
 # 詳細は docs/persistence.md §5。
 log_all_queries = false   # 全 SQL クエリを debug で記録 (verbose)
 slow_query_ms   = 0       # >0 のとき、この閾値(ms)超過の SQL クエリを warn で記録 (0 = 無効)
@@ -89,8 +89,8 @@ log_redb_ops    = false   # redb の get/put/delete/batch 操作と所要時間�
 | 優先度 | 層 | 例 |
 |-------|----|----|
 | 最低 | デフォルト値 (コード内 `Default::default()`) | — |
-| 中 | 設定ファイル | `~/.config/nohrs/config.toml` |
-| 高 | 環境変数 | `NOHRS_THEME=dark` |
+| 中 | 設定ファイル | `~/.config/prime-files/config.toml` |
+| 高 | 環境変数 | `PRIME_FILES_THEME=dark` |
 | 最高 | CLI 引数 | `--theme dark` |
 
 実装は `serde` + 手動マージで P1 は十分 (`figment` 等の依存追加は不要)。
@@ -116,13 +116,13 @@ let merged = defaults
 
 ```bash
 # GUI バイナリ経由 (macOS):
-cargo run --bin nohrs -- config schema > docs/config.schema.json
+cargo run --bin prime-files -- config schema > docs/config.schema.json
 
 # GUI 非依存 (Linux/CI、上と同一バイト列を出力):
-cargo run -p nohrs-core --example schema > docs/config.schema.json
+cargo run -p prime-files-core --example schema > docs/config.schema.json
 ```
 
-**CI で常に最新を保証**: `config schema` ジョブが上記 example でスキーマを再生成し、コミット済みファイルと `git diff --exit-code` する。構造体を変更してスキーマ再生成を忘れると、diff 付きで CI が落ちる。加えて `nohrs-core` のユニットテスト (`committed_schema_is_up_to_date`) が同じ検証をローカル/`cargo test` でも行う。
+**CI で常に最新を保証**: `config schema` ジョブが上記 example でスキーマを再生成し、コミット済みファイルと `git diff --exit-code` する。構造体を変更してスキーマ再生成を忘れると、diff 付きで CI が落ちる。加えて `prime-files-core` のユニットテスト (`committed_schema_is_up_to_date`) が同じ検証をローカル/`cargo test` でも行う。
 
 config.toml の冒頭に:
 
@@ -149,7 +149,7 @@ config.toml の冒頭に:
 | `plugins.enabled` | ❌ No (再起動) | P5 で動的 enable/disable に格上げ検討 | wasm host のライフサイクル安定化が前提 |
 | `schema_version` | ❌ No (再起動、マイグレーション処理走る) | 永続 | 変更は版アップに伴う |
 
-**実装メモ**: P1 で `notify` を最小利用 (`nohrs-core::config::watcher`)。検索系の watcher は P3 で復活するが、config 監視は別パスで先行。
+**実装メモ**: P1 で `notify` を最小利用 (`prime-files-core::config::watcher`)。検索系の watcher は P3 で復活するが、config 監視は別パスで先行。
 
 ---
 
@@ -159,7 +159,7 @@ config.toml の冒頭に:
 |------|------|
 | **構文エラー (parse 失敗)** | 起動時に **panic せず** デフォルト config で起動。エラーメッセージを UI のステータスバーに表示し、ファイルパスを案内 |
 | **未知の key** | warn ログ + 無視 (forward-compat) |
-| **未知の `schema_version`** | 起動時に「nohrs の新しいバージョンが必要かもしれません」を表示、デフォルト config にフォールバック |
+| **未知の `schema_version`** | 起動時に「Prime Files の新しいバージョンが必要かもしれません」を表示、デフォルト config にフォールバック |
 | **値の範囲外** | warn ログ + デフォルト値を使う |
 
 ---
@@ -178,10 +178,10 @@ config.toml の冒頭に:
 ## 8. CLI サブコマンド (P1 から)
 
 ```bash
-nohrs config show          # 現在の merged config を JSON で表示
-nohrs config edit          # $EDITOR で config.toml を開く
-nohrs config validate      # schema 検証
-nohrs config schema        # JSON Schema を stdout に
-nohrs config path          # config.toml のフルパスを表示
-nohrs config reset         # config を初期化 (backup を取る)
+Prime Files config show          # 現在の merged config を JSON で表示
+Prime Files config edit          # $EDITOR で config.toml を開く
+Prime Files config validate      # schema 検証
+Prime Files config schema        # JSON Schema を stdout に
+Prime Files config path          # config.toml のフルパスを表示
+Prime Files config reset         # config を初期化 (backup を取る)
 ```

@@ -1,0 +1,67 @@
+[package]
+name = "prime-files-services"
+description = "Filesystem listing, search, and syntax-highlighting services for Prime Files."
+version.workspace      = true
+edition.workspace      = true
+rust-version.workspace = true
+license.workspace      = true
+repository.workspace   = true
+homepage.workspace     = true
+authors.workspace      = true
+
+[lib]
+name = "prime_files_services"
+path = "src/prime_files_services.rs"
+# The lib is a bench target by default, so `cargo bench` would run the unit
+# tests through libtest, which rejects criterion's flags. The benchmarks live in
+# `benches/`.
+bench = false
+
+[features]
+# `syntax` produces gpui colors, so it (and its heavy syntect dependency) is
+# gated behind `gui`. fs/search build without any UI toolkit.
+gui = ["dep:gpui", "dep:syntect"]
+
+[dependencies]
+prime-files-core   = { path = "../prime-files-core" }
+prime-files-models = { path = "../prime-files-models" }
+prime-files-store  = { path = "../prime-files-store" }
+anyhow.workspace  = true
+serde.workspace   = true
+tracing.workspace = true
+time.workspace    = true
+async-channel = "2"
+postage = "0.5"
+tantivy = "0.26"
+ignore = "0.4"
+grep = "0.4"
+dirs = "6.0"
+notify = "8"
+notify-debouncer-mini = "0.7"
+trash = "5"
+gpui = { version = "0.2", optional = true }
+syntect = { version = "5", default-features = false, features = ["default-fancy"], optional = true }
+
+# Restoring from the trash must not replace a file that appeared at the original
+# path in the meantime, and `std` has no no-replace rename. rustix wraps
+# `renameat2`/`renamex_np` without any `unsafe` of ours, which the workspace's
+# `unsafe_code = "deny"` requires.
+[target.'cfg(any(target_os = "linux", target_os = "macos"))'.dependencies]
+rustix = { version = "1", features = ["fs"] }
+
+# The same no-replace rename on Windows is `MoveFileExW` without the replacing
+# flag. Pinned to the version gpui and prime-files-pages already link.
+[target.'cfg(windows)'.dependencies]
+windows = { version = "0.61", features = ["Win32_Foundation", "Win32_Storage_FileSystem"] }
+
+[dev-dependencies]
+tempfile = "3"
+criterion.workspace = true
+
+# `harness = false` hands `main` to criterion instead of libtest.
+[[bench]]
+name = "listing"
+harness = false
+
+[lints]
+workspace = true

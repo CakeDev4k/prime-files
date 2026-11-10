@@ -3,7 +3,7 @@
 > Status: Draft (P3 で V2、P4 で V3)
 > Related: [`ROADMAP.md`](./ROADMAP.md), [`docs/persistence.md`](./persistence.md), [`docs/launcher.md`](./launcher.md), [ADR 0001 (sqlite-tantivy-hybrid-search)](./adr/0001-sqlite-tantivy-hybrid-search.md), [ADR 0009 (drop-fts5-ngram-in-tantivy)](./adr/0009-drop-fts5-ngram-in-tantivy.md)
 
-本書は nohrs の検索アーキテクチャを定めます。ベースは設計 Gist (`https://gist.github.com/syuya2036/b47fb2fca58f9877e12255d34560f1a8`) の方針 (SQLite + Tantivy ハイブリッド) に従い、段階的に V1 → V2 → V3 と進めます。
+本書は Prime Files の検索アーキテクチャを定めます。ベースは設計 Gist (`https://gist.github.com/syuya2036/b47fb2fca58f9877e12255d34560f1a8`) の方針 (SQLite + Tantivy ハイブリッド) に従い、段階的に V1 → V2 → V3 と進めます。
 
 旧 `SEARCH_IMPLEMENTATION.md` の Spotlight 一本化方針は **棄却** されました ([ADR 0001](./adr/0001-sqlite-tantivy-hybrid-search.md) 参照)。
 
@@ -50,7 +50,7 @@
 
 home スコープの永続全文インデックス (BM25 + 増分更新) は既に Tantivy で出荷済みであり、V2 はその上に部分一致を足す段である。
 
-現状のバックエンド振り分けは `crates/nohrs-services/src/search/engine.rs` にある。
+現状のバックエンド振り分けは `crates/prime-files-services/src/search/engine.rs` にある。
 
 | スコープ | 現状のバックエンド |
 |---------|------------------|
@@ -85,7 +85,7 @@ ripgrep は非 macOS の root スコープで使われており、この先も�
 
 ### 3.4 ユーザー設定除外
 
-`~/.config/nohrs/config.toml`:
+`~/.config/prime-files/config.toml`:
 
 ```toml
 [indexing.exclude]
@@ -155,10 +155,10 @@ PC のリソースを過度に消費しないよう、適応的に throttle し�
 
 | 状況 | 並列度 | thread priority |
 |------|--------|----------------|
-| 通常 (AC 電源 + idle + nohrs 非 frontmost) | `min(CPU/2, 4)` | UTILITY |
+| 通常 (AC 電源 + idle + Prime Files 非 frontmost) | `min(CPU/2, 4)` | UTILITY |
 | バッテリー駆動 | `min(CPU/4, 2)` | UTILITY |
 | LowPowerMode (macOS) / power-saver (Linux) | **indexing 停止** | — |
-| nohrs が frontmost + UI 操作中 | **一時停止** (UI 操作完了 1 秒後に再開) | — |
+| Prime Files が frontmost + UI 操作中 | **一時停止** (UI 操作完了 1 秒後に再開) | — |
 | OS idle 検出 (>120s 無入力) | "burst mode" (CPU 数全部使う) | BACKGROUND |
 
 ### 7.2 実装メモ
@@ -171,7 +171,7 @@ PC のリソースを過度に消費しないよう、適応的に throttle し�
 | Thread QoS | macOS: `pthread_set_qos_class_self_np` (QoS class)、Linux: `setpriority`/`nice` (スケジューリング優先度)、必要なら `ioprio_set` で IO 優先度。§7.1 の thread priority 列に対応 |
 | アプリ前面状態 | GPUI の `window.is_active()` |
 
-`crates/nohrs-core/src/resource_policy.rs` に `ResourcePolicy::current() -> ResourcePolicy` を提供、cfg で OS 別実装。
+`crates/prime-files-core/src/resource_policy.rs` に `ResourcePolicy::current() -> ResourcePolicy` を提供、cfg で OS 別実装。
 
 ### 7.3 I/O / メモリ バックプレッシャ
 

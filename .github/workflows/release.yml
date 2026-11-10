@@ -27,14 +27,14 @@ jobs:
           shared-key: dist
 
       - name: Build
-        run: cargo build --profile dist -p nohrs -p nohrs-indexer --locked
+        run: cargo build --profile dist -p prime-files -p prime-files-indexer --locked
 
       - name: Version
         id: version
         shell: pwsh
         run: |
           $version = (cargo metadata --no-deps --format-version 1 | ConvertFrom-Json).packages |
-            Where-Object name -eq 'nohrs' | Select-Object -ExpandProperty version
+            Where-Object name -eq 'prime-files' | Select-Object -ExpandProperty version
           "version=$version" >> $env:GITHUB_OUTPUT
 
       - name: Check the tag matches the version
@@ -57,7 +57,7 @@ jobs:
         run: |
           & "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe" `
             "/DAppVersion=${{ steps.version.outputs.version }}" `
-            "/DExeSource=..\target\dist\nohrs.exe" `
+            "/DExeSource=..\target\dist\prime-files.exe" `
             "/DIndexerSource=..\target\dist\prime-files-indexer.exe" `
             installer\prime-files.iss
           if ($LASTEXITCODE -ne 0) { throw "ISCC failed" }

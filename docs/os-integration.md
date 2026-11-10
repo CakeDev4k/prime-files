@@ -4,7 +4,7 @@
 > Related: [`ROADMAP.md`](./ROADMAP.md) / [`explorer-essentials.md`](./explorer-essentials.md)
 > Source: [#58 のコメント](https://github.com/noh-rs/nohrs/issues/58#issuecomment-4589555237)
 
-本書は nohrs を「Finder を起動しなくても完結するファイラー」にするための **OS レベル統合**の方針を定めます。[`explorer-essentials.md`](./explorer-essentials.md) がファイラー UI (DnD / ファイル操作 / split / tab) に閉じるのに対し、本書はアプリバンドル登録・システムイベント連携・プレビュー連携といった OS 固有のグルーを扱います。
+本書は Prime Files を「Finder を起動しなくても完結するファイラー」にするための **OS レベル統合**の方針を定めます。[`explorer-essentials.md`](./explorer-essentials.md) がファイラー UI (DnD / ファイル操作 / split / tab) に閉じるのに対し、本書はアプリバンドル登録・システムイベント連携・プレビュー連携といった OS 固有のグルーを扱います。
 
 実装は **P2 (Explorer Essentials)** で行う。大半が **アプリバンドル (`.app`) を前提**とするため、最小バンドル生成を P2 に前倒しする (本格パッケージング / `dmg` 配布・notarization は ROADMAP Phase 6)。各項目のフェーズ割当は下表の通り。
 
@@ -17,7 +17,7 @@
 | 3 | `file://` URL スキーム受理 | URL → フォルダを開く | **P2** | 最低限の受理。`odoc`/`GURL` と統合 |
 | 4 | Apple Event 対応 | `odoc` (Open Documents) / `GURL` (Open URL) | **P2** | ダブルクリック・「このアプリで開く」で正しく動く |
 | 5 | 外部アプリとの Drag & Drop | drag-out / drop-in (`NSFilenamesPboardType`) | **P2 (済)** | UI 側は [`explorer-essentials.md` §2](./explorer-essentials.md) で確定済。OS pasteboard 結線のみ本書 |
-| 6 | Quick Look 連携 | `QLPreviewPanel` / QuickLook framework (スペースキー) | **P2→P3** | 既存 in-app preview (`nohrs-pages::explorer::preview`) と棲み分け。OS Quick Look パネル呼び出しは後続 |
+| 6 | Quick Look 連携 | `QLPreviewPanel` / QuickLook framework (スペースキー) | **P2→P3** | 既存 in-app preview (`prime-files-pages::explorer::preview`) と棲み分け。OS Quick Look パネル呼び出しは後続 |
 | 7 | Finder Sync Extension | 右クリックメニュー / バッジ (Dropbox/Git 方式) | **Future** | 任意。別ターゲット (extension) が必要で重い |
 | 8 | File Operations | copy/move/delete/rename/new folder, trash, restore | **P2 (済)** | [`explorer-essentials.md` §1](./explorer-essentials.md) で確定済。本書ではタグ等 OS 固有のみ追跡 |
 | 9 | LaunchServices 登録 | インストール後 `lsregister` で認識 | **P2** | 1〜4 の登録を OS に反映させる工程 |
@@ -45,12 +45,12 @@
 
 ## Linux 等価対応 (並列 TODO)
 
-nohrs は macOS / Linux 両対応のため、上記の macOS 固有機構には Linux 等価が必要 (P2 で詳細化):
+Prime Files は macOS / Linux 両対応のため、上記の macOS 固有機構には Linux 等価が必要 (P2 で詳細化):
 
 | macOS | Linux 等価 |
 |-------|-----------|
 | `CFBundleDocumentTypes` / `public.folder` | XDG MIME (`inode/directory`) + `.desktop` の `MimeType` |
-| `NSFileViewer` / デフォルトファイラー | `xdg-mime default nohrs.desktop inode/directory` |
+| `NSFileViewer` / デフォルトファイラー | `xdg-mime default Prime Files.desktop inode/directory` |
 | Apple Event (`odoc`/`GURL`) | `.desktop` の `Exec=%U` 引数 + D-Bus アクティベーション |
 | LaunchServices / `lsregister` | `update-desktop-database` / `desktop-file-install` |
 | Quick Look | OS 標準プレビューは無し → in-app preview に一本化 |
@@ -58,6 +58,6 @@ nohrs は macOS / Linux 両対応のため、上記の macOS 固有機構には 
 
 ## 8. 実装メモ
 
-- OS 固有コードは `nohrs` (アプリ層) に閉じ込め、`nohrs-ui` / `nohrs-services` には漏らさない (コンポーネントライブラリの app-decoupled 方針)。
+- OS 固有コードは `prime-files` (アプリ層) に閉じ込め、`prime-files-ui` / `prime-files-services` には漏らさない (コンポーネントライブラリの app-decoupled 方針)。
 - macOS バインディングは `objc2` 系 crate を想定。`cfg(target_os = "macos")` / `cfg(target_os = "linux")` で分岐。
 - DnD の OS pasteboard 結線は gpui の `on_drag` / `on_drop` から `NSFilenamesPboardType` を読み書きする層を追加 (UI ロジックは explorer-essentials §2 のまま)。

@@ -53,7 +53,7 @@ pub struct WindowsWindowState {
     pub click_state: ClickState,
     pub current_cursor: Option<HCURSOR>,
     pub nc_button_pressed: Option<u32>,
-    /// NOHRS: what the app said a drop of external files would do under the
+    /// PRIME FILES: what the app said a drop of external files would do under the
     /// pointer (`Window::set_file_drop_effect`), cleared before each move.
     pub file_drop_effect: Option<FileDropEffect>,
 
@@ -883,7 +883,7 @@ impl WindowsDragDropHandler {
         }
     }
 
-    // NOHRS: the keys held during the drag, as OLE reports them. The window
+    // PRIME FILES: the keys held during the drag, as OLE reports them. The window
     // is usually not the focused one while files come in from another
     // program, so its own idea of the modifiers is whatever they were when
     // it last had the keyboard: Shift to move did nothing.
@@ -907,7 +907,7 @@ impl WindowsDragDropHandler {
         }));
     }
 
-    // NOHRS: dispatches a move of the drag and returns the effect the app
+    // PRIME FILES: dispatches a move of the drag and returns the effect the app
     // set for where it is, among those the source allows; "Copy" when the
     // app said nothing, which is all gpui ever answered.
     fn dispatch_drag_move(&self, input: PlatformInput, allowed: DROPEFFECT) -> DROPEFFECT {
@@ -957,7 +957,7 @@ impl IDropTarget_Impl for WindowsDragDropHandler_Impl {
                 if idata.u.hGlobal.is_invalid() {
                     return Ok(());
                 }
-                // Nohrs: the HGLOBAL is the HDROP. 0.2.2 read it as a pointer
+                // Prime Files: the HGLOBAL is the HDROP. 0.2.2 read it as a pointer
                 // to one (`*(hGlobal as *mut HDROP)`), which only worked for
                 // moveable memory, as OLE hands over from another process; a
                 // drag out of this same process carries the Shell's fixed
@@ -1017,7 +1017,7 @@ impl IDropTarget_Impl for WindowsDragDropHandler_Impl {
                 scale_factor,
             ),
         });
-        // NOHRS: the app is asked first, so the cursor and the drag image
+        // PRIME FILES: the app is asked first, so the cursor and the drag image
         // show the effect for where the pointer is now.
         unsafe {
             *pdweffect = self.dispatch_drag_move(input, *pdweffect);
@@ -1047,12 +1047,12 @@ impl IDropTarget_Impl for WindowsDragDropHandler_Impl {
         pt: &POINTL,
         pdweffect: *mut DROPEFFECT,
     ) -> windows::core::Result<()> {
-        // NOHRS: the drop handler reads the modifiers (Shift moves).
+        // PRIME FILES: the drop handler reads the modifiers (Shift moves).
         self.report_drag_keys(grfkeystate);
         let idata_obj = pdataobj.ok()?;
         let mut cursor_position = POINT { x: pt.x, y: pt.y };
         unsafe {
-            // NOHRS: "Copy" even when the app moves. The app moves the files
+            // PRIME FILES: "Copy" even when the app moves. The app moves the files
             // itself, after this returns; answering "Move" would have the
             // source (Explorer) delete the originals too, racing that move.
             // A spot the app refused stays refused.

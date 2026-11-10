@@ -1,0 +1,378 @@
+use prime_files_core::{k, tf};
+use crate::theme::theme;
+use gpui::{AnyElement, Context, IntoElement, div, prelude::*, px, rgb};
+use gpui_component::{Icon, IconName};
+
+/// What a footer status message is claiming, which decides the color it is
+/// painted in.
+///
+/// Three rather than two: an operation can also do what was asked and leave
+/// something of its own behind. Why that needs a reading of its own belongs to
+/// whoever produced the message — this crate knows nothing about file
+/// operations — so here it is only a third color.
+#[derive(Clone, Copy, PartialEq, Eq, Default)]
+pub enum StatusTone {
+    /// It worked, and there is nothing left over.
+    #[default]
+    Normal,
+    /// It worked, and left something behind. The message says where.
+    Warning,
+    /// It did not work.
+    Error,
+}
+
+impl StatusTone {
+    fn color(self) -> u32 {
+        match self {
+            Self::Normal => theme::gray_700(),
+            Self::Warning => theme::warning(),
+            Self::Error => theme::danger(),
+        }
+    }
+}
+
+/// Properties controlling the contents of the footer status bar.
+#[derive(Clone)]
+pub struct FooterProps {
+    /// Number of currently selected items; shows a "N selected" indicator when greater than zero.
+    pub selected_count: usize,
+    /// Total number of items in the current view.
+    pub total_count: usize,
+    /// Pre-formatted total size of the items.
+    pub total_size: String,
+    /// Current path, displayed (truncated) on the right side of the footer.
+    pub current_path: String,
+    /// Active Git branch name, shown when present.
+    pub git_branch: Option<String>,
+    /// Storage backend status (e.g. S3 connection), shown when present.
+    pub storage_status: Option<String>,
+    /// Indexing progress in the range 0.0..=1.0; the indicator is hidden once it reaches 1.0.
+    pub indexing_progress: Option<f32>,
+    /// Transient message surfaced to the user. `status_tone` decides how it is
+    /// painted, and with that what it is claiming happened.
+    pub status_message: Option<String>,
+    /// What `status_message` is reporting.
+    pub status_tone: StatusTone,
+}
+
+impl Default for FooterProps {
+    fn default() -> Self {
+        Self {
+            selected_count: 0,
+            total_count: 0,
+            total_size: String::from("0 B"),
+            current_path: String::from("/"),
+            git_branch: None,
+            storage_status: None,
+            indexing_progress: None,
+            status_message: None,
+            status_tone: StatusTone::Normal,
+        }
+    }
+}
+
+/// A VSCode-like footer (status bar). `trailing` is drawn at the right edge,
+/// before the path: a control the page hosting the footer owns, such as the
+/// explorer's zoom.
+pub fn footer<V: gpui::Render>(
+    props: FooterProps,
+    trailing: Option<AnyElement>,
+    cx: &mut Context<V>,
+) -> impl IntoElement + use<V> {
+    div()
+        .h(px(28.0))
+        .w_full()
+        .flex()
+        .items_center()
+        .justify_between()
+        .px(px(12.0))
+        .bg(rgb(theme::footer_bg()))
+        .border_t_1()
+        .border_color(rgb(theme::border()))
+        .child(
+            // Left section - Status items
+            div()
+                .flex()
+                .items_center()
+                .gap_1()
+                // Git branch
+                .when_some(props.git_branch.clone(), |this, branch| {
+                    this.child(footer_item(
+                        ("footer-git", 0_usize),
+                        Some(Icon::new(IconName::GitHub)),
+                        &branch,
+                        cx,
+                    ))
+                })
+                // Indexing Progress
+                .when_some(props.indexing_progress, |this, progress| {
+                    if progress < 1.0 {
+                        let percent = (progress * 100.0) as u32;
+                        this.child(footer_item(
+                            ("footer-indexing", 99_usize),
+                            Some(Icon::new(IconName::Loader)),
+                            &tf!("Indexando: {percent}%", percent = percent),
+                            cx,
+                        ))
+                    } else {
+                        this
+                    }
+                })
+                // Selected items
+                .when(props.selected_count > 0, |this| {
+                    this.child(footer_item(
+                        ("footer-selected", 1_usize),
+                        Some(Icon::new(IconName::CircleCheck)),
+                        &tf!("{n} selecionados", n = props.selected_count),
+                        cx,
+                    ))
+                })
+                // Total items
+                .child(footer_item(
+                    ("footer-total", 2_usize),
+                    Some(Icon::new(IconName::Folder)),
+                    &prime_files_core::i18n::plural(props.total_count, k!("{n} item"), k!("{n} itens")),
+                    cx,
+                ))
+                // Total size, which no icon in the set describes; the label
+                // alone is unambiguous next to the item count.
+                .child(footer_item(
+                    ("footer-size", 3_usize),
+                    None,
+                    &props.total_size,
+                    cx,
+                ))
+                // Transient status / error message
+                .when_some(props.status_message.clone(), |this, message| {
+                    let color = props.status_tone.color();
+                    this.child(
+                        div()
+                            .id(("footer-status", 6_usize))
+                            .h(px(24.0))
+                            .px(px(8.0))
+                            .flex()
+                            .items_center()
+                            .gap_1()
+                            .child(Icon::new(IconName::Info).size_3().text_color(rgb(color)))
+                            .child(
+                                // Keep the status on one line so a long or
+                                // multi-line message can't overflow the footer.
+                                //
+                                // `text_ellipsis` because a warning can name
+                                // several places at once and a deep path spends
+                                // the line quickly: without it the text stops
+                                // mid-word with nothing to say it was cut, so a
+                                // location scrolled past the edge looks like a
+                                // location that was never reported.
+                                div()
+                                    .text_xs()
+                                    .whitespace_nowrap()
+                                    .overflow_hidden()
+                                    .text_ellipsis()
+                                    .text_color(rgb(color))
+                                    .child(message),
+                            ),
+                    )
+                }),
+        )
+        .child(
+            // Right section - Info items
+            div()
+                .flex()
+                .items_center()
+                .gap_1()
+                // Storage status (S3 connection, etc)
+                .when_some(props.storage_status, |this, status| {
+                    this.child(footer_item(
+                        ("footer-storage", 4_usize),
+                        Some(
+                            Icon::new(Icon::empty())
+                                .path(gpui::SharedString::from("icons/database.svg")),
+                        ),
+                        &status,
+                        cx,
+                    ))
+                })
+                .children(trailing)
+                // Current path indicator
+                .child(footer_item(
+                    ("footer-path", 5_usize),
+                    Some(Icon::new(IconName::FolderOpen)),
+                    &truncate_path(&props.current_path, 30),
+                    cx,
+                )),
+        )
+}
+
+/// One status-bar readout. These are informational, so they carry no pointer
+/// cursor or hover fill — nothing here is clickable.
+fn footer_item<V: gpui::Render>(
+    id: impl Into<gpui::ElementId>,
+    icon: Option<Icon>,
+    label: &str,
+    _cx: &mut Context<V>,
+) -> impl IntoElement {
+    let label = label.to_string();
+    let has_label = !label.is_empty();
+
+    div()
+        .id(id)
+        .h(px(24.0))
+        .px(px(6.0))
+        .flex()
+        .items_center()
+        .gap_1p5()
+        .when_some(icon, |this, icon| {
+            this.child(icon.size_3().text_color(rgb(theme::gray_500())))
+        })
+        .when(has_label, |this| {
+            this.child(
+                // `overflow_hidden` is load-bearing, not decoration: it drops a
+                // flex item's automatic minimum size to zero, so a long label
+                // (a branch name, a storage status) ellipsizes when the bar runs
+                // out of room instead of forcing the row wider and pushing the
+                // right-hand section off-window.
+                div()
+                    .text_xs()
+                    .whitespace_nowrap()
+                    .overflow_hidden()
+                    .text_ellipsis()
+                    .text_color(rgb(theme::gray_600()))
+                    .child(label),
+            )
+        })
+}
+
+/// Hard cap on the elided path's final component. The middle-elided form keeps
+/// that component whole, so on its own a pathological directory name is
+/// unbounded and — the label being `whitespace_nowrap` — would push the footer's
+/// right-hand section past the window edge. Set well above ordinary names so
+/// real paths are untouched.
+const MAX_TAIL_CHARS: usize = 40;
+
+/// The last `max_chars` characters of `s`. Counts characters rather than bytes:
+/// byte slicing panics when the cut lands inside a multi-byte character, which a
+/// non-ASCII path would hit.
+fn tail_chars(s: &str, max_chars: usize) -> String {
+    let count = s.chars().count();
+    if count <= max_chars {
+        return s.to_string();
+    }
+    s.chars().skip(count - max_chars).collect()
+}
+
+fn truncate_path(path: &str, max_len: usize) -> String {
+    if path.chars().count() <= max_len {
+        return path.to_string();
+    }
+
+    let parts: Vec<&str> = path.split('/').collect();
+    if parts.len() <= 2 {
+        return format!("...{}", tail_chars(path, max_len));
+    }
+
+    // Show first and last parts
+    format!(
+        "{}/.../{}",
+        parts[0],
+        tail_chars(parts[parts.len() - 1], MAX_TAIL_CHARS)
+    )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{FooterProps, StatusTone, footer, truncate_path};
+    use gpui::{IntoElement, Render, TestAppContext, Window};
+
+    #[test]
+    fn short_paths_are_returned_unchanged() {
+        assert_eq!(truncate_path("/a/b", 10), "/a/b");
+    }
+
+    #[test]
+    fn long_multi_segment_paths_elide_the_middle() {
+        let path = "/usr/local/share/prime-files/config.toml";
+        assert_eq!(truncate_path(path, 10), "/.../config.toml");
+    }
+
+    #[test]
+    fn elided_paths_bound_their_final_component() {
+        // The status bar renders this with `whitespace_nowrap`, so an unbounded
+        // tail would push the right-hand section off-window.
+        let path = format!("/home/user/{}", "d".repeat(300));
+        let truncated = truncate_path(&path, 30);
+        assert!(truncated.starts_with("/.../"));
+        assert!(truncated.chars().count() <= 5 + super::MAX_TAIL_CHARS);
+    }
+
+    #[test]
+    fn multibyte_paths_do_not_panic() {
+        // Byte slicing here used to cut inside a multi-byte character.
+        let truncated = truncate_path("日本語のとても長いファイル名です", 5);
+        assert!(truncated.starts_with("..."));
+    }
+
+    #[test]
+    fn long_single_segment_paths_keep_the_tail() {
+        let truncated = truncate_path("averylongsinglefilename.txt", 8);
+        assert!(truncated.starts_with("..."));
+        assert!(truncated.ends_with("ame.txt"));
+    }
+
+    // Host view so `footer` (which needs `&mut Context<V: Render>`) can be built
+    // inside a test window. `render` records that it ran; building the element
+    // tree eagerly evaluates every `when`/`when_some` branch, so a single draw
+    // exercises whichever footer sections the props enable.
+    struct FooterHost {
+        props: FooterProps,
+        renders: usize,
+    }
+
+    impl Render for FooterHost {
+        fn render(
+            &mut self,
+            _window: &mut Window,
+            cx: &mut gpui::Context<Self>,
+        ) -> impl IntoElement {
+            self.renders += 1;
+            footer(self.props.clone(), None, cx)
+        }
+    }
+
+    #[gpui::test]
+    async fn footer_renders_every_status_section(cx: &mut TestAppContext) {
+        // The footer paints `Icon`s, which read the gpui-component `Theme` global.
+        cx.update(gpui_component::init);
+        let props = FooterProps {
+            selected_count: 2,
+            total_count: 5,
+            total_size: "1.0 KB".into(),
+            current_path: "/usr/local/share/prime-files/config.toml".into(),
+            git_branch: Some("main".into()),
+            storage_status: Some("S3: connected".into()),
+            indexing_progress: Some(0.5),
+            status_message: Some("scan failed".into()),
+            status_tone: StatusTone::Error,
+        };
+        let (host, cx) = cx.add_window_view(|_window, _cx| FooterHost { props, renders: 0 });
+        cx.run_until_parked();
+        host.read_with(cx, |host, _cx| assert!(host.renders > 0));
+    }
+
+    #[gpui::test]
+    async fn footer_renders_with_status_sections_absent(cx: &mut TestAppContext) {
+        cx.update(gpui_component::init);
+        // The complementary branches: no git/storage, completed indexing
+        // (>= 1.0 hides the indicator), no selection, non-error status.
+        let props = FooterProps {
+            total_count: 0,
+            indexing_progress: Some(1.0),
+            status_message: Some("ready".into()),
+            status_tone: StatusTone::Warning,
+            ..FooterProps::default()
+        };
+        let (host, cx) = cx.add_window_view(|_window, _cx| FooterHost { props, renders: 0 });
+        cx.run_until_parked();
+        host.read_with(cx, |host, _cx| assert!(host.renders > 0));
+    }
+}

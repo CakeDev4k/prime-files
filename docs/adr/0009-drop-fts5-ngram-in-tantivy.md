@@ -16,7 +16,7 @@
 
 この段階分けの前提は「tantivy の大きな依存を払う前に、SQLite だけで永続全文検索を得る」という踏み台であった。
 
-その前提は現在のコードでは成立しない。`crates/nohrs-services/src/search/` の実装を確認した結果は以下のとおりである。
+その前提は現在のコードでは成立しない。`crates/prime-files-services/src/search/` の実装を確認した結果は以下のとおりである。
 
 - `IndexManager` が tantivy のインデックスと writer を保持し、全体インデックスと増分インデックスの双方を実装している
 - スキーマは `path` (STRING) / `filename` (TEXT) / `content` (TEXT) / `last_modified` (FAST) / `is_directory` (FAST) であり、**本文を全文インデックスしている**
@@ -50,7 +50,7 @@ SQLite の役割は検索から外し、**状態管理に専念させる**。
 | 担当 | 役割 |
 |------|------|
 | **tantivy** | 全文検索 (BM25)、ファイル名・パスの部分一致 (ngram)、code-aware ngrams・identifier 分解 (P4) |
-| **SQLite (`nohrs-store`)** | メタデータ (path / mtime / size / inode / hash)、削除追跡、状態管理、差分検出 |
+| **SQLite (`prime-files-store`)** | メタデータ (path / mtime / size / inode / hash)、削除追跡、状態管理、差分検出 |
 | **notify-debouncer-mini** | ファイルシステム変更検出 |
 
 改訂後の段階移行は以下とする。

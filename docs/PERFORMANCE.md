@@ -1,4 +1,4 @@
-# Desempenho do Nohrs (fork Windows)
+# Desempenho do Prime Files (fork Windows)
 
 Registro das passadas de desempenho no formato de
 [`OTIMIZACAO.md`](../../OTIMIZACAO.md) §11. Os números são da máquina do dono
@@ -9,10 +9,10 @@ Registro das passadas de desempenho no formato de
 ### 1. Listagem, ordem, miniaturas e desenho da lista (04/11/2026)
 
 **Sintoma.** Nenhum relatado; passada pedida pelo dono para aplicar o guia de
-otimização ao Nohrs: "renderização de arquivos, memória, CPU, escalável". Por
+otimização ao Prime Files: "renderização de arquivos, memória, CPU, escalável". Por
 isso cada achado abaixo começa pela medida ou pela contagem, não pela queixa.
 
-**Base.** `crates/nohrs-services/examples/listing_ab.rs` (listagem inteira,
+**Base.** `crates/prime-files-services/examples/listing_ab.rs` (listagem inteira,
 mediana de 7 rodadas alternadas, release) e o teste `sort_timing` de
 `explorer/entries.rs` (35.000 nomes, `--release --ignored`). Antes de mudar,
 o A/B rodou com os dois lados iguais e deu números iguais: o instrumento não
@@ -125,7 +125,7 @@ explorador e os testes; fica para uma passada própria, se a memória por item
 aparecer numa medida.
 
 **Não conferido.**
-- Nada foi visto na tela: o Nohrs estava aberto pelo dono durante a passada e o
+- Nada foi visto na tela: o Prime Files estava aberto pelo dono durante a passada e o
   `.exe` de `target\release` não pôde ser substituído. O release compilou em
   `target\ipc\release`.
 - O caminho em segundo plano não foi visto com uma pasta de rede real lenta;
@@ -150,7 +150,7 @@ precisa de chave pré-calculada (`LCMapStringW` + `SORT_DIGITSASNUMBERS`).
 ("listar, deletar, copiar, renomear, preview"). Recortar e colar uma pasta
 dentro do mesmo disco escrevia todos os bytes de novo.
 
-**Base.** `crates/nohrs-services/examples/move_ab.rs` (release, mediana de 5
+**Base.** `crates/prime-files-services/examples/move_ab.rs` (release, mediana de 5
 rodadas alternadas, Premiere aberto, ~700 MB livres). O lado "antes" é a
 literal do que o Windows fazia: `copy_path_no_replace` + `delete_permanent`.
 Rodado com os dois lados iguais antes da mudança, deu 8,1 s contra 6,1 s nos
@@ -206,10 +206,10 @@ mesmo disco agora pode; entre discos continua recusada.
   Windows não substitui pasta nem com o flag.
 - `move_ab` recusa medir se algum lado devolver uma árvore diferente (caminho
   relativo, tamanho, primeiros e últimos 4 KB de cada arquivo).
-- 68 testes do `nohrs-services` e 163 do `nohrs-pages` verdes.
+- 68 testes do `prime-files-services` e 163 do `prime-files-pages` verdes.
 
 **Não conferido.**
-- Nada visto na tela: o Nohrs do dono estava aberto em `target\release`; a
+- Nada visto na tela: o Prime Files do dono estava aberto em `target\release`; a
   build foi em `target\ipc`.
 - Mover para outro disco (o caminho que continua copiando) não foi
   cronometrado, nem pasta de rede ou o Google Drive (`I:`, FAT32 virtual).
@@ -234,7 +234,7 @@ caminho principal preserva (a data do arquivo).
 **Sintoma.** Nenhum relatado; item 3 da leitura de 04/11. Excluir uma
 seleção grande levava segundos por centena de arquivos.
 
-**Base.** `crates/nohrs-services/examples/trash_ab.rs` (release, mediana de 3
+**Base.** `crates/prime-files-services/examples/trash_ab.rs` (release, mediana de 3
 rodadas alternadas, Lixeira real, Premiere aberto). O lado "antes" é a literal
 do `trash_selection` no Windows: um `ops::trash_path(item, None)` por item. A
 linha de 1 arquivo é o controle: os dois lados fazem o mesmo trabalho e deram
@@ -287,10 +287,10 @@ própria Lixeira do Windows (os arquivos `$I`/`$R` de cada item) e não mudou.
   origem é a pasta da rodada (7.266 = 3 × 1.211 × 2).
 
 **Não conferido.**
-- Não visto na tela (o Nohrs do dono aberto em `target\release`).
+- Não visto na tela (o Prime Files do dono aberto em `target\release`).
 - Falha real no meio do lote (arquivo em uso) só no teste com contadores; não
   provocada contra o Shell.
-- O `noh rm` da linha de comando continua item por item (`nohrs-cli/src/rm.rs`).
+- O `noh rm` da linha de comando continua item por item (`prime-files-cli/src/rm.rs`).
 - Excluir permanentemente (Shift+Delete) não foi tocado: é `remove_dir_all`
   por item, sem Shell.
 
@@ -301,7 +301,7 @@ própria Lixeira do Windows (os arquivos `$I`/`$R` de cada item) e não mudou.
 **Sintoma.** Nenhum relatado; item 2 da leitura de 04/11. Colar uma pasta de
 fotos apagava a data de todas: cada cópia saía com a hora do colar.
 
-**Base.** `crates/nohrs-services/examples/copy_ab.rs` (release, mediana de 5
+**Base.** `crates/prime-files-services/examples/copy_ab.rs` (release, mediana de 5
 rodadas alternadas, origem no C:, Premiere aberto). O lado "antes" é a literal
 do `copy_path_no_replace` anterior: `create_new` + `std::io::copy` +
 `set_permissions`. Com os dois lados iguais, antes da mudança, o ruído chegou a
@@ -349,7 +349,7 @@ resultado firme é a data.
 - `copy_ab` recusa medir se a cópia de algum lado diferir da origem.
 
 **Não conferido.**
-- Não visto na tela (o Nohrs do dono aberto em `target\release`).
+- Não visto na tela (o Prime Files do dono aberto em `target\release`).
 - Pasta de rede (onde o `CopyFileExW` deixa o servidor copiar) e o Google
   Drive não foram medidos.
 - Falha no meio de uma cópia grande (disco cheio) não foi provocada; o ramo
@@ -405,10 +405,10 @@ no Explorador.
   `a_renamed_row_stays_selected`.
 - Mutação: tratar todo `reload` como visita reprova dois; manter as pastas
   abertas sem relê-las reprova um; tirar o ajuste da seleção reprova um.
-- 167 testes do `nohrs-pages` verdes.
+- 167 testes do `prime-files-pages` verdes.
 
 **Não conferido.**
-- Não visto na tela (o Nohrs do dono aberto em `target\release`).
+- Não visto na tela (o Prime Files do dono aberto em `target\release`).
 - Ganho de tempo não medido: deixar de moldar de novo os nomes de uma grade
   grande a cada exclusão é estrutural.
 - Renomear o próprio arquivo do visualizador fecha o visualizador (o caminho
@@ -459,7 +459,7 @@ Os cuidados:
   `a_click_during_the_wait_is_not_undone_by_it`.
 - Mutação: abrir na hora reprova o primeiro; não conferir a linha ativa
   reprova o do clique; ignorar o visualizador escondido reprova o dele.
-- 170 testes do `nohrs-pages` verdes.
+- 170 testes do `prime-files-pages` verdes.
 - **Visto na tela**, numa segunda cópia com `LOCALAPPDATA` próprio (setas por
   `PostMessage`, captura por `PrintWindow`), sem tocar a janela do dono: uma
   seta → o visualizador mostra `b.txt`; duas setas seguidas → 30 ms depois a
@@ -482,7 +482,7 @@ desenhava imagens com `img(PathBuf)`, que decodifica o arquivo inteiro em
 resolução cheia, mesmo quando o painel mostra umas centenas de pixels dele.
 
 **Base.** Roteiro `measure-image.ps1` (no scratchpad da sessão): uma cópia do
-Nohrs com `LOCALAPPDATA` próprio abre uma pasta com uma foto de 8000×6000
+Prime Files com `LOCALAPPDATA` próprio abre uma pasta com uma foto de 8000×6000
 (48 MP, JPEG de 0,9 MB), um clique por `PostMessage` na linha da foto, e
 capturas por `PrintWindow` a cada ~50 ms até a foto aparecer no painel; a
 memória é a `PrivateMemorySize64` do processo. Release, Premiere aberto, 3
@@ -529,7 +529,7 @@ diz mais nada. `Thumbnails::picture` responde `Shown`, `Waiting` ou
 - Mutação: sempre decodificar inteira e ignorar o zoom reprovam o primeiro;
   aceitar o ícone como foto e mostrar qualquer tamanho menor enquanto espera
   reprovam o terceiro.
-- 173 testes do `nohrs-pages` verdes.
+- 173 testes do `prime-files-pages` verdes.
 - **Visto na tela** (capturas da cópia isolada): a foto ajustada com o mesmo
   enquadramento de antes, e o zoom a 173% pela decodificação inteira.
 
@@ -631,8 +631,8 @@ passada 1), uma vez por nome; os arquivos compactados também. Teste:
 renomear na thread da interface, nunca ordenar páginas, não esquecer a
 miniatura, não farejar binário, voltar ao `to_lowercase` — cada um reprova o
 seu teste (o de renomear na thread também reprova
-`rename_collision_falls_back_to_numbering`). 78 testes do `nohrs-services` e
-178 do `nohrs-pages` verdes.
+`rename_collision_falls_back_to_numbering`). 78 testes do `prime-files-services` e
+178 do `prime-files-pages` verdes.
 
 **Não conferido.** Nada visto na tela. A vantagem de renomear em segundo plano
 num compartilhamento travado não foi provocada; o renomear de caixa não foi
@@ -658,7 +658,7 @@ nomes mudaram) para o benchmark rodar o código antigo e não uma reescrita
   alternadas, release, num índice sintético de 2,5 milhões de nomes com a
   profundidade de um disco real (`C:\Pasta\Users\editor\Documents\Projetos
   2026\subNN\arquivo`). Recusa medir se os dois lados derem resultados
-  diferentes. `NOHRS_PASS9_INDEX=<everything.idx>` roda no índice salvo; não
+  diferentes. `PRIME_FILES_PASS9_INDEX=<everything.idx>` roda no índice salvo; não
   rodou: o do dono tem 346 MB e a máquina tinha 0,4–3,6 GB livres.
 - `pass_9_parts_speed`: os itens 2 e 3 sozinhos, numa thread.
 
@@ -768,7 +768,7 @@ nada"; vale também para "barato porque não casou".
 Files", com base no OTIMIZACAO.md, no Open Salamander e no EdenExplorer.
 
 **Base.** A linha do tempo das aberturas reais, tirada do log do próprio app
-(`~/.local/state/nohrs/logs`; t0 = "interface language detected"), em cinco
+(`~/.local/state/prime-files/logs`; t0 = "interface language detected"), em cinco
 aberturas de 07–08/11: GPU escolhida em 11–28 ms, "Created device" em
 260–470 ms, "Use Segoe UI" em 420–810 ms, primeira `fs.list_dir` em
 490–1.290 ms. Os dois maiores pedaços antes das fontes foram cronometrados em
@@ -780,7 +780,7 @@ processo novo, sem janela, 5 rodadas alternadas, Premiere fechado.
 `get_adapter` criava um dispositivo D3D11 completo em cada placa só para ver
 se dava, soltava, e `DirectXDevices::new` criava de novo. Agora o dispositivo
 feito ao escolher a placa é o que fica (`third_party/gpui/.../directx_devices.rs`,
-marcado `NOHRS`). A placa que falha continua passando para a próxima, como
+marcado `PRIME FILES`). A placa que falha continua passando para a próxima, como
 antes.
 
 #### O DirectWrite conferia fontes novas a cada abertura
@@ -799,7 +799,7 @@ Mesmas 388 famílias de fontes nos dois casos.
 
 #### Marcas da abertura no log
 
-`nohrs_pages::startup` grava, no alvo `nohrs::startup`, os milissegundos
+`prime_files_pages::startup` grava, no alvo `prime_files::startup`, os milissegundos
 desde a **criação do processo** (`GetProcessTimes`, não o `main`: o que o
 carregador faz antes do `main` também é espera) em cada etapa: `main`,
 `logging`, `config`, `gpui` (Direct3D e DirectWrite prontos), `services`,
@@ -838,3 +838,70 @@ device" e "Use Segoe UI" devem chegar ~265 ms mais cedo.
   ser chamada; não provado.
 - O que vem antes do t0 (processo, log, config) e os 30–470 ms entre as fontes
   e a primeira lista continuam sem medida.
+
+### 11. Memória: o índice do Everything ficava para sempre (09/11/2026)
+
+**Queixa.** "O consumo de RAM ainda está alto para um projeto em Rust."
+
+**Medido** no app do dono aberto havia 4 h 40 (0.3.9 instalada), sem tocar
+nele: `VirtualQueryEx` região por região e uma amostra do conteúdo de cada
+alocação (`ReadProcessMemory`, 48 páginas por região).
+
+| | MB |
+|---|---|
+| Memória privada do processo | 1.122 |
+| Pico de memória paginada | 1.694 |
+| Tabela de C: (3.326.827 nomes): `entries` | 160 (127 em uso) |
+| Tabela de C:: `names` e `lower` | 152 + 152 (111 + 111 em uso) |
+| Tabela de D: (270 mil nomes) | 47 |
+| **Índice do Everything, ao todo** | **~511** |
+| Resto (heap, quadros do gpui, miniaturas) | ~610, 300 deles páginas nunca escritas |
+
+Quase metade da memória privada era o índice, e ele só era lido na primeira
+busca (modo Everything ou Ctrl+T) e nunca mais saía: o app inicia com o
+Windows e fica aberto o dia inteiro. Três causas, da maior para a menor:
+
+- **Nunca era solto.** Agora quem pode buscar segura um `InUse` (o painel
+  no modo, a caixa do Ctrl+T aberta); sem ninguém por `RELEASE_AFTER`
+  (5 min) a tabela sai da memória e a próxima busca a lê do arquivo de cache.
+  Uma varredura ou leitura em curso adia.
+- **Folga de capacidade.** As três partes de cada tabela crescem dobrando,
+  nome a nome: 464 MB reservados para 349 de conteúdo em C:. `Segment::shrink`
+  ao fim de cada disco (MFT e varredura).
+- **Pico ao ler.** `load` lia o arquivo inteiro (354 MB) e copiava os nomes
+  de dentro dele: arquivo e tabela na memória ao mesmo tempo. Agora lê cada
+  parte direto no lugar onde ela fica, e recusa um cabeçalho que promete
+  mais do que o arquivo tem antes de reservar.
+
+**Cobertura.** `a_table_filled_name_by_name_gives_back_what_it_did_not_use`,
+`a_header_promising_more_than_the_file_holds_is_refused_before_reserving`,
+`the_index_is_let_go_only_with_nobody_searching_for_a_while` (só a regra; o
+temporizador não tem teste) e os de leitura que já existiam, que passam pelo
+`load` novo.
+
+**Não conferido.**
+- O app não foi aberto com a mudança: os números de depois (esperado ~120 MB
+  parado, ~470 com o índice carregado) são conta, não medida.
+- Quanto demora a primeira busca depois de o índice ter sido solto (ler
+  354 MB e refazer as máscaras de 3,6 mi de nomes).
+- Uma caixa do Ctrl+T que fique aberta e escondida seguraria o índice.
+
+- **Minúsculas repetidas** (feito depois, a pedido do dono). `lower` repetia
+  `names` byte a byte em todo nome que já é minúsculo (quase todo o WinSxS).
+  Agora o bit `SAME` em `flags` diz "o minúsculo é o próprio nome": `lower`
+  aponta para dentro de `names` e só os nomes com maiúscula guardam a
+  segunda forma. O arquivo virou PFEVRY04 (o bit é salvo); o 03 e o 02 são
+  lidos e compartilhados na leitura (`share_lower`). Uma versão anterior do
+  app recusa o 04 e indexa de novo. Contado no índice real do dono (3,62 mi
+  de nomes): `lower` cai de 118,7 para 27,0 MB, na memória e no arquivo.
+  Testes: `a_name_already_lowercase_is_kept_once` e o de tabela antiga.
+
+**Ficou de fora** (mexe na estrutura):
+- `Entry` tem 40 bytes (37 + alinhamento); `size` e `mask` em 64 bits são
+  metade disso.
+- Durante uma atualização o índice velho e o novo coexistem (2×), de 30 em
+  30 min de uso com o indexador da MFT.
+- Os ~610 MB que não são o índice não foram atribuídos item a item: há
+  blocos de 14–32 MB quase todos zerados (listas de primitivas de quadro do
+  gpui, que crescem até o pior quadro e não encolhem) e o teto de 192 MB de
+  miniaturas por painel.

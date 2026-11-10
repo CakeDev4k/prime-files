@@ -42,7 +42,7 @@
 
 - OS 非依存の検索基盤を獲得 (将来の Linux / Windows 対応で再実装不要)
 - コード対応 (identifier 分解 / ngrams / 正規表現) の検索が可能
-- ユーザー設定の `.gitignore` / 除外パスを完全に nohrs 側で制御できる
+- ユーザー設定の `.gitignore` / 除外パスを完全に Prime Files 側で制御できる
 - plugin (P4) から WIT 経由で search API を提供しやすい
 - Gist 設計案と整合
 

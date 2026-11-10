@@ -80,7 +80,7 @@
 
 再帰コピーは symlink を **リンクとして複製する (辿らない)**。`cp -R` / Finder と同じ挙動で、リンク先がディレクトリでも祖先を指していてもコピーは完走し、ツリー外への読み書きも起こらない。
 
-コピー/移動の宛先は services 側で 2 つの不変条件を守る (`nohrs-services::fs::ops`):
+コピー/移動の宛先は services 側で 2 つの不変条件を守る (`prime-files-services::fs::ops`):
 
 - 宛先がコピー元自身、またはその配下であってはならない。ディレクトリを自身の中へコピーすると無限再帰になり、ファイルを自身へコピーすると読む前に truncate される。
 - 宛先名は単一の通常コンポーネントでなければならない (`destination_in`)。クリップボードやドロップから来た名前をそのまま `join` させない。
@@ -223,6 +223,6 @@
 
 - explorer の state を `Vec<ExplorerState>` に変更し、pane / tab 構造を導入
 - DnD は gpui の `on_drag` / `on_drop` event を使用
-- ファイル操作は `nohrs-services::fs` 経由で、UI から直接 std::fs を呼ばない
+- ファイル操作は `prime-files-services::fs` 経由で、UI から直接 std::fs を呼ばない
 - 進捗は `async-channel` で background → UI
-- undo stack は `nohrs-pages::explorer::undo` で管理
+- undo stack は `prime-files-pages::explorer::undo` で管理

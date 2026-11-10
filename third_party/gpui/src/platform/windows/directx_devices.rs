@@ -110,11 +110,11 @@ fn get_dxgi_factory(debug_layer_available: bool) -> Result<IDXGIFactory6> {
     unsafe { Ok(CreateDXGIFactory2(factory_flag)?) }
 }
 
-// NOHRS: the first adapter that gives a usable device, with that device.
+// PRIME FILES: the first adapter that gives a usable device, with that device.
 // Upstream created a device here only to see that it could, dropped it, and
 // created it again in `DirectXDevices::new`: on the owner's RTX 5050 that
 // first device cost ~136 ms of every start (median of 5 fresh processes,
-// 317 ms for both against 181 ms for one; third_party/gpui/NOHRS.md).
+// 317 ms for both against 181 ms for one; third_party/gpui/PRIME-FILES.md).
 #[inline]
 fn get_adapter(
     dxgi_factory: &IDXGIFactory6,

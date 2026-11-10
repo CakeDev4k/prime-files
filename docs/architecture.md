@@ -3,32 +3,30 @@
 > Status: Draft (P1 で確定する設計)
 > Related: [`ROADMAP.md`](./ROADMAP.md), [ADR 0003 (cargo-workspace-layer-split)](./adr/0003-cargo-workspace-layer-split.md)
 
-本書は nohrs の Cargo workspace 構成、crate 間の依存方向、レイヤーごとの責務、主要なデータフローを定めます。
+本書は Prime Files の Cargo workspace 構成、crate 間の依存方向、レイヤーごとの責務、主要なデータフローを定めます。
 
 ---
 
 ## 1. Workspace Layout
 
 ```text
-nohrs/
+prime-files/
 ├── Cargo.toml                # workspace root (見出しのみ、main package なし)
 ├── rust-toolchain.toml
 ├── crates/
-│   ├── nohrs/                # main binary (P1)
-│   ├── nohrs-cli/            # `noh` binary — rm 等の CLI (P2)
-│   ├── nohrs-core/           # errors / config / telemetry (P1)
-│   ├── nohrs-models/         # FileEntry など pure data types (P1)
-│   ├── nohrs-services/       # fs / search / syntax (P1)
-│   ├── nohrs-ui/             # gpui components / theme / app shell (P1)
-│   ├── nohrs-pages/          # explorer / settings / git / s3 (P1)
-│   ├── nohrs-store/          # SQLite + redb + MetadataStore trait (P2)
-│   ├── nohrs-launcher/       # launcher (P3)
-│   ├── nohrs-plugin-host/    # wasmtime + WIT host (P4)
+│   ├── prime-files/                # main binary (P1)
+│   ├── prime-files-cli/            # `noh` binary — rm 等の CLI (P2)
+│   ├── prime-files-core/           # errors / config / telemetry (P1)
+│   ├── prime-files-models/         # FileEntry など pure data types (P1)
+│   ├── prime-files-services/       # fs / search / syntax (P1)
+│   ├── prime-files-ui/             # gpui components / theme / app shell (P1)
+│   ├── prime-files-pages/          # explorer / settings / git / s3 (P1)
+│   ├── prime-files-store/          # SQLite + redb + MetadataStore trait (P2)
+│   ├── prime-files-launcher/       # launcher (P3)
+│   ├── prime-files-plugin-host/    # wasmtime + WIT host (P4)
 │   └── plugins/              # コアプラグイン群 (P4 以降に追加)
-│       ├── nohrs-plugin-git/
+│       ├── prime-files-plugin-git/
 │       └── ...
-├── docker/                   # dev / ci 用 Dockerfile (P1)
-├── flake.nix                 # Nix devshell (P1)
 ├── docs/                     # 本書を含む設計ドキュメント群
 ├── web/                      # tanstack start + vite+ (P1、Cargo workspace から exclude)
 └── script/                   # 開発用シェルスクリプト
@@ -40,18 +38,18 @@ nohrs/
 [workspace]
 resolver = "2"
 members = [
-  "crates/nohrs",
-  "crates/nohrs-cli",
-  "crates/nohrs-core",
-  "crates/nohrs-models",
-  "crates/nohrs-services",
-  "crates/nohrs-ui",
-  "crates/nohrs-pages",
+  "crates/prime-files",
+  "crates/prime-files-cli",
+  "crates/prime-files-core",
+  "crates/prime-files-models",
+  "crates/prime-files-services",
+  "crates/prime-files-ui",
+  "crates/prime-files-pages",
 ]
 # P2 以降:
-#   "crates/nohrs-store",
-#   "crates/nohrs-launcher",
-#   "crates/nohrs-plugin-host",
+#   "crates/prime-files-store",
+#   "crates/prime-files-launcher",
+#   "crates/prime-files-plugin-host",
 #   "crates/plugins/*"
 
 exclude = ["web"]
@@ -63,7 +61,7 @@ rust-version = "1.95"
 license      = "MIT"
 repository   = "https://github.com/noh-rs/nohrs"
 homepage     = "https://nohrs.app"
-authors      = ["nohrs contributors"]
+authors      = ["prime-files contributors"]
 
 [workspace.dependencies]
 anyhow            = "1"
@@ -94,7 +92,7 @@ expect_used  = "warn"
 
 ```text
                  ┌──────────────┐              ┌─────────────────┐
-                 │  nohrs (bin) │              │ nohrs-cli (bin) │   GUI / `noh` 各エントリポイント
+                 │  Prime Files (bin) │              │ prime-files-cli (bin) │   GUI / `noh` 各エントリポイント
                  └──────┬───────┘              └────────┬────────┘
                         │                               │
         ┌───────────────┼───────────────┐               │
@@ -128,16 +126,16 @@ expect_used  = "warn"
 
 | crate | 主な責務 | 依存 |
 |-------|---------|------|
-| **nohrs (bin)** | GUI エントリ、`nohrs config` サブコマンド、起動シーケンス | 全 crate |
-| **nohrs-cli (bin `noh`)** | ターミナル用エントリ (`rm` / `restore` / `trash` / `shim` / `doctor`)。GUI を開かない toolkit-free バイナリ。詳細は [`docs/cli.md`](./cli.md) | `core`, `services`, `store` |
-| **nohrs-pages** | explorer / settings / git / s3 などのページ | `ui`, `services`, `models`, `core`, (P2) `store` |
-| **nohrs-launcher** (P3) | ランチャー window、Command trait、結果リスト | `ui`, `services`, `core`, `store`, (P4) `plugin-host` |
-| **nohrs-plugin-host** (P4) | wasmtime + wasmtime-wasi + WIT host、permission ガード、専用 tokio runtime (隔離) | `core`, `store`, `services`, `models` |
-| **nohrs-ui** | gpui コンポーネント、テーマ、ウィンドウ管理 | `core`, `models` |
-| **nohrs-services** | fs listing / mutation / ゴミ箱、search、syntax highlighting | `core`, `models`, `store` |
-| **nohrs-store** (P2) | SQLite (rusqlite、メタデータ / 履歴 / ゴミ箱台帳) + redb (host KV) | `core`, `models` |
-| **nohrs-models** | FileEntry など pure data types | `core` |
-| **nohrs-core** | errors / config / telemetry / resource policy | — |
+| **prime-files (bin)** | GUI エントリ、`prime-files config` サブコマンド、起動シーケンス | 全 crate |
+| **prime-files-cli (bin `noh`)** | ターミナル用エントリ (`rm` / `restore` / `trash` / `shim` / `doctor`)。GUI を開かない toolkit-free バイナリ。詳細は [`docs/cli.md`](./cli.md) | `core`, `services`, `store` |
+| **prime-files-pages** | explorer / settings / git / s3 などのページ | `ui`, `services`, `models`, `core`, (P2) `store` |
+| **prime-files-launcher** (P3) | ランチャー window、Command trait、結果リスト | `ui`, `services`, `core`, `store`, (P4) `plugin-host` |
+| **prime-files-plugin-host** (P4) | wasmtime + wasmtime-wasi + WIT host、permission ガード、専用 tokio runtime (隔離) | `core`, `store`, `services`, `models` |
+| **prime-files-ui** | gpui コンポーネント、テーマ、ウィンドウ管理 | `core`, `models` |
+| **prime-files-services** | fs listing / mutation / ゴミ箱、search、syntax highlighting | `core`, `models`, `store` |
+| **prime-files-store** (P2) | SQLite (rusqlite、メタデータ / 履歴 / ゴミ箱台帳) + redb (host KV) | `core`, `models` |
+| **prime-files-models** | FileEntry など pure data types | `core` |
+| **prime-files-core** | errors / config / telemetry / resource policy | — |
 
 ### 依存ルール
 
@@ -204,11 +202,11 @@ Launcher render view-node or instant result
 
 ## 4. クレート命名規約
 
-- **本体 crate**: `nohrs-<role>` (例: `nohrs-core`, `nohrs-services`)
-- **コアプラグイン**: `nohrs-plugin-<name>` (例: `nohrs-plugin-git`、`crates/plugins/` 配下)
+- **本体 crate**: `prime-files-<role>` (例: `prime-files-core`, `prime-files-services`)
+- **コアプラグイン**: `prime-files-plugin-<name>` (例: `prime-files-plugin-git`、`crates/plugins/` 配下)
 - **公開ライブラリ (Future Work)**: 別リポジトリで独立、prefix は文脈に応じて (例: `noh-rs/gpui-wasmtime`)
 
-`nohrs-` prefix を統一する理由: crates.io 公開時の名前衝突回避と、依存ツリーで一目で nohrs 由来と分かるため。
+`prime-files-` prefix を統一する理由: crates.io 公開時の名前衝突回避と、依存ツリーで一目で Prime Files 由来と分かるため。
 
 ---
 
@@ -221,7 +219,7 @@ Launcher render view-node or instant result
 | `clippy::expect_used` | `warn` | 同上 |
 | `missing_docs` | `warn` (P1 から)、`deny` (P7 から) | `cfg(test)` モジュールは除外 |
 | `disallowed-methods` | clippy.toml で `std::fs::read` 等を禁止し `services::fs` 経由を強制 | 必要なら crate ローカルで `#[allow]` |
-| `bans` (cargo-deny) | `tokio` を deny (P2 以降)。`nohrs-plugin-host` 経由のみ `wrappers` で許可 | plugin 実行層 (P4) |
+| `bans` (cargo-deny) | `tokio` を deny (P2 以降)。`prime-files-plugin-host` 経由のみ `wrappers` で許可 | plugin 実行層 (P4) |
 
 ---
 
@@ -229,20 +227,20 @@ Launcher render view-node or instant result
 
 - `mod.rs` は **使わない**。`src/foo.rs` + `src/foo/...` のフラット構成
 - 新規 crate は `[lib] path = "src/<crate-name>.rs"` で root を明示
-- `src/lib.rs` のような generic 名は避け、`src/nohrs_core.rs` のように記述
+- `src/lib.rs` のような generic 名は避け、`src/prime_files_core.rs` のように記述
 
 ---
 
 ## 7. 移行計画 (P1)
 
-現状の単一 crate `nohrs` (約 5000 行) を 6 crate に分割するロードマップ:
+現状の単一 crate `prime-files` (約 5000 行) を 6 crate に分割するロードマップ:
 
-1. `crates/nohrs-core/` を切り出し (`src/core/` → `crates/nohrs-core/src/nohrs_core.rs`)
-2. `crates/nohrs-models/` を切り出し
-3. `crates/nohrs-services/` を切り出し
-4. `crates/nohrs-ui/` を切り出し
-5. `crates/nohrs-pages/` を切り出し
-6. `crates/nohrs/` (binary) を整理、`src/gui/main.rs` を `crates/nohrs/src/main.rs` へ
+1. `crates/prime-files-core/` を切り出し (`src/core/` → `crates/prime-files-core/src/prime_files_core.rs`)
+2. `crates/prime-files-models/` を切り出し
+3. `crates/prime-files-services/` を切り出し
+4. `crates/prime-files-ui/` を切り出し
+5. `crates/prime-files-pages/` を切り出し
+6. `crates/prime-files/` (binary) を整理、`src/gui/main.rs` を `crates/prime-files/src/main.rs` へ
 7. workspace inheritance に移行
 8. `cargo fmt && cargo clippy && cargo test` が green
 

@@ -1,6 +1,6 @@
 # Architecture Decision Records (ADR)
 
-このディレクトリは nohrs の **設計判断の事後記録 (ADR)** を蓄積します。RFC (事前提案) は GitHub Discussions で議論し、固まった判断のみ ADR としてここに残します。
+このディレクトリは Prime Files の **設計判断の事後記録 (ADR)** を蓄積します。RFC (事前提案) は GitHub Discussions で議論し、固まった判断のみ ADR としてここに残します。
 
 ## 採用フォーマット
 
@@ -34,9 +34,6 @@
 | [0003](./0003-cargo-workspace-layer-split.md) | レイヤー別 Cargo workspace 分割 | Accepted |
 | [0004](./0004-remove-tokio.md) | tokio をアプリコアから撤去し WASI プラグイン層に隔離 | Accepted |
 | [0005](./0005-wit-bindgen-component-model.md) | プラグインホストは wit-bindgen + WASM Component Model 一直線 | Accepted |
-| [0006](./0006-monorepo-web.md) | web/ を nohrs リポジトリ同居 (monorepo) | Accepted |
-| [0007](./0007-cloudflare-hosting.md) | web ホスティングは Cloudflare Pages + Workers + R2 | Accepted |
-| [0008](./0008-web-design-system.md) | web のデザイン北極星は zed.dev、FE は Tailwind v4 + Radix 再スキン | Accepted |
 | [0009](./0009-drop-fts5-ngram-in-tantivy.md) | 全文・部分一致とも tantivy に集約し SQLite FTS5 を採用しない | Accepted |
 
 ## 命名規約

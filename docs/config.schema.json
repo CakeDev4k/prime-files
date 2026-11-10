@@ -81,13 +81,13 @@
             "log_redb_ops": false,
             "slow_query_ms": 0
           },
-          "description": "Performance logging for the persistence layer (`nohrs-store`)."
+          "description": "Performance logging for the persistence layer (`prime-files-store`)."
         }
       },
       "type": "object"
     },
     "DiagnosticsStore": {
-      "description": "Performance logging for the SQLite / redb store. All off by default, so a\ndefault config adds no overhead. Output goes through `tracing` (targets\n`nohrs_store::sql` / `nohrs_store::redb`) and is filterable with `RUST_LOG`.",
+      "description": "Performance logging for the SQLite / redb store. All off by default, so a\ndefault config adds no overhead. Output goes through `tracing` (targets\n`prime_files_store::sql` / `prime_files_store::redb`) and is filterable with `RUST_LOG`.",
       "properties": {
         "log_all_queries": {
           "default": false,
@@ -129,6 +129,46 @@
         {
           "const": "bottom",
           "description": "A band along the bottom.",
+          "type": "string"
+        }
+      ]
+    },
+    "DriveLabel": {
+      "description": "How a drive is named in the sidebar.",
+      "oneOf": [
+        {
+          "const": "name",
+          "description": "Explorer's name: \"Disco Local (C:)\".",
+          "type": "string"
+        },
+        {
+          "const": "letter-first",
+          "description": "The letter, then the label: \"C: Disco Local\".",
+          "type": "string"
+        },
+        {
+          "const": "letter",
+          "description": "The letter alone: \"C:\".",
+          "type": "string"
+        }
+      ]
+    },
+    "DriveUsage": {
+      "description": "Where a drive's usage bar goes.",
+      "oneOf": [
+        {
+          "const": "none",
+          "description": "No bar.",
+          "type": "string"
+        },
+        {
+          "const": "beside",
+          "description": "A short bar after the name, as Prime Files always drew it.",
+          "type": "string"
+        },
+        {
+          "const": "below",
+          "description": "A bar the width of the row under the name, as File Pilot's.",
           "type": "string"
         }
       ]
@@ -337,6 +377,21 @@
       },
       "type": "object"
     },
+    "NewTabMode": {
+      "description": "What a new tab opens first: the folder at once, or the box that asks for\na path.",
+      "oneOf": [
+        {
+          "const": "folder",
+          "description": "A tab at `new_tab_path` at once, as Explorer does.",
+          "type": "string"
+        },
+        {
+          "const": "box",
+          "description": "The box that searches the computer or takes a typed path.",
+          "type": "string"
+        }
+      ]
+    },
     "OpenFromOtherApps": {
       "description": "See [`Explorer::open_from_other_apps`].",
       "oneOf": [
@@ -406,6 +461,226 @@
         {
           "const": "ripgrep",
           "description": "External `ripgrep`.",
+          "type": "string"
+        }
+      ]
+    },
+    "Sidebar": {
+      "description": "The sidebar: a style that copies another explorer's, and the parts of it\nthat can be changed one by one. A part left out takes the style's value,\nso changing the style changes everything not set by hand.",
+      "properties": {
+        "cards": {
+          "default": null,
+          "description": "Each group in a card of its own, as One Commander's.",
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "density": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/SidebarDensity"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "How tall the rows are."
+        },
+        "drive_label": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/DriveLabel"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "How a drive is named."
+        },
+        "drive_usage": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/DriveUsage"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "How full each drive is: a bar beside its name, under it, or none."
+        },
+        "follow_folder": {
+          "default": null,
+          "description": "The tree opens by itself down to the folder on screen, as Explorer's\n\"Expand to open folder\".",
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "headers": {
+          "default": null,
+          "description": "Every group under its name, which a click folds; off, groups are\napart by a line.",
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "icons_only": {
+          "default": null,
+          "description": "A narrow strip of icons, the names in their tooltips.",
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "recent_count": {
+          "default": null,
+          "description": "How many folders the recent group lists, 1..=50.",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "sections": {
+          "default": null,
+          "description": "The groups shown, top to bottom.",
+          "items": {
+            "$ref": "#/$defs/SidebarSection"
+          },
+          "type": [
+            "array",
+            "null"
+          ]
+        },
+        "style": {
+          "$ref": "#/$defs/SidebarStyle",
+          "default": "explorer",
+          "description": "Whose sidebar to copy."
+        },
+        "tree": {
+          "default": null,
+          "description": "Drives open into their folders, as a tree; off, they are links.",
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "tree_lines": {
+          "default": null,
+          "description": "Lines down each level of the tree.",
+          "type": [
+            "boolean",
+            "null"
+          ]
+        }
+      },
+      "type": "object"
+    },
+    "SidebarDensity": {
+      "description": "How tall the sidebar's rows are.",
+      "oneOf": [
+        {
+          "const": "compact",
+          "description": "22 px.",
+          "type": "string"
+        },
+        {
+          "const": "normal",
+          "description": "28 px, Explorer's.",
+          "type": "string"
+        },
+        {
+          "const": "comfortable",
+          "description": "34 px.",
+          "type": "string"
+        }
+      ]
+    },
+    "SidebarSection": {
+      "description": "A group of the sidebar.",
+      "oneOf": [
+        {
+          "const": "recent",
+          "description": "The folders opened last, newest first.",
+          "type": "string"
+        },
+        {
+          "const": "quick-access",
+          "description": "Windows' Quick access: pinned and frequent folders.",
+          "type": "string"
+        },
+        {
+          "const": "favorites",
+          "description": "Files added with Windows' \"Add to favorites\".",
+          "type": "string"
+        },
+        {
+          "const": "bookmarks",
+          "description": "Folders bookmarked here, in groups of their own.",
+          "type": "string"
+        },
+        {
+          "const": "user-folders",
+          "description": "Home, Desktop, Documents, Downloads, Pictures, Music, Videos.",
+          "type": "string"
+        },
+        {
+          "const": "drives",
+          "description": "The drives, each a link.",
+          "type": "string"
+        },
+        {
+          "const": "this-pc",
+          "description": "This PC with the drives under it.",
+          "type": "string"
+        },
+        {
+          "const": "network",
+          "description": "Network, the places added by hand, and Linux.",
+          "type": "string"
+        },
+        {
+          "const": "tags",
+          "description": "The tags.",
+          "type": "string"
+        }
+      ]
+    },
+    "SidebarStyle": {
+      "description": "Whose sidebar the style copies.",
+      "oneOf": [
+        {
+          "const": "explorer",
+          "description": "Windows Explorer: Quick access, then This PC as a tree.",
+          "type": "string"
+        },
+        {
+          "const": "filepilot",
+          "description": "File Pilot: recent folders, bookmarks, drives with their usage, the\nuser's folders.",
+          "type": "string"
+        },
+        {
+          "const": "onecommander",
+          "description": "One Commander: drives, groups of bookmarks, the folders visited.",
+          "type": "string"
+        },
+        {
+          "const": "finder",
+          "description": "macOS Finder: the user's folders, bookmarks, locations, tags.",
+          "type": "string"
+        },
+        {
+          "const": "classic",
+          "description": "Directory Opus and XYplorer: bookmarks over a tree with lines.",
+          "type": "string"
+        },
+        {
+          "const": "minimal",
+          "description": "A strip of icons.",
           "type": "string"
         }
       ]
@@ -494,6 +769,11 @@
           "description": "Whether sound files show their waveform instead of their icon in the\nicons view.",
           "type": "boolean"
         },
+        "command_bar": {
+          "default": false,
+          "description": "Whether a row of buttons for the common file commands sits under the\npath, as Windows 11's Explorer has.",
+          "type": "boolean"
+        },
         "default_sort": {
           "$ref": "#/$defs/SortOrder",
           "default": "name",
@@ -502,6 +782,11 @@
         "default_sort_descending": {
           "default": false,
           "description": "Whether that default runs from Z to A, largest or newest first.",
+          "type": "boolean"
+        },
+        "folder_previews": {
+          "default": false,
+          "description": "Whether a folder in the icons view is drawn as the first picture or\nvideo inside it, full size, instead of Windows' folder icon.",
           "type": "boolean"
         },
         "hover_audio": {
@@ -520,6 +805,16 @@
           "description": "Identifier of the icon pack used to render entries.",
           "type": "string"
         },
+        "infinite_scroll": {
+          "default": false,
+          "description": "Whether stepping past one end of a listing continues from the other.",
+          "type": "boolean"
+        },
+        "info_tips": {
+          "default": true,
+          "description": "Whether resting the pointer on an item shows its details (type,\nsize, dimensions, length), as Explorer's pop-up descriptions do.",
+          "type": "boolean"
+        },
         "language": {
           "default": "auto",
           "description": "Interface language: `\"auto\"` follows the Windows regional format\n(then the country), or one of `\"pt-BR\"`, `\"en\"`, `\"es\"`, `\"fr\"`, `\"de\"`,\n`\"it\"`, `\"ru\"`, `\"ja\"`, `\"zh-CN\"`, `\"ar\"`, `\"hu\"`.",
@@ -530,6 +825,16 @@
           "description": "Most lines a name takes under an icon in the icons view, the last\none ending in \"…\" when the name needs more; 0 = no limit.",
           "minimum": 0,
           "type": "integer"
+        },
+        "new_tab_mode": {
+          "$ref": "#/$defs/NewTabMode",
+          "default": "box",
+          "description": "What Ctrl+T and the `+` open first: `box` (the default, the box that\nasks) or `folder` (a tab at `new_tab_path` at once). Shift+click on\nthe `+`, and Ctrl+Shift+T, always open the box."
+        },
+        "new_tab_path": {
+          "default": "",
+          "description": "Folder a new tab starts in (Ctrl+T and the `+`). Empty follows the\nhome folder. A folder that no longer exists falls back to home.",
+          "type": "string"
         },
         "preview_autoplay": {
           "default": false,
@@ -545,6 +850,16 @@
         "show_hidden": {
           "default": false,
           "description": "Whether dotfiles are shown in listings.",
+          "type": "boolean"
+        },
+        "tab_icons": {
+          "default": false,
+          "description": "Whether each tab shows a folder icon before its name.",
+          "type": "boolean"
+        },
+        "type_to_select": {
+          "default": false,
+          "description": "Whether a letter typed on the listing jumps to the first item whose\nname starts with it, as in Explorer, instead of filtering.",
           "type": "boolean"
         },
         "welcome_done": {
@@ -691,6 +1006,24 @@
       },
       "description": "Search backend selection."
     },
+    "sidebar": {
+      "$ref": "#/$defs/Sidebar",
+      "default": {
+        "cards": null,
+        "density": null,
+        "drive_label": null,
+        "drive_usage": null,
+        "follow_folder": null,
+        "headers": null,
+        "icons_only": null,
+        "recent_count": null,
+        "sections": null,
+        "style": "explorer",
+        "tree": null,
+        "tree_lines": null
+      },
+      "description": "What the sidebar lists and how it looks."
+    },
     "theme": {
       "$ref": "#/$defs/Theme",
       "default": {
@@ -703,16 +1036,24 @@
       "$ref": "#/$defs/Ui",
       "default": {
         "audio_waveforms": false,
+        "command_bar": false,
         "default_sort": "name",
         "default_sort_descending": false,
+        "folder_previews": false,
         "hover_audio": true,
         "hover_audio_delay_ms": 400,
         "icon_pack": "default",
+        "infinite_scroll": false,
+        "info_tips": true,
         "language": "auto",
         "name_lines": 0,
+        "new_tab_mode": "box",
+        "new_tab_path": "",
         "preview_autoplay": false,
         "scroll_smoothness": 50,
         "show_hidden": false,
+        "tab_icons": false,
+        "type_to_select": false,
         "welcome_done": false
       },
       "description": "Explorer / view settings."

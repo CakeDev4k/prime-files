@@ -6,13 +6,13 @@ allow-expect-in-tests = true
 
 # Synchronous filesystem calls are banned in app code: blocking I/O on the GPUI
 # foreground thread stalls rendering. Route reads/writes through
-# `nohrs-services::fs` or move them onto a background task
+# `prime-files-services::fs` or move them onto a background task
 # (`cx.background_spawn` / `spawn_blocking`). The few legitimate exceptions
 # (startup config load before the UI exists, reads already on a background
 # thread) carry an explicit `#[allow(clippy::disallowed_methods)]` with a
 # reason; test fixtures allow the lint at the `mod tests` level.
 disallowed-methods = [
-  { path = "std::fs::read", reason = "use nohrs-services::fs or cx.background_spawn" },
-  { path = "std::fs::write", reason = "use nohrs-services::fs or cx.background_spawn" },
-  { path = "std::fs::read_to_string", reason = "use nohrs-services::fs or cx.background_spawn" },
+  { path = "std::fs::read", reason = "use prime-files-services::fs or cx.background_spawn" },
+  { path = "std::fs::write", reason = "use prime-files-services::fs or cx.background_spawn" },
+  { path = "std::fs::read_to_string", reason = "use prime-files-services::fs or cx.background_spawn" },
 ]

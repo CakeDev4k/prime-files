@@ -4400,185 +4400,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "nohrs"
-version = "0.3.9"
-dependencies = [
- "clap",
- "embed-resource",
- "gpui",
- "gpui-component",
- "nohrs-core",
- "nohrs-launcher",
- "nohrs-models",
- "nohrs-pages",
- "nohrs-services",
- "nohrs-store",
- "nohrs-ui",
- "tracing",
-]
-
-[[package]]
-name = "nohrs-cli"
-version = "0.3.9"
-dependencies = [
- "clap",
- "clap_complete",
- "dirs 6.0.0",
- "nohrs-core",
- "nohrs-services",
- "nohrs-store",
- "serde_json",
- "tempfile",
-]
-
-[[package]]
-name = "nohrs-core"
-version = "0.3.9"
-dependencies = [
- "dirs 6.0.0",
- "insta",
- "notify 8.2.0",
- "schemars",
- "serde",
- "serde_json",
- "tempfile",
- "thiserror 2.0.17",
- "time",
- "toml 0.9.8",
- "tracing",
- "tracing-appender",
- "tracing-subscriber",
-]
-
-[[package]]
-name = "nohrs-indexer"
-version = "0.3.9"
-dependencies = [
- "windows 0.61.3",
-]
-
-[[package]]
-name = "nohrs-launcher"
-version = "0.3.9"
-dependencies = [
- "anyhow",
- "ashpd 0.11.0",
- "async-channel 2.5.0",
- "async-io",
- "futures-lite 2.6.1",
- "futures-util",
- "global-hotkey",
- "gpui",
- "gpui-component",
- "nohrs-core",
- "nohrs-services",
- "nucleo-matcher",
- "tempfile",
- "tracing",
- "unicode-segmentation",
- "zbus",
-]
-
-[[package]]
-name = "nohrs-models"
-version = "0.3.9"
-dependencies = [
- "serde",
-]
-
-[[package]]
-name = "nohrs-pages"
-version = "0.3.9"
-dependencies = [
- "alacritty_terminal",
- "anyhow",
- "async-channel 2.5.0",
- "dirs 6.0.0",
- "fbxcel",
- "flate2",
- "gltf",
- "gpui",
- "gpui-component",
- "image",
- "nohrs-core",
- "nohrs-indexer",
- "nohrs-models",
- "nohrs-services",
- "nohrs-store",
- "nohrs-ui",
- "notify 8.2.0",
- "raw-window-handle",
- "semver",
- "serde",
- "serde_json",
- "sha2 0.10.9",
- "stl_io",
- "tempfile",
- "time",
- "tobj",
- "tracing",
- "windows 0.61.3",
- "windows-core 0.61.2",
- "zip",
-]
-
-[[package]]
-name = "nohrs-services"
-version = "0.3.9"
-dependencies = [
- "anyhow",
- "async-channel 2.5.0",
- "criterion",
- "dirs 6.0.0",
- "gpui",
- "grep",
- "ignore",
- "nohrs-core",
- "nohrs-models",
- "nohrs-store",
- "notify 8.2.0",
- "notify-debouncer-mini",
- "postage",
- "rustix 1.1.4",
- "serde",
- "syntect",
- "tantivy",
- "tempfile",
- "time",
- "tracing",
- "trash",
- "windows 0.61.3",
-]
-
-[[package]]
-name = "nohrs-store"
-version = "0.3.9"
-dependencies = [
- "criterion",
- "redb",
- "rusqlite",
- "tempfile",
- "thiserror 2.0.17",
- "tracing",
-]
-
-[[package]]
-name = "nohrs-ui"
-version = "0.3.9"
-dependencies = [
- "anyhow",
- "gpui",
- "gpui-component",
- "nohrs-core",
- "nohrs-models",
- "proptest",
- "rust-embed",
- "serde",
- "serde_json",
- "time",
-]
-
-[[package]]
 name = "nom"
 version = "7.1.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5406,6 +5227,185 @@ checksum = "479ca8adacdd7ce8f1fb39ce9ecccbfe93a3f1344b3d0d97f20bc0196208f62b"
 dependencies = [
  "proc-macro2",
  "syn 2.0.117",
+]
+
+[[package]]
+name = "prime-files"
+version = "0.3.10"
+dependencies = [
+ "clap",
+ "embed-resource",
+ "gpui",
+ "gpui-component",
+ "prime-files-core",
+ "prime-files-launcher",
+ "prime-files-models",
+ "prime-files-pages",
+ "prime-files-services",
+ "prime-files-store",
+ "prime-files-ui",
+ "tracing",
+]
+
+[[package]]
+name = "prime-files-cli"
+version = "0.3.10"
+dependencies = [
+ "clap",
+ "clap_complete",
+ "dirs 6.0.0",
+ "prime-files-core",
+ "prime-files-services",
+ "prime-files-store",
+ "serde_json",
+ "tempfile",
+]
+
+[[package]]
+name = "prime-files-core"
+version = "0.3.10"
+dependencies = [
+ "dirs 6.0.0",
+ "insta",
+ "notify 8.2.0",
+ "schemars",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror 2.0.17",
+ "time",
+ "toml 0.9.8",
+ "tracing",
+ "tracing-appender",
+ "tracing-subscriber",
+]
+
+[[package]]
+name = "prime-files-indexer"
+version = "0.3.10"
+dependencies = [
+ "windows 0.61.3",
+]
+
+[[package]]
+name = "prime-files-launcher"
+version = "0.3.10"
+dependencies = [
+ "anyhow",
+ "ashpd 0.11.0",
+ "async-channel 2.5.0",
+ "async-io",
+ "futures-lite 2.6.1",
+ "futures-util",
+ "global-hotkey",
+ "gpui",
+ "gpui-component",
+ "nucleo-matcher",
+ "prime-files-core",
+ "prime-files-services",
+ "tempfile",
+ "tracing",
+ "unicode-segmentation",
+ "zbus",
+]
+
+[[package]]
+name = "prime-files-models"
+version = "0.3.10"
+dependencies = [
+ "serde",
+]
+
+[[package]]
+name = "prime-files-pages"
+version = "0.3.10"
+dependencies = [
+ "alacritty_terminal",
+ "anyhow",
+ "async-channel 2.5.0",
+ "dirs 6.0.0",
+ "fbxcel",
+ "flate2",
+ "gltf",
+ "gpui",
+ "gpui-component",
+ "image",
+ "notify 8.2.0",
+ "prime-files-core",
+ "prime-files-indexer",
+ "prime-files-models",
+ "prime-files-services",
+ "prime-files-store",
+ "prime-files-ui",
+ "raw-window-handle",
+ "semver",
+ "serde",
+ "serde_json",
+ "sha2 0.10.9",
+ "stl_io",
+ "tempfile",
+ "time",
+ "tobj",
+ "tracing",
+ "windows 0.61.3",
+ "windows-core 0.61.2",
+ "zip",
+]
+
+[[package]]
+name = "prime-files-services"
+version = "0.3.10"
+dependencies = [
+ "anyhow",
+ "async-channel 2.5.0",
+ "criterion",
+ "dirs 6.0.0",
+ "gpui",
+ "grep",
+ "ignore",
+ "notify 8.2.0",
+ "notify-debouncer-mini",
+ "postage",
+ "prime-files-core",
+ "prime-files-models",
+ "prime-files-store",
+ "rustix 1.1.4",
+ "serde",
+ "syntect",
+ "tantivy",
+ "tempfile",
+ "time",
+ "tracing",
+ "trash",
+ "windows 0.61.3",
+]
+
+[[package]]
+name = "prime-files-store"
+version = "0.3.10"
+dependencies = [
+ "criterion",
+ "redb",
+ "rusqlite",
+ "tempfile",
+ "thiserror 2.0.17",
+ "tracing",
+]
+
+[[package]]
+name = "prime-files-ui"
+version = "0.3.10"
+dependencies = [
+ "anyhow",
+ "gpui",
+ "gpui-component",
+ "prime-files-core",
+ "prime-files-models",
+ "proptest",
+ "rust-embed",
+ "serde",
+ "serde_json",
+ "time",
 ]
 
 [[package]]

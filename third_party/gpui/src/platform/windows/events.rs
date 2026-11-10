@@ -976,7 +976,7 @@ impl WindowsWindowInner {
             let handled = !result.propagate || result.default_prevented;
             self.state.borrow_mut().callbacks.input = Some(func);
 
-            // NOHRS: a press on a caption or one of the caption buttons always
+            // PRIME FILES: a press on a caption or one of the caption buttons always
             // goes on: to DefWindowProc, which starts moving the window, or to
             // `nc_button_pressed` below, which the release then acts on. Every
             // focusable element calls `prevent_default` on a mouse down, so with
@@ -1031,7 +1031,7 @@ impl WindowsWindowInner {
             let handled = !func(input).propagate;
             self.state.borrow_mut().callbacks.input = Some(func);
 
-            // NOHRS: the release of a caption button is what runs it, so an
+            // PRIME FILES: the release of a caption button is what runs it, so an
             // element that stops the mouse up must not swallow it either.
             let button_up = matches!(wparam.0 as u32, HTMINBUTTON | HTMAXBUTTON | HTCLOSE);
             if handled && !button_up {

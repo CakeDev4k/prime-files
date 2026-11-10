@@ -187,11 +187,11 @@ impl DirectWriteTextSystem {
         let components = DirectWriteComponent::new(directx_devices)?;
         let system_font_collection = unsafe {
             let mut result = std::mem::zeroed();
-            // NOHRS: the font cache service's collection, without asking it to
+            // PRIME FILES: the font cache service's collection, without asking it to
             // look for fonts installed since. That check cost ~130 ms of every
             // start with 1,530 fonts (median 134 ms against 1.8 ms, same 388
             // families). `update_system_font_collection` still asks, for a
-            // font installed while the app runs (third_party/gpui/NOHRS.md).
+            // font installed while the app runs (third_party/gpui/PRIME-FILES.md).
             components
                 .factory
                 .GetSystemFontCollection(false, &mut result, false)?;
@@ -432,7 +432,7 @@ impl DirectWriteState {
             else {
                 continue;
             };
-            // NOHRS: a font asked for without fallbacks still gets Segoe UI
+            // PRIME FILES: a font asked for without fallbacks still gets Segoe UI
             // and Tahoma before the system's own list. The UI font is the
             // icon-title font of Windows, which a person may have set to one
             // without Arabic; file names in Arabic then came out as empty
@@ -1514,7 +1514,7 @@ impl IDWriteTextRenderer_Impl for TextRenderer_Impl {
         let mut utf16_idx = desc.textPosition as usize;
         let mut glyph_idx = 0;
         let mut glyphs = Vec::with_capacity(glyph_count);
-        // NOHRS: placed from DirectWrite's own origin for the run, so the
+        // PRIME FILES: placed from DirectWrite's own origin for the run, so the
         // bidi order it worked out survives. A right-to-left run (Arabic)
         // starts at its right edge and its glyphs, in logical order, go left;
         // laid end to end from the left they read backwards.
@@ -1631,7 +1631,7 @@ impl<'a> StringIndexConverter<'a> {
     }
 
     fn advance_to_utf16_ix(&mut self, utf16_target: usize) {
-        // NOHRS: runs come in visual order, so with right-to-left text a run
+        // PRIME FILES: runs come in visual order, so with right-to-left text a run
         // can start before the one drawn just ahead of it.
         if utf16_target < self.utf16_ix {
             self.utf8_ix = 0;

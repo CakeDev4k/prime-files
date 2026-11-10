@@ -117,7 +117,7 @@ The two helper scripts live next to this file:
    cargo test
    ```
    (For GUI code, build with the linker path from `ui-run.sh setup`:
-   `RUSTFLAGS="-L $HOME/.local/devlibs" cargo build --features gui --bin nohrs`.)
+   `RUSTFLAGS="-L $HOME/.local/devlibs" cargo build --features gui --bin prime-files`.)
 3. Follow the repo's Rust guidelines (CLAUDE.md): no `unwrap()`/panics, no silent
    `let _ =` on fallible calls, propagate errors with `?`. The AI reviewers flag
    these, so getting them right now saves a loop iteration.
@@ -129,7 +129,7 @@ verify it for real and capture evidence. Full workflow: `docs/agent-ui-verificat
 
 ```bash
 # Build, launch, screenshot the relevant states.
-RUSTFLAGS="-L $HOME/.local/devlibs" cargo build --features gui --bin nohrs
+RUSTFLAGS="-L $HOME/.local/devlibs" cargo build --features gui --bin prime-files
 ./script/ui-run.sh launch                      # prints WINDOW / DISPLAY / PID
 ./script/ui-run.sh shot /tmp/before.png        # then Read the PNG to confirm state
 # Drive the UI with xdotool, re-shoot after each step (coordinates are absolute):
@@ -141,7 +141,7 @@ DISPLAY=$DISP xdotool windowactivate "$WIN" mousemove X Y sleep 0.4 click 1 slee
 
 **Read each PNG back yourself** and confirm the change actually happened — a clean
 build is not evidence. Keep the PNGs that best show before/after for the PR. Mind
-the gotchas in the doc (`pkill -x nohrs`, find window by PID, black-first-frame).
+the gotchas in the doc (`pkill -x prime-files`, find window by PID, black-first-frame).
 
 ## Phase 3 — Open or update the PR
 
@@ -353,7 +353,7 @@ Works in both environments:
 | Which environment am I in | `command -v gh` (empty ⇒ MCP path) |
 | Current branch | `git rev-parse --abbrev-ref HEAD` |
 | Local gate | `cargo fmt --all && cargo clippy --all-targets -- -D warnings && cargo build && cargo test` |
-| GUI build | `RUSTFLAGS="-L $HOME/.local/devlibs" cargo build --features gui --bin nohrs` |
+| GUI build | `RUSTFLAGS="-L $HOME/.local/devlibs" cargo build --features gui --bin prime-files` |
 | Launch / shot / stop GUI | `./script/ui-run.sh {launch,shot <png>,stop}` |
 | Publish screenshots | `.claude/skills/pull-request/scripts/attach-screenshots.sh <slug> <png...>` |
 

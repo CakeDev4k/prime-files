@@ -1894,7 +1894,7 @@ impl Window {
         self.mouse_position
     }
 
-    /// NOHRS: tells the platform what dropping the external files being
+    /// PRIME FILES: tells the platform what dropping the external files being
     /// dragged would do where the pointer is now, for the cursor to show.
     /// Meant for `on_drag_move::<ExternalPaths>` listeners: the platform
     /// clears it before each move it dispatches, and those listeners run in
@@ -3644,7 +3644,7 @@ impl Window {
                     PlatformInput::MouseMove(MouseMoveEvent {
                         position,
                         pressed_button: Some(MouseButton::Left),
-                        // NOHRS: the keys the platform reported for the drag
+                        // PRIME FILES: the keys the platform reported for the drag
                         // (a `ModifiersChanged` just before), not none.
                         modifiers: self.modifiers,
                     })
@@ -3654,7 +3654,7 @@ impl Window {
                     PlatformInput::MouseMove(MouseMoveEvent {
                         position,
                         pressed_button: Some(MouseButton::Left),
-                        // NOHRS: the keys the platform reported for the drag
+                        // PRIME FILES: the keys the platform reported for the drag
                         // (a `ModifiersChanged` just before), not none.
                         modifiers: self.modifiers,
                     })

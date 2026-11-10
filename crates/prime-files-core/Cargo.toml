@@ -1,0 +1,34 @@
+[package]
+name = "prime-files-core"
+description = "Core primitives (errors, config, telemetry) shared across Prime Files crates."
+version.workspace      = true
+edition.workspace      = true
+rust-version.workspace = true
+license.workspace      = true
+repository.workspace   = true
+homepage.workspace     = true
+authors.workspace      = true
+
+[lib]
+name = "prime_files_core"
+path = "src/prime_files_core.rs"
+
+[dependencies]
+thiserror.workspace          = true
+tracing.workspace            = true
+tracing-subscriber.workspace = true
+tracing-appender.workspace   = true
+time.workspace               = true
+serde.workspace              = true
+serde_json.workspace         = true
+toml                         = "0.9"
+schemars                     = "1"
+notify                       = "8"
+dirs                         = "6"
+
+[dev-dependencies]
+tempfile = "3"
+insta = "1"
+
+[lints]
+workspace = true

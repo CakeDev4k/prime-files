@@ -1,0 +1,37 @@
+[package]
+name = "prime-files"
+description = "Prime Files — a fast file explorer for Windows, built in Rust."
+keywords = ["launcher", "file-explorer", "file-manager", "gpui", "productivity"]
+categories = ["filesystem", "gui"]
+readme = "../../README.md"
+version.workspace      = true
+edition.workspace      = true
+rust-version.workspace = true
+license.workspace      = true
+repository.workspace   = true
+homepage.workspace     = true
+authors.workspace      = true
+
+[[bin]]
+name = "prime-files"
+path = "src/main.rs"
+
+[dependencies]
+prime-files-core     = { path = "../prime-files-core" }
+prime-files-models   = { path = "../prime-files-models" }
+prime-files-services = { path = "../prime-files-services", features = ["gui"] }
+prime-files-ui       = { path = "../prime-files-ui" }
+prime-files-pages    = { path = "../prime-files-pages" }
+prime-files-launcher = { path = "../prime-files-launcher" }
+prime-files-store    = { path = "../prime-files-store" }
+gpui = "0.2"
+gpui-component = "0.5"
+tracing.workspace = true
+clap.workspace    = true
+
+[build-dependencies]
+# Already in the tree through gpui; embeds the icon and version (build.rs).
+embed-resource = "3.0"
+
+[lints]
+workspace = true

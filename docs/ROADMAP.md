@@ -1,8 +1,8 @@
-# Nohrs Roadmap
+# Prime Files Roadmap
 
 > Last updated: 2026-05-28
 
-Nohrs は、macOS の Finder を起点に「Launcher × Explorer」を高速・拡張可能・プラグイン可能な形で再構築する OSS プロジェクトです。本書は `0.0.x` から `1.0.0` までの開発計画を示し、各フェーズの目標と参照すべき設計ドキュメントを整理します。
+Prime Files は、macOS の Finder を起点に「Launcher × Explorer」を高速・拡張可能・プラグイン可能な形で再構築する OSS プロジェクトです。本書は `0.0.x` から `1.0.0` までの開発計画を示し、各フェーズの目標と参照すべき設計ドキュメントを整理します。
 
 このロードマップは旧 `QUALITY_IMPROVEMENT_PLAN.md` を統合・廃止し、新たな単一の指針として位置付けられます。
 
@@ -65,10 +65,8 @@ ROADMAP 本体には判断の要点のみを記し、詳細は次の設計ドキ
 | ドキュメント | 対応 Phase | 内容 |
 |------------|-----------|------|
 | [`docs/architecture.md`](./architecture.md) | P1 | Cargo workspace 構成・crate 間依存方向・データフロー |
-| [`docs/web.md`](./web.md) | P1 | サイト IA・ルーティング・i18n・ホスティング (CF Pages + Workers) |
 | [`docs/testing.md`](./testing.md) | P1 | GPUI `TestAppContext`・llvm-cov→R2/GitHub native パイプライン・静的解析 |
-| [`docs/dev-environment.md`](./dev-environment.md) | P1 | docker dev/ci 二系統・nix devshell |
-| [`docs/config.md`](./config.md) | P1→P2 | `~/.config/nohrs/config.toml` スキーマ・hot reload タイミング・JSON Schema |
+| [`docs/config.md`](./config.md) | P1→P2 | `~/.config/prime-files/config.toml` スキーマ・hot reload タイミング・JSON Schema |
 | [`docs/persistence.md`](./persistence.md) | P2 | rusqlite + WAL (メタデータ/履歴)・redb (ホスト KV, plugin KV は P4)・使い分け基準・`MetadataStore`/`KvStore` trait・マイグレーション・診断ログ |
 | [`docs/async-runtime.md`](./async-runtime.md) | P2 | GPUI executor 統一・`postage`/`async-channel`/`ureq` への置換 |
 | [`docs/explorer-essentials.md`](./explorer-essentials.md) | P1骨子→P2 | DnD・ファイル操作・スプリットビュー・タブ |
@@ -78,7 +76,7 @@ ROADMAP 本体には判断の要点のみを記し、詳細は次の設計ドキ
 | [`docs/plugin-api.md`](./plugin-api.md) | P4 | WIT world・host imports/exports・UI レンダリングモデル |
 | [`docs/plugin-permissions.md`](./plugin-permissions.md) | P4 | 権限マニフェスト・同意フロー・2 層サンドボックス |
 | [`docs/plugin-distribution.md`](./plugin-distribution.md) | P4→P5 | インストール (user/repo, URL, local)・更新・Plugin Store 連携 |
-| [`docs/plugin-templates.md`](./plugin-templates.md) | P4 | Rust/TS/Python テンプレ・`nohrs plugin` CLI・AI agent skills/MCP |
+| [`docs/plugin-templates.md`](./plugin-templates.md) | P4 | Rust/TS/Python テンプレ・`prime-files plugin` CLI・AI agent skills/MCP |
 | [`docs/cli.md`](./cli.md) | P2 | `noh` バイナリ・`rm` (既定でゴミ箱)・標準コマンドの手前に置く運用 |
 | [`docs/os-integration.md`](./os-integration.md) | P2 | Finder 代替の OS 統合 (`public.folder`/`NSFileViewer`/Apple Event/Quick Look/LaunchServices)・Linux 等価 |
 
@@ -93,11 +91,11 @@ ROADMAP 本体には判断の要点のみを記し、詳細は次の設計ドキ
 ### Core (Rust 本体)
 
 - **緊急修正**: `unsafe` 除去 (`src/ui/components/file_list.rs`)、`apply_filter()` 二重呼び出し修正、`open_preview` の同期 I/O 撤去、`SearchService::new` 失敗時の `panic!` 撤廃、`format_date` 自前実装を `time` crate に置換、`mdfind` 引数注入対策、エラー処理の UI 経路化
-- **Cargo workspace 化**: 単一 crate を 6 crate に分割 (`nohrs`, `nohrs-core`, `nohrs-models`, `nohrs-services`, `nohrs-ui`, `nohrs-pages`)。詳細は [`docs/architecture.md`](./architecture.md)
+- **Cargo workspace 化**: 単一 crate を 6 crate に分割 (`prime-files`, `prime-files-core`, `prime-files-models`, `prime-files-services`, `prime-files-ui`, `prime-files-pages`)。詳細は [`docs/architecture.md`](./architecture.md)
 - **エラー設計**: `core::errors::Error` 拡張、サービス層を `crate::core::errors::Result` に統一、`clippy::unwrap_used`/`expect_used` warn 化
 - **巨大ファイル分解**: `src/pages/explorer/mod.rs` (688 行) の責務分割、マジックナンバーの `core::config` 集約
 - **explorer essentials の骨子確定**: DnD/file ops/split view/tab の方針を [`docs/explorer-essentials.md`](./explorer-essentials.md) に記載 (実装は P2)
-- **config 最小実装**: theme / ui セクションのみ。XDG 準拠の `~/.config/nohrs/config.toml`、hot reload は theme/ui だけ対応。詳細は [`docs/config.md`](./config.md)
+- **config 最小実装**: theme / ui セクションのみ。XDG 準拠の `~/.config/prime-files/config.toml`、hot reload は theme/ui だけ対応。詳細は [`docs/config.md`](./config.md)
 - **axum 削除** + `#[tokio::main]` → GPUI main 化 (tokio 撤去への第一歩)
 
 ### Web
@@ -107,15 +105,13 @@ ROADMAP 本体には判断の要点のみを記し、詳細は次の設計ドキ
 - **i18n 基盤**: パス前置 (`/en/...` / `/ja/...`)、canonical = `en`
 - **Pagefind 検索の組み込み骨格** (docs / blog 用)
 - **Cloudflare Web Analytics 組み込み**
-- 詳細は [`docs/web.md`](./web.md)
 
 ### Quality / Infra
 
 - **CI**: `.github/workflows/ci.yml` (`fmt --check` / `clippy -D warnings` / `cargo test` / `cargo build --features gui`)
 - **カバレッジパイプライン**: `cargo llvm-cov` → R2 への HTML アップ (`coverage.nohrs.app/pr/<n>/`) + GitHub Native の lcov 取り込み。詳細は [`docs/testing.md`](./testing.md)
-- **GPUI テスト基盤**: `TestAppContext` を用いたテストのお手本コードを `nohrs-pages` 配下に整備
+- **GPUI テスト基盤**: `TestAppContext` を用いたテストのお手本コードを `prime-files-pages` 配下に整備
 - **静的解析**: `clippy.toml` / `rustfmt.toml` / `deny.toml` / `cargo-machete` / `typos`
-- **開発環境**: `docker/dev/` (X11 forwarding)、`docker/ci/` (Xvfb)、`flake.nix` (devshell)。詳細は [`docs/dev-environment.md`](./dev-environment.md)
 - **OSS 体裁**: `CONTRIBUTING.md` / `CODE_OF_CONDUCT.md` / `SECURITY.md` / `CHANGELOG.md`、Issue/PR テンプレ、`dependabot.yml`、`Cargo.toml` メタ情報整備
 - **README 書き換え**: Planned Features を ROADMAP へ移管。Hero / Demo / Why / Quick Start / Status / Roadmap / Community / License 構成
 - **遡及 ADR 起票**: [§遡及 ADR](#遡及-adr-p1-で作成) 参照
@@ -141,7 +137,7 @@ ROADMAP 本体には判断の要点のみを記し、詳細は次の設計ドキ
 - **スプリットビュー**: 2-way (水平/垂直)、ペイン独立ナビゲーション、ペイン単位 tab
 - **タブ**: 復元 (再起動時)、close、reorder。ピン留めは P3。復元状態の永続化先は redb (`state.redb`)、詳細は [`docs/persistence.md`](./persistence.md)
 - **OS 統合 (Finder 代替)**: `public.folder` 登録・`NSFileViewer`・Apple Event (`odoc`/`GURL`)・LaunchServices (`lsregister`)・Quick Look を実装し、Finder を起動せず完結できる状態にする。Linux は XDG MIME / `.desktop` 等価。アプリバンドル (`.app`) を前提とするため最小バンドル生成を本フェーズに前倒し (本格パッケージング/`dmg` は P6)。詳細は [`docs/os-integration.md`](./os-integration.md)
-- **nohrs-store crate (SQLite + redb)**: `nohrs-store` crate 新設。SQLite (rusqlite + bundled + WAL) がメタデータ・履歴、redb がホスト KV (タブ/セッション復元・window 位置)。「キー完全一致以外で問い合わせるか」で使い分け。`MetadataStore` / `KvStore` / `HistoryStore` 等の interface segregated trait。詳細は [`docs/persistence.md`](./persistence.md)
+- **prime-files-store crate (SQLite + redb)**: `prime-files-store` crate 新設。SQLite (rusqlite + bundled + WAL) がメタデータ・履歴、redb がホスト KV (タブ/セッション復元・window 位置)。「キー完全一致以外で問い合わせるか」で使い分け。`MetadataStore` / `KvStore` / `HistoryStore` 等の interface segregated trait。詳細は [`docs/persistence.md`](./persistence.md)
 - **アプリコアの tokio 撤去**: `tokio::sync::*` を `postage` / `async-channel` / `futures::channel::oneshot` に、`tokio::spawn` を `cx.background_spawn` に、`tokio::time::*` を GPUI timer に置換。HTTP は `ureq` 採用。`cargo-deny` でアプリコアの tokio を ban (プラグイン実行層は P4 で `wrappers` 許可)。詳細は [`docs/async-runtime.md`](./async-runtime.md)
 - **config 拡張**: keybindings セクション草案 (P3 で本格化)、パフォーマンス解析用のストアログ設定 (`[diagnostics.store]`)、`schemars` で JSON Schema 自動生成
 
@@ -152,14 +148,14 @@ ROADMAP 本体には判断の要点のみを記し、詳細は次の設計ドキ
 
 ### Quality
 
-- **`nohrs-store` 単体テスト整備** (in-memory backend で trait テスト)
+- **`prime-files-store` 単体テスト整備** (in-memory backend で trait テスト)
 - **ベンチマーク基盤**: `criterion` で SQLite クエリ・ファイル listing のベース測定
 - **`#![deny(unsafe_code)]` を workspace 全体に強制**
 
 ### 完了条件
 
 - DnD / file ops / split view / tab が「Finder と同等の操作」を達成
-- アプリコアに tokio が無い (`cargo tree | grep '^tokio'` が **空**。plugin host 導入の P4 で tokio は `nohrs-plugin-host` に隔離して復活)
+- アプリコアに tokio が無い (`cargo tree | grep '^tokio'` が **空**。plugin host 導入の P4 で tokio は `prime-files-plugin-host` に隔離して復活)
 - SQLite で起動間メタデータが永続化
 - `MetadataStore` mock backend でテスト可能
 
@@ -171,7 +167,7 @@ ROADMAP 本体には判断の要点のみを記し、詳細は次の設計ドキ
 
 ### Core
 
-- **Launcher 本体** (`crates/nohrs-launcher`):
+- **Launcher 本体** (`crates/prime-files-launcher`):
   - 別 window、フローティング、画面中央寄り上、マウスドラッグで移動可能 (位置記憶は redb `state.redb`)、リサイズ不可
   - グローバルホットキー `Cmd+Shift+Space` (`global-hotkey` crate)、アプリ内 `Cmd+K`
   - 入力前は空欄 + placeholder ヒント
@@ -181,7 +177,7 @@ ROADMAP 本体には判断の要点のみを記し、詳細は次の設計ドキ
   - 初期コアコマンド 15-20 個 (Open Path / Reveal in Finder / Quick Open / Recent / Calculator / Settings 等)
   - 詳細は [`docs/launcher.md`](./launcher.md)
 - **アクションフレームワーク** (`Command` trait + `inventory` レジストリ): コア crate がそれぞれ自身のコマンドを宣言。P4 で WIT plugin command の adapter 経由で同 trait に統合
-- **検索 V2 (Tantivy ngram)**: `nohrs-services` の `search` モジュールに `NgramTokenizer` のフィールドを追加し、`filename` / `path` の部分一致を提供。増分更新、リソース throttling (バッテリー / `LowPowerMode` / idle 検出 / 前面状態)、`notify-debouncer-mini` で watcher 復活。SQLite FTS5 は採用しない ([ADR 0009](./adr/0009-drop-fts5-ngram-in-tantivy.md))。詳細は [`docs/search.md`](./search.md)
+- **検索 V2 (Tantivy ngram)**: `prime-files-services` の `search` モジュールに `NgramTokenizer` のフィールドを追加し、`filename` / `path` の部分一致を提供。増分更新、リソース throttling (バッテリー / `LowPowerMode` / idle 検出 / 前面状態)、`notify-debouncer-mini` で watcher 復活。SQLite FTS5 は採用しない ([ADR 0009](./adr/0009-drop-fts5-ngram-in-tantivy.md))。詳細は [`docs/search.md`](./search.md)
 - **検索 UI**: ランチャー (グローバルスコープ) + エクスプローラ内検索バー (`Cmd+F`、現在ディレクトリ scope)
 
 ### Web
@@ -208,13 +204,13 @@ ROADMAP 本体には判断の要点のみを記し、詳細は次の設計ドキ
 
 ### Core
 
-- **`nohrs-plugin-host` crate**: wasmtime 30+ + wasmtime-wasi (WASI Preview 2) + Component Model + `wit-bindgen`。wasmtime-wasi の tokio 依存は専用 `current_thread` runtime に隔離し、公開 `Plugin` trait は sync。詳細は [`docs/plugin-overview.md`](./plugin-overview.md)
-- **WIT world `nohrs:plugin@0.1.0`**: imports (`logging` / `kv` / `cache` / `metadata` / `fs` / `network` / `process` / `clipboard` / `notification` / `launcher` / `explorer`)、exports (`commands` / `decorations` / `previews` / `events`)。詳細は [`docs/plugin-api.md`](./plugin-api.md)
+- **`prime-files-plugin-host` crate**: wasmtime 30+ + wasmtime-wasi (WASI Preview 2) + Component Model + `wit-bindgen`。wasmtime-wasi の tokio 依存は専用 `current_thread` runtime に隔離し、公開 `Plugin` trait は sync。詳細は [`docs/plugin-overview.md`](./plugin-overview.md)
+- **WIT world `prime-files:plugin@0.1.0`**: imports (`logging` / `kv` / `cache` / `metadata` / `fs` / `network` / `process` / `clipboard` / `notification` / `launcher` / `explorer`)、exports (`commands` / `decorations` / `previews` / `events`)。詳細は [`docs/plugin-api.md`](./plugin-api.md)
 - **権限モデル**: install 時 1 回プロンプト、Customize で個別 toggle、危険操作の hard ban、update 時の permission diff 再プロンプト。詳細は [`docs/plugin-permissions.md`](./plugin-permissions.md)
 - **redb-backed plugin KV**: ホストの SQLite と分離、plugin_id ごとに table 隔離、1 値 1MB 上限、batch 操作。詳細は [`docs/persistence.md`](./persistence.md)
 - **ライフサイクル**: lazy activation がデフォルト、activation events (`onCommand:` / `onFileType:` 等)、60 秒 idle で auto suspend
-- **コアプラグイン**: `crates/plugins/nohrs-plugin-*` に初期 1-2 個 (例: git status badge、calculator) を Rust ネイティブで実装。WIT を経由しないが、launcher の `Command` trait や explorer の `Decorator` trait を実装する形で API を統一
-- **`nohrs plugin` サブコマンド**: `new` / `build` / `install` / `check`。詳細は [`docs/plugin-templates.md`](./plugin-templates.md)
+- **コアプラグイン**: `crates/plugins/prime-files-plugin-*` に初期 1-2 個 (例: git status badge、calculator) を Rust ネイティブで実装。WIT を経由しないが、launcher の `Command` trait や explorer の `Decorator` trait を実装する形で API を統一
+- **`prime-files plugin` サブコマンド**: `new` / `build` / `install` / `check`。詳細は [`docs/plugin-templates.md`](./plugin-templates.md)
 - **検索 V3 (code-aware)**: identifier 分解 (camelCase / snake_case) と code-aware ngrams を Tantivy のトークナイザに追加。詳細は [`docs/search.md`](./search.md)
 
 ### Plugin Templates (別リポジトリ)
@@ -223,7 +219,7 @@ ROADMAP 本体には判断の要点のみを記し、詳細は次の設計ドキ
 - **`noh-rs/plugin-template-typescript`** (jco / componentize-js)
 - **`noh-rs/plugin-template-python`** (componentize-py)
 - 各テンプレに最小 sample (Hello command + Decoration)、`.factory/skills/` + `CLAUDE.md` / `AGENTS.md` + `.claude/commands/` を同梱
-- **MCP server**: `@nohrs/mcp-plugin-dev` を npm で配布 (`nohrs_wit_lookup` / `nohrs_doc_search` / `nohrs_plugin_validate` / `nohrs_example_plugins`)
+- **MCP server**: `@prime-files/mcp-plugin-dev` を npm で配布 (`prime_files_wit_lookup` / `prime_files_doc_search` / `prime_files_plugin_validate` / `prime_files_example_plugins`)
 
 ### Web
 
@@ -250,7 +246,7 @@ ROADMAP 本体には判断の要点のみを記し、詳細は次の設計ドキ
 ### Core
 
 - **プラグインの自動更新通知**: 週次バックグラウンドで GitHub API から latest release / tag fetch、更新あれば設定ページにバッジ
-- **`nohrs plugin publish`**: Plugin Store への submit 用 PR を自動作成 (`gh CLI` 経由)
+- **`prime-files plugin publish`**: Plugin Store への submit 用 PR を自動作成 (`gh CLI` 経由)
 - **plugin permission revoke UI**: 設定ページで個別 toggle、reload で反映
 - **plugin ロールバック UI**: 1 つ前のバージョンに戻す
 
@@ -261,13 +257,13 @@ ROADMAP 本体には判断の要点のみを記し、詳細は次の設計ドキ
   - ビルド時に GitHub API で stars / last update / license / README を enrich
   - 5 カテゴリ (productivity / developer-tools / media / cloud / theme)
   - 各カードに permission バッジ (`fs:home` / `net` 等)
-  - install ボタン: `nohrs://install?source=user/repo` でアプリディープリンク (アプリ未起動時は config 断片をクリップボードコピー)
+  - install ボタン: `prime-files://install?source=user/repo` でアプリディープリンク (アプリ未起動時は config 断片をクリップボードコピー)
   - 詳細は [`docs/plugin-distribution.md`](./plugin-distribution.md)
 - **release ページのリッチ化**: 主要 release は web 側でハイライトを追加 (frontmatter)
 
 ### Quality
 
-- Plugin Store 登録 PR への自動 CI チェック (`plugin.toml` schema 検証、SHA-256 整合性、`engine.nohrs_version` 範囲)
+- Plugin Store 登録 PR への自動 CI チェック (`plugin.toml` schema 検証、SHA-256 整合性、`engine.prime_files_version` 範囲)
 
 ### 完了条件
 
@@ -285,7 +281,7 @@ ROADMAP 本体には判断の要点のみを記し、詳細は次の設計ドキ
 - **多 OS 戦略決定**: Linux 完全対応 / Windows 対応 / macOS 専用継続のいずれを取るかを ADR で記録 (この時点で gpui の OS サポート状況が判断材料)
 - **performance ゲート**: launcher 起動時間 <100ms、search latency 中央値 <500ms、indexing バックグラウンド時 CPU <10% を CI で測定
 - **`#![warn(missing_docs)]` → `deny`**: pub API 全てに rustdoc
-- **`nohrs-gpui-wasmtime` 再評価**: プラグイン実行層の専用 tokio runtime のボトルネック実測 → 必要なら GPUI executor 上で wasmtime async を駆動する `noh-rs/gpui-wasmtime` を別 lifecycle で立ち上げ、専用 tokio runtime を置き換える。詳細は [§Future Work](#future-work)
+- **`prime-files-gpui-wasmtime` 再評価**: プラグイン実行層の専用 tokio runtime のボトルネック実測 → 必要なら GPUI executor 上で wasmtime async を駆動する `noh-rs/gpui-wasmtime` を別 lifecycle で立ち上げ、専用 tokio runtime を置き換える。詳細は [§Future Work](#future-work)
 
 ### Web
 
@@ -334,7 +330,7 @@ ROADMAP 本体には判断の要点のみを記し、詳細は次の設計ドキ
 3. `0003-cargo-workspace-layer-split.md` — レイヤー別の Cargo workspace 分割
 4. `0004-remove-tokio.md` — tokio をアプリコアから撤去し GPUI executor / postage / async-channel / ureq に統一、tokio は WASI プラグイン実行層に隔離
 5. `0005-wit-bindgen-component-model.md` — プラグインホストは Extism を経由せず wit-bindgen + WASM Component Model 一直線
-6. `0006-monorepo-web.md` — `web/` を nohrs リポジトリ同居 (monorepo)、Cargo workspace から exclude
+6. `0006-monorepo-web.md` — `web/` を Prime Files リポジトリ同居 (monorepo)、Cargo workspace から exclude
 7. `0007-cloudflare-hosting.md` — web ホスティングは Cloudflare Pages + Workers、カバレッジは R2
 
 ---
@@ -369,7 +365,7 @@ cargo deny check bans
 cargo doc --no-deps --all-features
 
 # 公開チェック
-cargo publish --dry-run --package nohrs
+cargo publish --dry-run --package Prime Files
 ```
 
 ---

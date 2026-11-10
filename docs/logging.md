@@ -3,7 +3,7 @@
 > Status: Draft (P2 で `noh log` を実装、`noh perf` は後続)
 > Related: [`cli.md`](./cli.md), [`persistence.md`](./persistence.md), [`config.md`](./config.md)
 
-nohrs が「何をしたか」「どれだけ時間がかかったか」を記録し、読み返すための仕組みです。
+Prime Files が「何をしたか」「どれだけ時間がかかったか」を記録し、読み返すための仕組みです。
 
 ---
 
@@ -17,14 +17,14 @@ nohrs が「何をしたか」「どれだけ時間がかかったか」を記�
 ファイルシンクが必要な理由は単純で、**GUI には stderr の行き先が無い**からです。ウィンドウを閉じればその
 セッションのログは消えます。ファイルに残して初めて「さっき何が起きたか」を後から聞けます。
 
-出力先は `$XDG_STATE_HOME/nohrs/logs/nohrs.log.<日付>` です。`state` に置くのは、ログが
+出力先は `$XDG_STATE_HOME/prime-files/logs/prime-files.log.<日付>` です。`state` に置くのは、ログが
 **再起動をまたいで残ってほしいが、失っても困らず、バックアップもしたくない**ものだからです。
 `data_dir` は DB と並ぶバックアップ対象、`cache_dir` は掃除ツールにいつ消されてもおかしくない場所で、
 どちらも適しません。日次ローテーションで既定 7 世代を保持します。
 
-ファイル名は `nohrs.log.<yyyy-mm-dd>` **ちょうど**の形をしたものだけを nohrs のログとして扱います
+ファイル名は `prime-files.log.<yyyy-mm-dd>` **ちょうど**の形をしたものだけを Prime Files のログとして扱います
 (`logging::is_log_file_name`)。前方一致で済ませると `noh log clear` が手元に取っておいた
-`nohrs.log.backup` まで消してしまうためです。
+`prime-files.log.backup` まで消してしまうためです。
 
 ### 1.1 プライバシー
 
@@ -58,7 +58,7 @@ nohrs が「何をしたか」「どれだけ時間がかかったか」を記�
 
 ```rust
 #[tracing::instrument(
-    target = "nohrs::op",          // 計測対象が共有する唯一のターゲット
+    target = "prime_files::op",          // 計測対象が共有する唯一のターゲット
     name = "fs.move",              // 集計キー。<領域>.<動詞>
     level = "debug",
     skip_all,                      // 引数を丸ごと吐かない
@@ -69,14 +69,14 @@ pub fn move_path(src: &Path, dst: &Path) -> Result<MoveKind> { … }
 
 **規約が 3 つあります。**
 
-- **`target = "nohrs::op"`** — クレートを問わず全ての計測操作が共有します。1 つのフィルタ指令で
+- **`target = "prime_files::op"`** — クレートを問わず全ての計測操作が共有します。1 つのフィルタ指令で
   アプリ全体の計測が入り切りでき、`noh perf` が選択する対象も 1 つで済みます
 - **`name = "<領域>.<動詞>"`** — `fs.move` / `search.query` / `index.build_home`。これが集計キーなので、
   安定していることが重要です
 - **`level = "debug"`** — `info` に置くとディレクトリを開くたびターミナルが溢れます。ファイル側の
-  既定フィルタは `info,nohrs::op=debug` なので、**stderr は静かなまま、ファイルには全操作が残ります**
+  既定フィルタは `info,prime_files::op=debug` なので、**stderr は静かなまま、ファイルには全操作が残ります**
 
-`crates/nohrs-core/tests/log_file_records_operations.rs` がこの契約（名前・フィールド・`time.busy` が
+`crates/prime-files-core/tests/log_file_records_operations.rs` がこの契約（名前・フィールド・`time.busy` が
 既定設定でファイルに届くこと）を端から端まで固定しています。フォーマッタの設定は気付かずに変えられる
 ので、設定そのものではなく結果を検証しています。
 
@@ -84,14 +84,14 @@ pub fn move_path(src: &Path, dst: &Path) -> Result<MoveKind> { … }
 
 | 名前 | 場所 |
 |------|------|
-| `fs.copy` / `fs.move` / `fs.rename` / `fs.create_dir` / `fs.trash` / `fs.delete` | `nohrs-services::fs::ops` |
-| `fs.list_dir` | `nohrs-services::fs::listing` |
-| `search.query` | `nohrs-services::search::engine` |
-| `index.build_home` / `index.remove` / `index.process_changes` | `nohrs-services::search::indexer` |
+| `fs.copy` / `fs.move` / `fs.rename` / `fs.create_dir` / `fs.trash` / `fs.delete` | `prime-files-services::fs::ops` |
+| `fs.list_dir` | `prime-files-services::fs::listing` |
+| `search.query` | `prime-files-services::search::engine` |
+| `index.build_home` / `index.remove` / `index.process_changes` | `prime-files-services::search::indexer` |
 
 ストア層は別に、SQL 文そのものと遅いクエリの閾値検出を持っています
 （`StoreLogConfig`、[`persistence.md`](./persistence.md) §5）。こちらはターゲットが
-`nohrs_store::sql` / `nohrs_store::redb` で、`time.busy` ではなく SQL 本文が要るため別立てです。
+`prime_files_store::sql` / `prime_files_store::redb` で、`time.busy` ではなく SQL 本文が要るため別立てです。
 
 ---
 

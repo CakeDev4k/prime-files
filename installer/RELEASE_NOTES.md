@@ -1,6 +1,34 @@
-## Prime Files 0.3.9
+## Prime Files 0.3.10
 
 Explorador de arquivos para Windows, rápido, escrito em Rust.
+
+### Novidades da 0.3.10
+
+- **Barra lateral do seu jeito**: em Configurações › Barra lateral, escolha um estilo pronto (Explorador, File Pilot, One Commander, Finder, Clássico ou Só ícones) e ajuste cada parte. Grupos novos: Recentes, Pastas pessoais, Discos e grupos de marcadores próprios, onde qualquer lugar entra. Arraste itens e grupos para reorganizar; a lista de grupos nas Configurações também se reordena arrastando.
+- **Barra de comandos estilo Windows 11** (opcional): nova pasta, recortar, copiar, colar, renomear, excluir, desfazer e propriedades numa fileira embaixo do caminho.
+- **Tamanho da seleção** na barra de baixo, somando também o conteúdo das pastas.
+- **Dicas ao passar o mouse**: os botões mostram o que fazem e o atalho; arquivos e pastas mostram os detalhes do Windows (tipo, tamanho, data).
+- **Atalhos de navegação**: Alt+← e Backspace voltam, Alt+→ avança, Alt+Enter abre as Propriedades (sem seleção, da pasta aberta).
+- **Digitar para selecionar** como no Windows (opcional): as letras pulam para o item com aquele nome.
+- **Lista de atalhos do Windows**: as pastas fixadas aparecem no botão direito do ícone do Prime Files na barra de tarefas.
+- **Ícone da pasta nas abas** (opcional) e **miniaturas grandes de pasta** (opcional), com o conteúdo dela na capa.
+- **Arrastar para o caminho**: solte arquivos sobre uma pasta do caminho no topo para mover ou copiar para lá.
+- **Botão direito como no Explorador**: clicar ao lado do nome abre o menu da pasta; arrastar com o botão direito seleciona por retângulo e abre o menu no fim.
+- **Prévia de pasta como a lista**: clique seleciona, duplo clique abre, retângulo de seleção, botão direito e os atalhos de copiar, colar e excluir.
+- **Nova aba direto numa pasta** (opcional), em vez da caixa de busca; Ctrl+Shift+T continua abrindo a caixa (contribuição de EternalShade3D).
+- **Visualizador com rolagem contínua** (opcional), fotos vizinhas carregadas antes e zoom sem listras (contribuição de sambukuper).
+- **Busca rápida** com os nomes inteiros na grade de resultados.
+
+### Correções da 0.3.10
+
+- O Prime Files gastava de 10% a 20% da CPU com a janela aberta, mesmo parado. Agora fica perto de zero.
+- Menos memória: o índice da busca do computador sai da memória depois de 5 minutos sem uso e ocupa menos espaço.
+- Os menus do botão direito demoravam a abrir; os submenus do Windows agora só são lidos quando você abre cada um.
+- A Lixeira e Este Computador da Área de Trabalho abriam no Explorador do Windows.
+- Pastas da lista de atalhos piscavam no Explorador antes de abrir no Prime Files.
+- "Mostrar na pasta" do navegador não selecionava o arquivo baixado.
+- A barra lateral não destacava Este Computador, Lixeira e Rede quando abertos.
+- A aba ativa ficava difícil de distinguir no tema claro e no escuro; agora tem uma linha de destaque.
 
 ### Novidades da 0.3.9
 
@@ -181,7 +209,7 @@ Quem tem a 0.2.0 ou mais nova recebe esta sozinho. Quem tem a 0.1.0 precisa inst
 
 ### Instalar
 
-Baixe **PrimeFiles-Setup-0.3.3.exe** abaixo e execute. A instalação é só para o seu usuário e não pede administrador. O instalador baixa o que faltar:
+Baixe **PrimeFiles-Setup-0.3.10.exe** abaixo e execute. A instalação é só para o seu usuário e não pede administrador. O instalador baixa o que faltar:
 
 - o **Visual C++ Runtime** da Microsoft, se o computador não tiver;
 - o **7-Zip**, se você marcar a opção (para ver .rar, .7z e .iso no visualizador);

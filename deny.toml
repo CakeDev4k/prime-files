@@ -47,16 +47,16 @@ deny = [
   # rustls unification — no OpenSSL in the tree.
   { name = "openssl-sys" },
   # testing.md §3 bans tokio outside the WASI plugin-execution layer
-  # (nohrs-plugin-host, P4+), enforcing ADR 0004 / #64. tokio is still in the
+  # (prime-files-plugin-host, P4+), enforcing ADR 0004 / #64. tokio is still in the
   # tree transitively: gpui pulls a full async reqwest stack as a non-optional
   # dependency (gpui → gpui_http_client → zed-reqwest → hyper → h2 → tokio).
   # `wrappers` names every crate allowed to depend on tokio directly, which is
   # exactly that chain — so anything outside it, in particular a first-party
-  # `nohrs-*` crate taking tokio back as a direct dependency, fails the check.
+  # `prime-files-*` crate taking tokio back as a direct dependency, fails the check.
   #
   # Adding a crate here means admitting a new route to tokio, so each entry
   # needs a reason. Drop entries as gpui's HTTP stack sheds them; add
-  # `nohrs-plugin-host` when the WASI layer lands in P4.
+  # `prime-files-plugin-host` when the WASI layer lands in P4.
   #
   # `quinn` (zed-reqwest's QUIC transport) is a direct tokio parent in
   # Cargo.lock but resolves into no target's tree, so it is left out rather

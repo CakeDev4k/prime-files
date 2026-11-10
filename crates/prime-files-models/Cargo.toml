@@ -1,0 +1,20 @@
+[package]
+name = "prime-files-models"
+description = "Pure data types shared across Prime Files crates."
+version.workspace      = true
+edition.workspace      = true
+rust-version.workspace = true
+license.workspace      = true
+repository.workspace   = true
+homepage.workspace     = true
+authors.workspace      = true
+
+[lib]
+name = "prime_files_models"
+path = "src/prime_files_models.rs"
+
+[dependencies]
+serde.workspace = true
+
+[lints]
+workspace = true

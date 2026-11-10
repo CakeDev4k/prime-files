@@ -3,8 +3,8 @@
 > Status: Draft (P2 で `rm` / `restore` / `trash` / `shim` / `doctor` を実装、以降コマンドを追加)
 > Related: [`ROADMAP.md`](./ROADMAP.md), [`explorer-essentials.md`](./explorer-essentials.md), [`architecture.md`](./architecture.md), [`logging.md`](./logging.md)
 
-`noh` (crate としては `nohrs-cli`) は nohrs の**ターミナル側の入口**です。GUI (`nohrs` バイナリ) と同じファイル操作
-(`nohrs-services::fs`) をシェルから使えるようにするもので、gpui に依存しないため
+`noh` (crate としては `prime-files-cli`) は Prime Files の**ターミナル側の入口**です。GUI (`prime-files` バイナリ) と同じファイル操作
+(`prime-files-services::fs`) をシェルから使えるようにするもので、gpui に依存しないため
 `default-members` に含まれ Linux CI でもビルド・テストされます。
 
 | コマンド | 役割 |
@@ -30,7 +30,7 @@
 代わりに [`noh shim install`](#4-noh-shim) を使ってください (既存の実ファイルを絶対に壊さないため)。
 
 ```sh
-cargo build --release -p nohrs-cli
+cargo build --release -p prime-files-cli
 ./target/release/noh shim install rm     # 既定の設置先は ~/.local/bin
 export PATH="$HOME/.local/bin:$PATH"     # /bin より先に来ていること
 noh doctor                               # 効いているか確認
@@ -158,9 +158,9 @@ Windows は symlink に権限が要るため未対応です (バイナリのあ�
 $ noh doctor
 ok    binary  /Users/me/.local/bin/noh
 ok    shim    `rm` runs /Users/me/.local/bin/rm (this binary)
-ok    trash   /Users/me/.Trash (no OS trash index here, so restores use the nohrs ledger)
-ok    ledger  /Users/me/.local/share/nohrs/db.sqlite (12 items recorded)
-ok    config  /Users/me/.config/nohrs/config.toml
+ok    trash   /Users/me/.Trash (no OS trash index here, so restores use the Prime Files ledger)
+ok    ledger  /Users/me/.local/share/prime-files/db.sqlite (12 items recorded)
+ok    config  /Users/me/.config/prime-files/config.toml
 ```
 
 `warn` は助言 (終了コード 0)、`error` は壊れている状態 (終了コード 1) です。
@@ -169,8 +169,8 @@ ok    config  /Users/me/.config/nohrs/config.toml
 
 ## 6. `noh log`
 
-nohrs が自分について記録したものを読み返します。GUI は stderr の行き先が無いので、CLI と GUI は
-共通のローリングファイル (`$XDG_STATE_HOME/nohrs/logs/`) に JSON Lines で追記しており、
+Prime Files が自分について記録したものを読み返します。GUI は stderr の行き先が無いので、CLI と GUI は
+共通のローリングファイル (`$XDG_STATE_HOME/prime-files/logs/`) に JSON Lines で追記しており、
 このコマンドがその読み手です。詳細は [`logging.md`](./logging.md)。
 
 | コマンド | 動作 |
@@ -188,7 +188,7 @@ nohrs が自分について記録したものを読み返します。GUI は std
 14:22:49  search.query                 12.2ms query=report scope=Home
 ```
 
-計測対象は `#[tracing::instrument(target = "nohrs::op", …)]` の付いた操作すべてで、
+計測対象は `#[tracing::instrument(target = "prime_files::op", …)]` の付いた操作すべてで、
 ファイル操作・ディレクトリ一覧・検索・インデックス作成が既に含まれます。新しい操作を
 一覧に載せるには属性を 1 つ足すだけです ([`logging.md`](./logging.md) §2)。
 
@@ -214,7 +214,7 @@ noh completions fish > ~/.config/fish/completions/noh.fish
 
 ## 8. 実装メモ
 
-### 8.1 ゴミ箱台帳 (`nohrs-store` の `trash` テーブル)
+### 8.1 ゴミ箱台帳 (`prime-files-store` の `trash` テーブル)
 
 「戻す」ためには**どこから消したか**が要りますが、その情報の出どころは OS によって違います。
 
@@ -222,13 +222,13 @@ noh completions fish > ~/.config/fish/completions/noh.fish
 |---|---|---|
 | **Linux** | OS が `.trashinfo` に保存 | `trash::os_limited` に委譲 |
 | **Windows** | OS が `$I` ファイルに保存 | 同上 |
-| **macOS** | Finder の非公開 `.DS_Store` のみ | **nohrs 自身の台帳**を使う |
+| **macOS** | Finder の非公開 `.DS_Store` のみ | **prime-files 自身の台帳**を使う |
 
 macOS では `trash` クレートの `os_limited` モジュールがそもそもコンパイルされず、さらに macOS 実装は
 `trashItemAtURL_resultingItemURL_error(&url, None)` と呼んでいてゴミ箱内の移動先を捨てています。
-そこで nohrs は、**OS のゴミ箱はそのまま使いつつ**、自前の台帳を横に置きます。実体は
-`nohrs-store` のメタデータ DB (`$XDG_DATA_HOME/nohrs/db.sqlite`) の `trash` テーブルで、
-`nohrs_store::TrashLedger` trait 越しに読み書きします ([`persistence.md`](./persistence.md) §2)。
+そこで Prime Files は、**OS のゴミ箱はそのまま使いつつ**、自前の台帳を横に置きます。実体は
+`prime-files-store` のメタデータ DB (`$XDG_DATA_HOME/prime-files/db.sqlite`) の `trash` テーブルで、
+`prime_files_store::TrashLedger` trait 越しに読み書きします ([`persistence.md`](./persistence.md) §2)。
 捨てたもの自体は Finder のゴミ箱に普通に入るので、ユーザーの慣れた復元経路を壊しません。
 
 台帳には移動先ではなく**元のパス・ファイル名・サイズ・mtime・削除時刻**を記録し、
@@ -263,7 +263,7 @@ ctime を持たないプラットフォームでは全候補が同距離にな�
 **台帳を書くのは、それを読む側がいるプラットフォームだけ**です。Linux / Windows では OS の索引が
 同じ情報を持っていて `OsStore` がそちらから復元するので、読み手のいない二重記録が
 際限なく伸びるのを避けています。そちらでは `db.sqlite` を開くことすらしません
-(`nohrs_cli::ledger::open_if_needed`)。
+(`prime_files_cli::ledger::open_if_needed`)。
 
 行の順序も台帳の仕事です。削除時刻は `trashed_at` (ナノ秒) に持ちますが、同一時刻の
 タイブレークは行 id (単調増加) が行うため、`noh restore` の「直近の 1 件」は常に確定します。
@@ -271,7 +271,7 @@ ctime を持たないプラットフォームでは全候補が同距離にな�
 ### 8.2 プラットフォームによる差
 
 - **一覧の範囲**: Linux / Windows では OS のゴミ箱索引を読むので、**他のアプリが捨てたものも**
-  一覧に出ます。macOS では nohrs が捨てたものだけです。
+  一覧に出ます。macOS では Prime Files が捨てたものだけです。
 - **同一秒内の順序**: 台帳は行 id を持つので、macOS では同じ瞬間に捨てた複数のアイテムでも
   「直近の 1 件」が確定します。Linux / Windows の削除時刻は OS 側が秒精度でしか持たないため、
   同じ秒に複数捨てた直後の `noh restore` (引数なし) はそのうちの 1 件になります。
@@ -289,4 +289,4 @@ ctime を持たないプラットフォームでは全候補が同距離にな�
 - `LedgerStore` はゴミ箱ディレクトリと台帳の両方を注入できるので、macOS が実際に通る経路
   (in-memory の `SqliteStore` + 一時ゴミ箱ディレクトリ) を全プラットフォームの CI でテストできます。
 - プロセス配線 (実 stdio のロック、実ゴミ箱のオープン、環境変数の読み取り) は
-  `nohrs-cli/src/main.rs` に集約し、ライブラリ側は解析とエンジンだけにしてあります。
+  `prime-files-cli/src/main.rs` に集約し、ライブラリ側は解析とエンジンだけにしてあります。

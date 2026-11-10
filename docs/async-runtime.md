@@ -14,7 +14,7 @@
 | **重い依存** | tokio は依存ツリーが大きく、ビルド時間とバイナリサイズに影響 |
 | **GPUI executor との二重スタック** | GPUI は独自 executor を持つ。tokio と並走させると thread の使い分けが不明確 |
 | **WASM 統合の切り分け** | wasmtime core async は executor 非依存だが wasmtime-wasi は tokio 依存。tokio はアプリ全体ではなくプラグイン実行層に隔離する (§6) |
-| **HTTP server を持たない** | nohrs は GUI app であり axum/HTTP server は当面不要 |
+| **HTTP server を持たない** | Prime Files は GUI app であり axum/HTTP server は当面不要 |
 
 ---
 
@@ -75,9 +75,9 @@ let res = cx.background_spawn(async {
 
 ## 6. Wasmtime / プラグイン実行層 (P4)
 
-wasmtime core の async は executor 非依存だが、**wasmtime-wasi は tokio に深く結合している** (公式に「Tokio executor を必要とし、設計に結びついている」と明記)。nohrs プラグインは WASI Preview 2 を前提とする ([ADR 0005](./adr/0005-wit-bindgen-component-model.md)) ため、ホストは wasmtime-wasi を使い、tokio が必要になる。
+wasmtime core の async は executor 非依存だが、**wasmtime-wasi は tokio に深く結合している** (公式に「Tokio executor を必要とし、設計に結びついている」と明記)。Prime Files プラグインは WASI Preview 2 を前提とする ([ADR 0005](./adr/0005-wit-bindgen-component-model.md)) ため、ホストは wasmtime-wasi を使い、tokio が必要になる。
 
-方針: **アプリ全体を tokio 化せず、tokio を `nohrs-plugin-host` 内の専用 `current_thread` runtime に隔離する**。
+方針: **アプリ全体を tokio 化せず、tokio を `prime-files-plugin-host` 内の専用 `current_thread` runtime に隔離する**。
 
 | レイヤー | ランタイム |
 |---------|-----------|
@@ -100,7 +100,7 @@ impl Plugin for WasiPlugin {
 
 詳細は [`docs/plugin-overview.md`](./plugin-overview.md) と [`docs/plugin-api.md`](./plugin-api.md) 参照。
 
-将来の `nohrs-gpui-wasmtime` (GPUI executor 上で wasmtime async を駆動し、専用 tokio runtime を不要にするブリッジ) は Future Work。詳細は [`ROADMAP.md`](./ROADMAP.md) §Future Work。
+将来の `prime-files-gpui-wasmtime` (GPUI executor 上で wasmtime async を駆動し、専用 tokio runtime を不要にするブリッジ) は Future Work。詳細は [`ROADMAP.md`](./ROADMAP.md) §Future Work。
 
 ---
 
@@ -110,7 +110,7 @@ impl Plugin for WasiPlugin {
 |-------|------|
 | **P1** | <ul><li>`axum` を削除 (未使用)</li><li>`#[tokio::main]` → GPUI main 化</li><li>`tokio::task::spawn_blocking` を `cx.background_spawn` に置換 (旧 QUALITY_IMPROVEMENT_PLAN P1.3 と統合)</li></ul> |
 | **P2** | <ul><li>残りの `tokio::sync::*` を `postage` / `async-channel` / `futures::channel::oneshot` に置換</li><li>`tokio::spawn` を `cx.background_spawn` に統一</li><li>`Cargo.toml` から `tokio` を削除</li><li>HTTP は `ureq` に置換</li></ul> |
-| **検証** | `cargo-deny` で tokio を deny し、`nohrs-plugin-host` 経由 (P4 以降) のみ `wrappers` で許可。P2〜P3 は plugin host 未導入のため `cargo tree \| grep -E '^tokio'` は **空** |
+| **検証** | `cargo-deny` で tokio を deny し、`prime-files-plugin-host` 経由 (P4 以降) のみ `wrappers` で許可。P2〜P3 は plugin host 未導入のため `cargo tree \| grep -E '^tokio'` は **空** |
 
 ---
 
@@ -131,15 +131,15 @@ impl Plugin for WasiPlugin {
 ```toml
 [bans]
 deny = [
-  # tokio はアプリコアでは禁止。WASI プラグイン実行層 (nohrs-plugin-host, P4 以降)
+  # tokio はアプリコアでは禁止。WASI プラグイン実行層 (prime-files-plugin-host, P4 以降)
   # からの依存のみ wrappers で許可する
-  { name = "tokio", wrappers = ["nohrs-plugin-host"] },
-  { name = "tokio-util", wrappers = ["nohrs-plugin-host"] },
+  { name = "tokio", wrappers = ["prime-files-plugin-host"] },
+  { name = "tokio-util", wrappers = ["prime-files-plugin-host"] },
   { name = "openssl-sys" },        # rustls 統一
 ]
 ```
 
-`nohrs-plugin-host` 以外の crate に tokio が混入したら CI で fail。P2〜P3 は plugin host 未導入のため tokio は完全に消える。
+`prime-files-plugin-host` 以外の crate に tokio が混入したら CI で fail。P2〜P3 は plugin host 未導入のため tokio は完全に消える。
 
 ---
 

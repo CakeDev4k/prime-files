@@ -546,7 +546,7 @@ pub(crate) trait PlatformWindow: HasWindowHandle + HasDisplayHandle {
         WindowControls::default()
     }
     fn set_client_inset(&self, _inset: Pixels) {}
-    /// NOHRS: see [`Window::set_file_drop_effect`].
+    /// PRIME FILES: see [`Window::set_file_drop_effect`].
     fn set_file_drop_effect(&self, _effect: crate::FileDropEffect) {}
     fn gpu_specs(&self) -> Option<GpuSpecs>;
 

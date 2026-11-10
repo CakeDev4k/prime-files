@@ -25,7 +25,7 @@
 
 ```text
 noh-rs/
-├── nohrs/                            # 本体
+├── prime-files/                            # 本体
 ├── plugin-template-rust/
 ├── plugin-template-typescript/
 ├── plugin-template-python/
@@ -45,7 +45,7 @@ plugin-template-rust/
 ├── src/
 │   └── lib.rs                        # commands trait の最小実装
 ├── wit/
-│   └── world.wit                     # nohrs:plugin@0.1.0 import
+│   └── world.wit                     # Prime Files:plugin@0.1.0 import
 ├── .gitignore
 ├── justfile                          # `just build` で component.wasm
 ├── .github/
@@ -55,12 +55,12 @@ plugin-template-rust/
 │   ├── skills/
 │   │   ├── plugin-dev/SKILL.md
 │   │   ├── wit-types/SKILL.md
-│   │   └── nohrs-api/SKILL.md
+│   │   └── prime-files-api/SKILL.md
 │   └── prompts/
 │       └── plugin-init.md
 ├── .claude/
 │   └── commands/
-│       └── nohrs-plugin.md           # /nohrs-plugin スラッシュコマンド
+│       └── prime-files-plugin.md           # /prime-files-plugin スラッシュコマンド
 └── CLAUDE.md / AGENTS.md             # AI agent 向けプロジェクトガイド
 ```
 
@@ -68,28 +68,28 @@ TypeScript / Python テンプレも同様の構造 (justfile or package.json or 
 
 ---
 
-## 4. CLI スキャフォルダ (`nohrs plugin`)
+## 4. CLI スキャフォルダ (`prime-files plugin`)
 
 ```bash
 # 新規 plugin 作成 (template repo を内部実装で clone、placeholder 置換)
-nohrs plugin new --lang rust --name my-plugin --id user/my-plugin
+Prime Files plugin new --lang rust --name my-plugin --id user/my-plugin
 
 # ビルド (言語別に justfile / npm script / poethepoet を呼ぶラッパー)
-nohrs plugin build
+Prime Files plugin build
 
 # ローカル install (dev mode、symlink for `~/dev/plugins/`)
-nohrs plugin install ./my-plugin
+Prime Files plugin install ./my-plugin
 
 # permission チェック (manifest の妥当性検証)
-nohrs plugin check
+Prime Files plugin check
 
 # Plugin Store への submit 用 PR 作成 (P5、gh CLI 経由)
-nohrs plugin publish
+Prime Files plugin publish
 ```
 
 | 観点 | 仕様 |
 |------|------|
-| 実装 | `nohrs` メインバイナリのサブコマンド (clap の subcommand)、別バイナリにしない |
+| 実装 | `prime-files` メインバイナリのサブコマンド (clap の subcommand)、別バイナリにしない |
 | template fetch | `gh repo clone noh-rs/plugin-template-{lang}` 相当を内部実装 |
 | placeholder | `{{plugin_name}}`, `{{plugin_id}}`, `{{author}}` を template 内に埋め込んで置換 |
 | 言語自動検出 | `--lang` 省略時は対話プロンプト |
@@ -102,14 +102,14 @@ P4 で各 template に **30 分以内で動かせる** サンプルを同梱:
 
 | サンプル | Rust | TS | Python |
 |---------|------|-----|--------|
-| Command: "Hello, nohrs!" 通知 | ✅ | ✅ | ✅ |
+| Command: "Hello, Prime Files!" 通知 | ✅ | ✅ | ✅ |
 | Decoration: `.rs` ファイルに `R` バッジ | ✅ | ✅ | ✅ |
 
 完成フロー目標:
-1. `nohrs plugin new --lang rust --name hello`
+1. `prime-files plugin new --lang rust --name hello`
 2. `cd hello && just build`
-3. `nohrs plugin install .`
-4. nohrs で "Hello" コマンド実行 → 通知表示
+3. `prime-files plugin install .`
+4. Prime Files で "Hello" コマンド実行 → 通知表示
 
 ---
 
@@ -121,35 +121,35 @@ P4 で各 template に **30 分以内で動かせる** サンプルを同梱:
 .factory/skills/
 ├── plugin-dev/SKILL.md          # plugin 開発の基本フロー (build, install, debug)
 ├── wit-types/SKILL.md           # WIT 型と各言語表現のマッピング表
-├── nohrs-api/SKILL.md           # nohrs:plugin@0.1.0 の全 import/export の用例集
+├── prime-files-api/SKILL.md           # Prime Files:plugin@0.1.0 の全 import/export の用例集
 └── debug/SKILL.md               # plugin が動かない時の切り分けフロー (permission, version, ...)
 
 .claude/commands/
-└── nohrs-plugin.md              # /nohrs-plugin スラッシュコマンド
+└── prime-files-plugin.md              # /prime-files-plugin スラッシュコマンド
 
 CLAUDE.md                        # Claude Code 向け project guide
 AGENTS.md                        # 汎用 AI agent guide
 ```
 
-### 6.2 MCP server `@nohrs/mcp-plugin-dev`
+### 6.2 MCP server `@prime-files/mcp-plugin-dev`
 
 npm パッケージとして配布 (Node ベース MCP server):
 
 | ツール | 機能 |
 |--------|------|
-| `nohrs_wit_lookup(name)` | 任意の WIT 型/関数のシグネチャと使用例 |
-| `nohrs_doc_search(query)` | nohrs ドキュメント (`docs/plugin-*`) の semantic search |
-| `nohrs_plugin_validate(path)` | `plugin.toml` + `component.wasm` の validation |
-| `nohrs_example_plugins(category)` | 既存 plugin の参考実装一覧 |
+| `prime_files_wit_lookup(name)` | 任意の WIT 型/関数のシグネチャと使用例 |
+| `prime_files_doc_search(query)` | Prime Files ドキュメント (`docs/plugin-*`) の semantic search |
+| `prime_files_plugin_validate(path)` | `plugin.toml` + `component.wasm` の validation |
+| `prime_files_example_plugins(category)` | 既存 plugin の参考実装一覧 |
 
 設定例 (Claude Code):
 
 ```json
 {
   "mcpServers": {
-    "nohrs-plugin-dev": {
+    "prime-files-plugin-dev": {
       "command": "npx",
-      "args": ["-y", "@nohrs/mcp-plugin-dev"]
+      "args": ["-y", "@prime-files/mcp-plugin-dev"]
     }
   }
 }
@@ -162,12 +162,12 @@ npm パッケージとして配布 (Node ベース MCP server):
 - WIT 経由 imports の使い方
 - permission の意味と書き方
 - build / install / test のコマンド一覧
-- nohrs 本家との互換 version 確認方法
+- Prime Files 本家との互換 version 確認方法
 - よくある落とし穴:
   - guest (plugin) 側で `tokio` を持ち込もうとしてビルド失敗 (WIT host import は sync。async runtime は不要。tokio はホスト側の実行層に隔離されており guest からは見えない)
   - 絶対パス指定で permission に当たる
   - WIT 型の変換ミス
-  - manifest の `engine.nohrs_version` 範囲ミス
+  - manifest の `engine.prime_files_version` 範囲ミス
 
 ---
 
@@ -175,10 +175,10 @@ npm パッケージとして配布 (Node ベース MCP server):
 
 | 観点 | 仕様 |
 |------|------|
-| nohrs version 追従 | 各 template repo の CI で nohrs 最新版で `nohrs plugin check` を週次 run、breaking change 検出時に issue 自動起票 |
-| AI skill / MCP の更新 | nohrs 本体の WIT が変わったら release 時に各テンプレの `.factory/skills/wit-types/SKILL.md` を自動更新 (`script/sync-templates.sh`) |
-| サンプル plugin の依存 | nohrs WIT 最新 minor バージョンに追従、breaking なら手動更新 |
-| テンプレ自身の version | 各テンプレも SemVer 管理、tag に対応 nohrs version を embed (`v0.5.0-nohrs-0.5`) |
+| Prime Files version 追従 | 各 template repo の CI で Prime Files 最新版で `prime-files plugin check` を週次 run、breaking change 検出時に issue 自動起票 |
+| AI skill / MCP の更新 | Prime Files 本体の WIT が変わったら release 時に各テンプレの `.factory/skills/wit-types/SKILL.md` を自動更新 (`script/sync-templates.sh`) |
+| サンプル plugin の依存 | Prime Files WIT 最新 minor バージョンに追従、breaking なら手動更新 |
+| テンプレ自身の version | 各テンプレも SemVer 管理、tag に対応 Prime Files version を embed (`v0.5.0-prime-files-0.5`) |
 
 ---
 
@@ -225,9 +225,9 @@ poethepoet build
 
 | 課題 | 解決 |
 |------|------|
-| plugin が load されない | `nohrs --log-level=debug` で `plugin host` 関連ログを確認 |
-| permission denied | nohrs UI の設定 → Plugins → 該当 plugin → permission 一覧で要確認 |
-| WIT 型エラー | `nohrs plugin check` で statically catches |
+| plugin が load されない | `prime-files --log-level=debug` で `plugin host` 関連ログを確認 |
+| permission denied | Prime Files UI の設定 → Plugins → 該当 plugin → permission 一覧で要確認 |
+| WIT 型エラー | `prime-files plugin check` で statically catches |
 | trap で crash | `auto_disabled_until` に記録、次回起動時に "Plugin X was disabled due to crash" 通知 |
 
 ---

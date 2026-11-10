@@ -11,10 +11,10 @@
 
 ```text
                     ┌────────────────────────────────┐
-                    │       nohrs (host process)      │
+                    │       Prime Files (host process)      │
                     │                                 │
                     │  ┌──────────────────────────┐  │
-                    │  │  nohrs-plugin-host       │  │
+                    │  │  prime-files-plugin-host       │  │
                     │  │  - wasmtime-wasi + tokio │  │
                     │  │  - WIT host imports      │  │
                     │  │  - permission guard      │  │
@@ -36,7 +36,7 @@
 | 仕様 | **WASI Preview 2 + Component Model** |
 | bindgen | **wit-bindgen** (Extism は経由しない) |
 | 通信モデル | 公開 API は sync (host → plugin, plugin → host とも)。内部は専用 tokio runtime で wasmtime-wasi を駆動し `block_on` でブリッジ |
-| tokio 隔離 | wasmtime-wasi は tokio 依存。`nohrs-plugin-host` 内の専用 `current_thread` runtime に閉じ込め、アプリコアは tokio-free を維持 ([ADR 0004](./adr/0004-remove-tokio.md)) |
+| tokio 隔離 | wasmtime-wasi は tokio 依存。`prime-files-plugin-host` 内の専用 `current_thread` runtime に閉じ込め、アプリコアは tokio-free を維持 ([ADR 0004](./adr/0004-remove-tokio.md)) |
 | 並列性 | plugin ごとに別 wasmtime `Store` + `Instance`、host 側で `cx.background_spawn` で並列実行 |
 
 理由:
@@ -78,7 +78,7 @@
 - WIT を経由せず **Rust ネイティブ実装**
 - 密な権限が必要な機能 (低レベル file system 等)
 - 重い計算
-- nohrs リポジトリに同梱 (`crates/plugins/nohrs-plugin-<name>`)
+- Prime Files リポジトリに同梱 (`crates/plugins/prime-files-plugin-<name>`)
 - インストール: config.toml に列挙
   ```toml
   [plugins]
@@ -91,10 +91,10 @@
 - **WASM Component Model 経由**
 - ユーザー責任で permission を許可
 - 軽量計算が中心、重い処理は host service 経由
-- インストール先: `$XDG_DATA_HOME/nohrs/plugins/<plugin-id>/`
+- インストール先: `$XDG_DATA_HOME/prime-files/plugins/<plugin-id>/`
   ```toml
   [plugins]
-  community = ["syuya2036/nohrs-plugin-example", "https://example.com/myplugin.git"]
+  community = ["syuya2036/prime-files-plugin-example", "https://example.com/myplugin.git"]
   ```
 - permission 同意必須 (詳細は [`docs/plugin-permissions.md`](./plugin-permissions.md))
 
@@ -105,8 +105,8 @@
 | Rust ネイティブ access | ✅ 全て | ❌ |
 | WIT 経由 host imports | optional | ✅ 唯一の経路 |
 | permission チェック | ❌ なし | ✅ user consent 必須 |
-| 配布 | nohrs リポジトリ同梱 | 個別 install |
-| update | nohrs アップデートに同期 | 個別 update |
+| 配布 | Prime Files リポジトリ同梱 | 個別 install |
+| update | Prime Files アップデートに同期 | 個別 update |
 
 **重要**: コア plugin も launcher の `Command` trait や explorer の `Decorator` trait を実装する形で API を統一。WIT を経由しないだけで、抽象化された interface は共通 → 将来 "コアからコミュニティへの移行" (= WIT 化して公開) が技術的に可能。
 
@@ -118,16 +118,16 @@
 
 ```toml
 [plugin]
-id          = "syuya2036/nohrs-plugin-example"   # or "core/example"
+id          = "syuya2036/prime-files-plugin-example"   # or "core/example"
 name        = "Example"
 version     = "0.1.0"
 description = "Example plugin doing nothing useful."
 authors     = ["Syuya"]
 license     = "MIT"
-homepage    = "https://github.com/syuya2036/nohrs-plugin-example"
+homepage    = "https://github.com/syuya2036/prime-files-plugin-example"
 
 [engine]
-nohrs_version           = ">=0.5"
+prime_files_version           = ">=0.5"
 component_model_version = "0.1"   # WIT world version
 
 [activation]
@@ -164,8 +164,8 @@ preview      = []
 | 観点 | 仕様 |
 |------|------|
 | plugin version | SemVer 必須 |
-| nohrs version 範囲 | `engine.nohrs_version` で minimal 指定 |
-| WIT world version | plugin は特定 WIT world (`nohrs:plugin@0.1.0` 等) に依存、host 側で複数 world バージョンをサポート (例: `0.1.x` と `0.2.x` 両対応) |
+| Prime Files version 範囲 | `engine.prime_files_version` で minimal 指定 |
+| WIT world version | plugin は特定 WIT world (`prime-files:plugin@0.1.0` 等) に依存、host 側で複数 world バージョンをサポート (例: `0.1.x` と `0.2.x` 両対応) |
 | breaking change | WIT world は major bump で互換性切断、各 plugin が複数 world バージョンを export 可能 |
 | update 通知 | community plugin は週次で GitHub API で latest release / tag チェック、新版あれば設定ページに通知バッジ |
 
@@ -201,7 +201,7 @@ preview      = []
 
 | ソース | 例 |
 |--------|-----|
-| GitHub `user/repo` | `syuya2036/nohrs-plugin-example` |
+| GitHub `user/repo` | `syuya2036/prime-files-plugin-example` |
 | 任意 URL (git) | `https://gitlab.com/.../.git` |
 | 任意 URL (zip/tar.gz) | `https://example.com/plugin.zip` |
 | ローカルパス | `file:///Users/.../my-plugin` (dev mode) |
@@ -223,7 +223,7 @@ preview      = []
 | Python | componentize-py | ✅ |
 | Go | tinygo (P5+) | — |
 
-AI agent 開発支援 (`.factory/skills/`, MCP server `@nohrs/mcp-plugin-dev`) は各テンプレに同梱。
+AI agent 開発支援 (`.factory/skills/`, MCP server `@prime-files/mcp-plugin-dev`) は各テンプレに同梱。
 
 ---
 

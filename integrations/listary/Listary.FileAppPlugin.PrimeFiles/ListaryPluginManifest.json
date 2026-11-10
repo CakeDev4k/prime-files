@@ -1,0 +1,16 @@
+{
+  "ManifestVersion": 1,
+
+  "Id": "PrimeFiles",
+  "PluginType": "FileAppPlugin",
+  "PluginVersion": "0.1.0",
+  "DisplayName": "Prime Files",
+  "Authors": [ "Prime Files" ],
+  "Description": "Listary file application plugin for Prime Files: Quick Switch to and from the folder open in Prime Files, and opening folders in it.",
+  "Homepage": "https://github.com/CakeDev4k/prime-files",
+  "Icon": "Icon.png",
+
+  "Api": "NetFramework",
+  "ApiVersion": 1,
+  "Entry": "Listary.FileAppPlugin.PrimeFiles.dll"
+}

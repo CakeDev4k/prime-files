@@ -66,8 +66,6 @@
       "Bash(cargo deny check:*)",
       "Bash(cargo llvm-cov report:*)",
       "Bash(typos:*)",
-      "Bash(script/ui-run.sh:*)",
-      "Bash(./script/ui-run.sh:*)",
       "Bash(script/sentry-fetch:*)",
       "Bash(.claude/skills/pull-request/scripts/review-status.sh:*)",
       "Bash(.claude/skills/pull-request/scripts/attach-screenshots.sh:*)"

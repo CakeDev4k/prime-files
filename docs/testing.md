@@ -1,7 +1,7 @@
 # Testing & Quality Infrastructure
 
 > Status: Draft (P1 で基盤構築、後続 Phase で拡充)
-> Related: [`ROADMAP.md`](./ROADMAP.md), [`docs/dev-environment.md`](./dev-environment.md)
+> Related: [`ROADMAP.md`](./ROADMAP.md)
 
 本書はテスト方針 / カバレッジパイプライン / 静的解析のセットを定めます。
 
@@ -39,7 +39,7 @@ async fn test_my_view(cx: &mut TestAppContext) {
 
 gpui crate は dev-dependency で `gpui = { version = "0.2", features = ["test-support"] }` を
 有効にする (`TestAppContext` / `#[gpui::test]` マクロが利用可能になる)。実例は
-[`crates/nohrs-pages/src/explorer/tests.rs`](../crates/nohrs-pages/src/explorer/tests.rs)。
+[`crates/prime-files-pages/src/explorer/tests.rs`](../crates/prime-files-pages/src/explorer/tests.rs)。
 
 **避けるべきパターン**: `smol::Timer::after` / `tokio::time::sleep`。これらは GPUI scheduler が tracking しないため `run_until_parked()` が早期に "nothing left" を返す。
 
@@ -64,10 +64,10 @@ HTML レポート artifact を **併用**。外部 SaaS (Codecov / Coveralls) �
 
 | job (tier) | runner | コマンド | 範囲 | gate |
 |------------|--------|----------|------|------|
-| **coverage-core** | `ubuntu-latest` | `cargo llvm-cov -p nohrs-core --locked --cobertura ...` | 基盤 crate `nohrs-core` | `--fail-under-lines 80` |
+| **coverage-core** | `ubuntu-latest` | `cargo llvm-cov -p prime-files-core --locked --cobertura ...` | 基盤 crate `prime-files-core` | `--fail-under-lines 80` |
 | **coverage-overall** | `macos-latest` | `cargo llvm-cov --workspace --all-features --locked --cobertura ...` | gpui を含む全 crate (GUI) | `--fail-under-lines 50` |
 
-- 「core」は基盤 crate `nohrs-core` を指す。`nohrs-models` / `nohrs-services` は overall tier
+- 「core」は基盤 crate `prime-files-core` を指す。`prime-files-models` / `prime-files-services` は overall tier
   (全 workspace) 側でカバーする (search backend 等の外部プロセス依存コードは単体テスト困難なため、
   default-members 全体を 80% gate にはしない)。
 - macOS 側は gpui を Metal バックエンドで build するため、Linux のような system library
@@ -91,20 +91,20 @@ HTML レポート artifact を **併用**。外部 SaaS (Codecov / Coveralls) �
 
 | tier | 集計 (`--fail-under-lines`) | ファイル単位 (`--fail-under-file-lines`) |
 |------|------|------|
-| core (`nohrs-core`) | line ≥ **80%** | 各ファイル ≥ **80%** (全 core ファイルが対象) |
+| core (`prime-files-core`) | line ≥ **80%** | 各ファイル ≥ **80%** (全 core ファイルが対象) |
 | overall (`--workspace --all-features`) | line ≥ **50%** (全ファイル) | テスト可能な各ファイル ≥ **70%** |
 
 ファイル単位ゲートは「単体テストが本質的に不能なコード」を `--ignore-filename-regex` で除外した上で
 適用する。除外対象は **明示列挙** (regex を読めば一目で分かる) し、平均で薄める運用はしない:
 
-- gpui バイナリのエントリポイント (`nohrs/src/{app,cli,main}.rs`) と CLI バイナリのそれ
-  (`nohrs-cli/src/main.rs`)。後者はプロセス配線専用 — 実 stdio のロック、実ゴミ箱のオープン、
-  環境変数の読み取り。引数解析と各コマンドのエンジンは lib 側 (`nohrs_cli.rs`, `rm.rs`,
+- gpui バイナリのエントリポイント (`prime-files/src/{app,cli,main}.rs`) と CLI バイナリのそれ
+  (`prime-files-cli/src/main.rs`)。後者はプロセス配線専用 — 実 stdio のロック、実ゴミ箱のオープン、
+  環境変数の読み取り。引数解析と各コマンドのエンジンは lib 側 (`prime_files_cli.rs`, `rm.rs`,
   `trash.rs`, `shim.rs`, `doctor.rs`) にあり、そちらは除外せず gate 対象
 - 純粋な描画 / view・ウィンドウ chrome (`explorer/view*`, `assets.rs`, `window.rs` 等)
 - `components/layout/unified_toolbar.rs` — popup メニューの本体はメニューを開いたときのみ実行され、
   headless な draw では到達しないため除外 (toolbar 本体の描画は `#[gpui::test]` でカバー済み)
-- 外部プロセス / 索引依存の検索バックエンド (`nohrs-services/src/search*`)
+- 外部プロセス / 索引依存の検索バックエンド (`prime-files-services/src/search*`)
 - 起動中アプリ経由でのみ通る glue (`explorer.rs`, `explorer/list_setup.rs`, ページ stub・`root.rs`)
 
 再利用コンポーネント (`components/file_list.rs` の `render_item`, `components/layout/footer.rs`,
@@ -151,7 +151,7 @@ reorder_imports = true
 
 - **`[licenses]`** — 実際の依存ツリーが要求するため許可リストを拡張（`0BSD` / `Unicode-3.0` / `MPL-2.0` / `CC0-1.0` / `NCSA`）。`Unicode-DFS-2016` は今の依存が `Unicode-3.0` を使うため不要。`confidence-threshold = 0.93` は同じ。
 - **`[advisories]`** — 現行 cargo-deny は per-severity の `vulnerability` / `notice` キーを廃止し、これらは常に error 扱い。よって `vulnerability = "deny"` は書かない（書くと unknown field で弾かれる）。`unmaintained = "workspace"`（直接依存のみ警告）、`yanked = "deny"`。CI では `advisories` のみ informational（`continue-on-error`）。
-- **`[bans]`** — `multiple-versions = "warn"` / `openssl-sys` を deny。`tokio` は `wrappers` 付きで deny 済み (ADR 0004 / #64)。gpui が `zed-reqwest → hyper → h2 → tokio` を transitively 引くため hard ban は置けないが、`wrappers` にその経路の crate だけを列挙することで、**それ以外から tokio へ辿る経路** — とりわけ `nohrs-*` crate が直接依存に戻すこと — を CI が落とす。`wrappers` への追加は tokio への新しい経路を認めることなので、各エントリに理由を添える。P4 で WASI 層が入る際は `nohrs-plugin-host` を追加する。
+- **`[bans]`** — `multiple-versions = "warn"` / `openssl-sys` を deny。`tokio` は `wrappers` 付きで deny 済み (ADR 0004 / #64)。gpui が `zed-reqwest → hyper → h2 → tokio` を transitively 引くため hard ban は置けないが、`wrappers` にその経路の crate だけを列挙することで、**それ以外から tokio へ辿る経路** — とりわけ `prime-files-*` crate が直接依存に戻すこと — を CI が落とす。`wrappers` への追加は tokio への新しい経路を認めることなので、各エントリに理由を添える。P4 で WASI 層が入る際は `prime-files-plugin-host` を追加する。
 - **`[sources]`** — `unknown-registry` / `unknown-git` を deny、`allow-git = []`。
 
 ---
@@ -169,16 +169,16 @@ reorder_imports = true
 
 | crate | ベンチ対象 | 状態 |
 |-------|-----------|------|
-| `nohrs-store` | SQLite メタデータの読み書き、history、redb host KV の get/put/batch | [`benches/store.rs`](../crates/nohrs-store/benches/store.rs) |
-| `nohrs-services` | fs listing (ディレクトリ規模別・ページ別) | [`benches/listing.rs`](../crates/nohrs-services/benches/listing.rs) |
-| `nohrs-services` | search クエリ実行 | P3 (#70 と同時) |
-| `nohrs-launcher` (P3) | nucleo ranking、起動時間 | 未着手 |
-| `nohrs-plugin-host` (P4) | WIT host call レイテンシ、permission check overhead | 未着手 |
+| `prime-files-store` | SQLite メタデータの読み書き、history、redb host KV の get/put/batch | [`benches/store.rs`](../crates/prime-files-store/benches/store.rs) |
+| `prime-files-services` | fs listing (ディレクトリ規模別・ページ別) | [`benches/listing.rs`](../crates/prime-files-services/benches/listing.rs) |
+| `prime-files-services` | search クエリ実行 | P3 (#70 と同時) |
+| `prime-files-launcher` (P3) | nucleo ranking、起動時間 | 未着手 |
+| `prime-files-plugin-host` (P4) | WIT host call レイテンシ、permission check overhead | 未着手 |
 
 `criterion` crate を採用。ベンチは `benches/` に置き、`[[bench]] harness = false` で criterion に `main` を渡す。lib 側は `bench = false` とする (既定では lib が bench target になり、libtest が criterion のフラグを拒否するため)。
 
 ```bash
-cargo bench --locked -p nohrs-store -p nohrs-services
+cargo bench --locked -p prime-files-store -p prime-files-services
 ```
 
 `--locked` は CI と同じ依存グラフで測るためにつける。これが無いと `Cargo.toml` の条件とコミット済み `Cargo.lock` がずれている場合に lockfile が更新され、CI と別の依存で計測することになる。

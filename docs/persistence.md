@@ -39,7 +39,7 @@
 
 問題は、**そのどれもが B-tree の性質であって SQL エンジンの性質ではない**ことです。redb も順序付きキーと範囲スキャンを持ち、二次インデックスも (自前整合が要るとはいえ) 表現できます。基準が本当に問うべきなのは「キー完全一致以外か」ではなく「**クエリプランナと関係演算子が要るか**」で、その意味での SQL 表現力は P2 時点で一度も使われていません。
 
-数える対象は `crates/nohrs-store/src/sqlite.rs` の実行時 SQL と `crates/nohrs-store/migrations/001_init.sql` のスキーマ文 (P2 時点で存在する唯一のマイグレーション) の 2 つ。
+数える対象は `crates/prime-files-store/src/sqlite.rs` の実行時 SQL と `crates/prime-files-store/migrations/001_init.sql` のスキーマ文 (P2 時点で存在する唯一のマイグレーション) の 2 つ。
 
 | 対象 | 文数 | 内訳 |
 |------|------|------|
@@ -74,7 +74,7 @@
 
 **それでも P2 では変更しない。** 理由は 2 つ。
 
-1. **この判断は可逆で、バックエンドは trait の裏に隠れている。** `MetadataQuery` / `MetadataStore` / `HistoryStore` / `KvStore` はいずれも trait として宣言されており、差し替えは `nohrs-store` に閉じる。ただし P2 時点で実際に `Arc<dyn _>` として呼び出し側へ配線されているのは `KvStore` だけで (`nohrs/src/app.rs`)、メタデータと履歴はまだ利用側が無い。**利用側が増える前に決めるほど差し替えは安い**、というのがここでの含意。
+1. **この判断は可逆で、バックエンドは trait の裏に隠れている。** `MetadataQuery` / `MetadataStore` / `HistoryStore` / `KvStore` はいずれも trait として宣言されており、差し替えは `prime-files-store` に閉じる。ただし P2 時点で実際に `Arc<dyn _>` として呼び出し側へ配線されているのは `KvStore` だけで (`prime-files/src/app.rs`)、メタデータと履歴はまだ利用側が無い。**利用側が増える前に決めるほど差し替えは安い**、というのがここでの含意。
 2. **本命のワークロードがまだ無い。** この DB を本気で叩くのは P3 のメタデータインデクサで、数十万エントリの更新において自前二次インデックスが SQLite の B-tree に勝つかは、そのコード無しには測れない。いま決めるのは目隠しで決めること。
 
 **P3 のインデクサ実装後に、以下を実測したうえで再検討する。**
@@ -217,13 +217,13 @@ redb = "4"
 
 | ファイル | 用途 | フェーズ |
 |---------|------|---------|
-| `$XDG_DATA_HOME/nohrs/state.redb` | ホスト KV (window 位置・タブ/セッション復元・動的設定) | **P2** |
-| `$XDG_DATA_HOME/nohrs/plugin-kv.redb` | プラグイン専用 KV / cache | P4 |
+| `$XDG_DATA_HOME/prime-files/state.redb` | ホスト KV (window 位置・タブ/セッション復元・動的設定) | **P2** |
+| `$XDG_DATA_HOME/prime-files/plugin-kv.redb` | プラグイン専用 KV / cache | P4 |
 
 ### ホスト KV テーブル設計 (P2)
 
 ```rust
-// crates/nohrs-store/src/nohrs_store.rs (擬似コード)
+// crates/prime-files-store/src/prime_files_store.rs (擬似コード)
 use redb::TableDefinition;
 
 // 単一テーブル。key は `KvKey` (= "window.position" / "session.tabs")。
@@ -324,7 +324,7 @@ fn cache_for(plugin_id: &str) -> TableDefinition<'static, &str, (i64, &[u8])>;
 ## 4. Trait 設計 (Interface Segregation)
 
 ```rust
-// crates/nohrs-store/src/nohrs_store.rs
+// crates/prime-files-store/src/prime_files_store.rs
 
 // このスケッチ内だけの略記。実装では値はそのまま `Vec<u8>` です。
 type Bytes = Vec<u8>;
@@ -398,18 +398,18 @@ impl Cache    for RedbPluginCache { ... }
 
 ## 5. 診断 / パフォーマンスログ
 
-ストア操作の所要時間を計測してパフォーマンス解析に使うためのログ機構。デフォルトは全 off (本番は無音) で、`config.toml` の `[diagnostics.store]` で有効化する (スキーマは [`docs/config.md`](./config.md) §2)。出力は既存の `tracing` + `EnvFilter` (`RUST_LOG`) 経路 ([`crates/nohrs-core/src/telemetry/logging.rs`](../crates/nohrs-core/src/telemetry/logging.rs)) にそのまま乗る。
+ストア操作の所要時間を計測してパフォーマンス解析に使うためのログ機構。デフォルトは全 off (本番は無音) で、`config.toml` の `[diagnostics.store]` で有効化する (スキーマは [`docs/config.md`](./config.md) §2)。出力は既存の `tracing` + `EnvFilter` (`RUST_LOG`) 経路 ([`crates/prime-files-core/src/telemetry/logging.rs`](../crates/prime-files-core/src/telemetry/logging.rs)) にそのまま乗る。
 
 ### SQLite
 
 rusqlite の組み込みフックを使う:
 
-- `Connection::profile(Some(callback))` — 各ステートメント完了後に実行 SQL と所要時間を受け取る。`slow_query_ms` 超過なら `warn`、`log_all_queries` 有効時は全件を `debug` で `tracing` へ emit (target = `nohrs_store::sql`)。
+- `Connection::profile(Some(callback))` — 各ステートメント完了後に実行 SQL と所要時間を受け取る。`slow_query_ms` 超過なら `warn`、`log_all_queries` 有効時は全件を `debug` で `tracing` へ emit (target = `prime_files_store::sql`)。
 - `Connection::trace(Some(callback))` — 必要なら展開後 SQL を `trace` レベルで出力 (より詳細)。
 
 ### redb
 
-redb には同等の組み込みフックが無いため、`RedbKvStore` の各操作 (`get` / `put` / `delete` / `batch`) を計測ラッパで囲み、`log_redb_ops` 有効時に操作名と所要時間を `tracing` へ emit (target = `nohrs_store::redb`)。
+redb には同等の組み込みフックが無いため、`RedbKvStore` の各操作 (`get` / `put` / `delete` / `batch`) を計測ラッパで囲み、`log_redb_ops` 有効時に操作名と所要時間を `tracing` へ emit (target = `prime_files_store::redb`)。
 
 ### 方針
 
@@ -437,7 +437,7 @@ redb には同等の組み込みフックが無いため、`RedbKvStore` の各�
 
 - いずれも単一ファイル。P2 では `db.sqlite` (メタデータ・履歴) と `state.redb` (ホスト KV) の 2 ファイル、P4 で `plugin-kv.redb` が加わる
   ```sh
-  cp ~/.local/share/nohrs/db.sqlite   ./backup-$(date +%Y%m%d).sqlite
-  cp ~/.local/share/nohrs/state.redb  ./backup-$(date +%Y%m%d).redb
+  cp ~/.local/share/prime-files/db.sqlite   ./backup-$(date +%Y%m%d).sqlite
+  cp ~/.local/share/prime-files/state.redb  ./backup-$(date +%Y%m%d).redb
   ```
 - ユーザー向けの export/import 機能は P5 以降で検討

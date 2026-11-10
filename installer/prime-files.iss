@@ -1,7 +1,7 @@
 ; Prime Files installer (Inno Setup 6).
 ;
 ; Built by .github/workflows/release.yml:
-;   ISCC /DAppVersion=0.1.0 /DExeSource=..\target\dist\nohrs.exe /DIndexerSource=..\target\dist\prime-files-indexer.exe installer\prime-files.iss
+;   ISCC /DAppVersion=0.1.0 /DExeSource=..\target\dist\prime-files.exe /DIndexerSource=..\target\dist\prime-files-indexer.exe installer\prime-files.iss
 ;
 ; Installs for the current user only (no administrator to install), the way
 ; per-user app installers do; only the dependencies that need it ask for
@@ -20,7 +20,7 @@
   #define AppVersion "0.0.0"
 #endif
 #ifndef ExeSource
-  #define ExeSource "..\target\dist\nohrs.exe"
+  #define ExeSource "..\target\dist\prime-files.exe"
 #endif
 #ifndef IndexerSource
   #define IndexerSource "..\target\dist\prime-files-indexer.exe"
@@ -232,6 +232,13 @@ begin
   else if ResultCode <> 0 then
     Log(Format('forget-listary ended with %d.', [ResultCode]));
   RegDeleteValue(HKCU, 'Software\Microsoft\Windows\CurrentVersion\Run', 'Prime Files');
+  RegDeleteKeyIncludingSubkeys(HKCU, 'Software\Classes\Directory\shell\prime-files');
+  RegDeleteKeyIncludingSubkeys(HKCU, 'Software\Classes\Drive\shell\prime-files');
+  if RegQueryStringValue(HKCU, 'Software\Classes\Directory\shell', '', Value) and (Value = 'prime-files') then
+    RegDeleteValue(HKCU, 'Software\Classes\Directory\shell', '');
+  if RegQueryStringValue(HKCU, 'Software\Classes\Drive\shell', '', Value) and (Value = 'prime-files') then
+    RegDeleteValue(HKCU, 'Software\Classes\Drive\shell', '');
+  // The same entries under the name versions up to 0.3.9 gave them.
   RegDeleteKeyIncludingSubkeys(HKCU, 'Software\Classes\Directory\shell\nohrs');
   RegDeleteKeyIncludingSubkeys(HKCU, 'Software\Classes\Drive\shell\nohrs');
   if RegQueryStringValue(HKCU, 'Software\Classes\Directory\shell', '', Value) and (Value = 'nohrs') then

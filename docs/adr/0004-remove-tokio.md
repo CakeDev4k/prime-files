@@ -19,12 +19,12 @@
 - **GPUI executor との二重スタック**: GPUI は独自 executor を持ち、tokio と並走させると thread の使い分けが不明瞭
 - **重い依存**: tokio はビルド時間とバイナリサイズに影響
 - **WASM 統合との切り分け**: wasmtime core の async は executor 非依存だが、wasmtime-wasi は tokio に深く結合している (公式に「Tokio executor を必要とし、設計に結びついている」と明記)。WASI プラグインを動かすなら tokio は避けられない。ただしアプリ全体を tokio 化する必要はなく、プラグイン実行層に隔離できる
-- **HTTP server を持たない**: nohrs は GUI app であり axum/HTTP server は当面不要
+- **HTTP server を持たない**: Prime Files は GUI app であり axum/HTTP server は当面不要
 - **設計シグナルの混乱**: `#[tokio::main]` があると新規 contributor が tokio を前提とした設計を持ち込む
 
 ## Decision
 
-**tokio をアプリコア (UI / 検索 / インデックス / ファイル操作 / HTTP) から撤去し、GPUI executor + runtime-agnostic な crates に統一する。tokio は WASI プラグイン実行層 (`nohrs-plugin-host`) だけに隔離し、専用の小さな `current_thread` runtime に閉じ込める。公開プラグイン API (`Plugin` trait) は tokio 非依存の sync に保つ**。
+**tokio をアプリコア (UI / 検索 / インデックス / ファイル操作 / HTTP) から撤去し、GPUI executor + runtime-agnostic な crates に統一する。tokio は WASI プラグイン実行層 (`prime-files-plugin-host`) だけに隔離し、専用の小さな `current_thread` runtime に閉じ込める。公開プラグイン API (`Plugin` trait) は tokio 非依存の sync に保つ**。
 
 アプリコアの置換マッピング:
 
@@ -42,7 +42,7 @@
 
 ### プラグイン実行層の例外 (P4)
 
-WASI Preview 2 プラグインのホスト実装 (`wasmtime` + `wasmtime-wasi`) は tokio に依存する。これはアプリ全体を tokio 化するのではなく、`nohrs-plugin-host` 内の専用 `current_thread` tokio runtime に閉じ込める:
+WASI Preview 2 プラグインのホスト実装 (`wasmtime` + `wasmtime-wasi`) は tokio に依存する。これはアプリ全体を tokio 化するのではなく、`prime-files-plugin-host` 内の専用 `current_thread` tokio runtime に閉じ込める:
 
 ```rust
 pub struct WasiRuntime {
@@ -63,7 +63,7 @@ impl Plugin for WasiPlugin {
 - **P1**: `axum` 削除、`#[tokio::main]` 削除、`spawn_blocking` を `cx.background_spawn` に置換
 - **P2**: 残りの `tokio::sync::*` / `tokio::spawn` を置換、`Cargo.toml` から `tokio` を削除
 
-検証: `cargo-deny` の `[bans]` で tokio を deny。ただし `nohrs-plugin-host` (P4 で追加) を `wrappers` に登録し、プラグイン実行層からの依存のみ許可する。それ以外の crate に tokio が混入したら CI で fail させる。P2〜P3 は plugin host 未導入のため tokio は完全に消える。
+検証: `cargo-deny` の `[bans]` で tokio を deny。ただし `prime-files-plugin-host` (P4 で追加) を `wrappers` に登録し、プラグイン実行層からの依存のみ許可する。それ以外の crate に tokio が混入したら CI で fail させる。P2〜P3 は plugin host 未導入のため tokio は完全に消える。
 
 詳細は [`docs/async-runtime.md`](../async-runtime.md) 参照。
 
@@ -74,7 +74,7 @@ impl Plugin for WasiPlugin {
 - アプリコアの依存ツリー削減 (tokio + 関連 crates がコアから消える)、ビルド時間短縮
 - アプリコアの async runtime が GPUI 一本に統一、思考コストが下がる
 - tokio はプラグイン実行層に隔離されるため、アプリコアの依存ツリーと思考モデルは tokio-free を維持
-- `cargo deny check bans` で `nohrs-plugin-host` 以外への混入を機械的に検出
+- `cargo deny check bans` で `prime-files-plugin-host` 以外への混入を機械的に検出
 
 ### Negative
 

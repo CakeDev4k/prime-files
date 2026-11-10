@@ -5,7 +5,7 @@
 
 ## Context
 
-nohrs は Finder の代替を目指して macOS で開発が始まった。現状 (0.0.x):
+Prime Files は Finder の代替を目指して macOS で開発が始まった。現状 (0.0.x):
 
 - gpui の Metal バックエンドを使用、Linux サポートは gpui 側で段階的に進行中
 - 既存依存・実装に macOS 固有 API (`trash` crate、Spotlight ベースの初期検索) を含む

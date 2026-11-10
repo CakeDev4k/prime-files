@@ -1,7 +1,7 @@
 # Plugin Distribution — Install / Update / Store
 
 > Status: Draft (P4 で基盤、P5 で Plugin Store)
-> Related: [`docs/plugin-overview.md`](./plugin-overview.md), [`docs/plugin-permissions.md`](./plugin-permissions.md), [`docs/web.md`](./web.md)
+> Related: [`docs/plugin-overview.md`](./plugin-overview.md), [`docs/plugin-permissions.md`](./plugin-permissions.md)
 
 本書はコミュニティプラグインのインストール / 更新 / 削除 / Plugin Store 統合を定めます。
 
@@ -11,7 +11,7 @@
 
 | ソース | 例 | 解析 |
 |--------|-----|------|
-| **GitHub `user/repo`** | `syuya2036/nohrs-plugin-example` | デフォルトで `git clone https://github.com/user/repo` (常に HTTPS に解決) |
+| **GitHub `user/repo`** | `syuya2036/prime-files-plugin-example` | デフォルトで `git clone https://github.com/user/repo` (常に HTTPS に解決) |
 | **任意 URL (git)** | `https://gitlab.com/.../.git` | **`https://` 必須**。URL を直接 `git clone` |
 | **任意 URL (zip/tar.gz)** | `https://example.com/plugin.zip` | **`https://` 必須**。download → SHA-256 checksum 検証 → 解凍 |
 | **ローカルパス** | `file:///Users/.../my-plugin` | `[plugins.dev_paths]` に追加、symlink (dev mode) |
@@ -25,7 +25,7 @@
 ## 2. プラグインリポジトリの構造
 
 ```text
-nohrs-plugin-example/
+prime-files-plugin-example/
 ├── plugin.toml                 # manifest (required)
 ├── README.md
 ├── LICENSE
@@ -48,15 +48,15 @@ nohrs-plugin-example/
 ## 3. インストールパイプライン
 
 ```text
-1. 起動: ユーザー操作 (nohrs CLI / Plugin Store ボタン / `nohrs://install?source=user/repo`)
+1. 起動: ユーザー操作 (Prime Files CLI / Plugin Store ボタン / `prime-files://install?source=user/repo`)
 2. config.toml に追加 or memory state 更新
-3. nohrs-plugin-host が install task を起動:
+3. prime-files-plugin-host が install task を起動:
    a. source 解析 → git clone or download
    b. plugin.toml 読み取り、schema 検証
-   c. engine.nohrs_version の範囲チェック (適合しなければ reject)
+   c. engine.prime_files_version の範囲チェック (適合しなければ reject)
    d. component.wasm を wit-bindgen で validate (world 互換性)
    e. permission prompt 表示、ユーザー同意取得
-   f. $DATA/nohrs/plugins/<plugin-id>/ にコピー (sha256 で integrity check)
+   f. $DATA/prime-files/plugins/<plugin-id>/ にコピー (sha256 で integrity check)
    g. SQLite plugins テーブルに登録、granted_permissions 保存
 4. Activation (lazy なら何もしない、eager なら即 Load)
 5. UI に "Installed" 通知
@@ -95,9 +95,9 @@ nohrs-plugin-example/
 | 更新確認 | 週次バックグラウンド (起動時 + 7 日経過で GitHub API で latest release/tag fetch) |
 | 通知 UI | 更新あれば設定ページに "Updates available (3)" バッジ、明示ユーザー操作で update 実施 |
 | 自動更新 | デフォルト **オフ** (security 重視)。設定で opt-in |
-| 互換性チェック | 新 version の `engine.nohrs_version` が範囲外なら update 不可、ユーザーに警告 |
+| 互換性チェック | 新 version の `engine.prime_files_version` が範囲外なら update 不可、ユーザーに警告 |
 | permission diff | 増えた permission のみ再プロンプト ([`docs/plugin-permissions.md`](./plugin-permissions.md) §2.1 参照) |
-| ロールバック | 1 つ前のバージョンを `$DATA/nohrs/plugins/<id>/.prev/` に保持、UI でロールバック可 |
+| ロールバック | 1 つ前のバージョンを `$DATA/prime-files/plugins/<id>/.prev/` に保持、UI でロールバック可 |
 
 ---
 
@@ -105,7 +105,7 @@ nohrs-plugin-example/
 
 | 観点 | 仕様 |
 |------|------|
-| 完全削除 | config から除外、`$DATA/nohrs/plugins/<id>/` 削除、SQLite `plugins` レコード削除 |
+| 完全削除 | config から除外、`$DATA/prime-files/plugins/<id>/` 削除、SQLite `plugins` レコード削除 |
 | ユーザーデータの扱い | `plugin_kv` table の対応 rows は **デフォルト保持** (再 install したい場合に備えて)。`uninstall --purge` で全削除 |
 | 共有データ | 当面 plugin 間共有データ無し → 関連処理なし |
 
@@ -113,7 +113,7 @@ nohrs-plugin-example/
 
 ## 7. Plugin Store ページ (web、P5)
 
-詳細は [`docs/web.md`](./web.md) §6.5 参照。要点:
+要点:
 
 ### 7.1 登録方式
 
@@ -122,7 +122,7 @@ nohrs-plugin-example/
 - Plugin Store の自動 CI チェック:
   - `plugin.toml` schema 検証
   - SHA-256 整合性
-  - `engine.nohrs_version` 範囲
+  - `engine.prime_files_version` 範囲
   - icon / README 必須
 
 ### 7.2 カテゴリ (初期 5 つ)
@@ -138,7 +138,7 @@ nohrs-plugin-example/
 各 plugin の Plugin Store カードには:
 - icon / name / version / author / stars / last update / license
 - **permission バッジ** (`fs:home`, `net`, `process` 等)。詳細は [`docs/plugin-permissions.md`](./plugin-permissions.md)
-- Install ボタン: `nohrs://install?source=user/repo` で deeplink
+- Install ボタン: `prime-files://install?source=user/repo` で deeplink
 - アプリ未起動時のフォールバック: config.toml に追加する snippet をクリップボードにコピー
 
 ### 7.4 動的データ (Future)
@@ -151,23 +151,23 @@ nohrs-plugin-example/
 
 ```bash
 # install
-nohrs plugin install user/repo
-nohrs plugin install https://gitlab.com/.../.git
-nohrs plugin install ./local-plugin              # dev mode のみ
+Prime Files plugin install user/repo
+Prime Files plugin install https://gitlab.com/.../.git
+Prime Files plugin install ./local-plugin              # dev mode のみ
 
 # update
-nohrs plugin update                              # 全 plugin の更新確認
-nohrs plugin update user/repo                    # 個別
+Prime Files plugin update                              # 全 plugin の更新確認
+Prime Files plugin update user/repo                    # 個別
 
 # uninstall
-nohrs plugin uninstall user/repo
-nohrs plugin uninstall user/repo --purge         # KV データも削除
+Prime Files plugin uninstall user/repo
+Prime Files plugin uninstall user/repo --purge         # KV データも削除
 
 # list
-nohrs plugin list
+Prime Files plugin list
 
 # Plugin Store への submit 用 PR 作成 (P5)
-nohrs plugin publish                             # gh CLI 経由で web リポジトリに PR
+Prime Files plugin publish                             # gh CLI 経由で web リポジトリに PR
 ```
 
 ---
@@ -177,7 +177,7 @@ nohrs plugin publish                             # gh CLI 経由で web リポ�
 ### 9.1 plugin 削除 (緊急)
 
 malicious plugin が判明した場合:
-- nohrs 側で blocklist を fetch (`https://nohrs.app/security/blocklist.json`)
+- Prime Files 側で blocklist を fetch (`https://nohrs.app/security/blocklist.json`)
 - blocklist にある plugin は起動時に **強制 disable** + ユーザー通知
 - blocklist は web リポジトリで管理、PR で追加
 

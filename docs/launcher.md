@@ -62,7 +62,7 @@
 ### 4.1 `Command` trait
 
 ```rust
-// crates/nohrs-launcher/src/command.rs
+// crates/prime-files-launcher/src/command.rs
 
 pub trait Command: Send + Sync + 'static {
     fn id(&self) -> &'static str;
@@ -80,7 +80,7 @@ pub trait Command: Send + Sync + 'static {
 inventory::collect!(&'static dyn Command);
 ```
 
-`inventory` クレートで linker-time にコマンドを集める。各 crate (`nohrs-pages`, `nohrs-services`, `nohrs-launcher` 自体) が自身のコマンドを `inventory::submit!` で宣言。
+`inventory` クレートで linker-time にコマンドを集める。各 crate (`prime-files-pages`, `prime-files-services`, `prime-files-launcher` 自体) が自身のコマンドを `inventory::submit!` で宣言。
 
 ### 4.2 メタデータ
 
@@ -215,11 +215,11 @@ struct Action {
 
 ## 11. 実装上のポイント
 
-- crate: **`nohrs-launcher`** (P3 で新規)
+- crate: **`prime-files-launcher`** (P3 で新規)
 - window: GPUI で borderless + blur 化、`window.set_window_level(.floating)`
 - global hotkey: `global-hotkey` crate
 - ranking: `nucleo`
-- 位置記憶: `nohrs-store::KvStore` (redb `state.redb`) 経由
+- 位置記憶: `prime-files-store::KvStore` (redb `state.redb`) 経由
 
 ---
 
@@ -233,7 +233,7 @@ struct Action {
 
 ## 13. 実装状況
 
-`crates/nohrs-launcher` に「検索」部分を実装済み。本書の残りは未実装。
+`crates/prime-files-launcher` に「検索」部分を実装済み。本書の残りは未実装。
 
 ### 実装済み
 
@@ -246,7 +246,7 @@ struct Action {
 | ウィンドウ (§1) | borderless + 角丸 + 透過。`gpui_component::Root` を使わないことで実現 (下記) |
 | 結果リスト (§5) | icon / title / subtitle / kind badge、マッチ文字のハイライト |
 | ランキング (§6) | `nucleo-matcher` + exact / prefix / 深さ boost |
-| ファイル名インデックス | `nohrs-services::search::file_index`。起動時に home を走査して常駐。`Scanning` / `Ready` / `Failed` を UI に出し分ける |
+| ファイル名インデックス | `prime-files-services::search::file_index`。起動時に home を走査して常駐。`Scanning` / `Ready` / `Failed` を UI に出し分ける |
 | アクション (§10) | `Enter` = Open、`Cmd/Ctrl+Enter` = Reveal |
 
 #### グローバルホットキーの 2 経路
@@ -285,7 +285,7 @@ portal 側は Wayland コンポジタ無しでは実機確認できないため�
   headless 環境では実際の IME を駆動できないため、日本語入力の通し確認は未実施。
 - **Linux 常駐には 1px の keep-alive ウィンドウが必要。** gpui の Linux バックエンドは
   最後のウィンドウが閉じた時点でイベントループを止める (`x11/client.rs`) ため、
-  `nohrs launcher` は不可視ウィンドウを 1 つ保持してプロセスを生かしている。macOS では不要。
+  `prime-files launcher` は不可視ウィンドウを 1 つ保持してプロセスを生かしている。macOS では不要。
 - **インデックスは起動時の 1 回きりで、ファイルシステムを追従しない。**
   起動後に作られたファイルは次回起動まで検索に出ず、消えたファイルは残る。
   content index 側の watcher に繋ぐのは今後の作業。

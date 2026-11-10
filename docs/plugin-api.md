@@ -3,15 +3,15 @@
 > Status: Draft (P4 で実装)
 > Related: [`docs/plugin-overview.md`](./plugin-overview.md), [`docs/plugin-permissions.md`](./plugin-permissions.md), [`docs/persistence.md`](./persistence.md)
 
-本書は WIT (WebAssembly Interface Type) で表現するプラグイン API の表面を定めます。`nohrs:plugin@0.1.0` がプラグイン作者向けの正式 world です。
+本書は WIT (WebAssembly Interface Type) で表現するプラグイン API の表面を定めます。`prime-files:plugin@0.1.0` がプラグイン作者向けの正式 world です。
 
 ---
 
 ## 1. WIT World
 
 ```wit
-// crates/nohrs-plugin-host/wit/world.wit
-package nohrs:plugin@0.1.0;
+// crates/prime-files-plugin-host/wit/world.wit
+package Prime Files:plugin@0.1.0;
 
 world plugin {
   // ============================================
@@ -414,7 +414,7 @@ record badge {
 
 | 観点 | 仕様 |
 |------|------|
-| host → plugin | **sync** な公開 API。内部は `nohrs-plugin-host` の専用 tokio runtime で wasmtime-wasi (async) を `block_on` 駆動。host 側は `cx.background_spawn` 経由で呼び UI を block しない ([ADR 0004](./adr/0004-remove-tokio.md)) |
+| host → plugin | **sync** な公開 API。内部は `prime-files-plugin-host` の専用 tokio runtime で wasmtime-wasi (async) を `block_on` 駆動。host 側は `cx.background_spawn` 経由で呼び UI を block しない ([ADR 0004](./adr/0004-remove-tokio.md)) |
 | plugin → host | **sync** (WIT host import は sync 呼び出し。guest は tokio 不要) |
 | 長時間処理 | P4 では cancel 不可。plugin 側で chunk 化推奨 |
 | async task | P5+ で検討。`host.spawn-task` で投げて結果を `events.on-task-complete` で受け取る形 |
@@ -437,10 +437,10 @@ record badge {
 ## 7. WIT 配置
 
 ```text
-crates/nohrs-plugin-host/wit/
+crates/prime-files-plugin-host/wit/
 ├── world.wit
 ├── deps/
-│   └── nohrs-types/        # 共通 record / variant
+│   └── prime-files-types/        # 共通 record / variant
 └── interfaces/             # interface 単位の分割
     ├── logging.wit
     ├── kv.wit
@@ -454,4 +454,4 @@ crates/nohrs-plugin-host/wit/
 
 - 各 interface は web の `/docs/plugin-authoring/api/<interface>` で詳細解説 (P4 で公開)
 - WIT の生 schema は GitHub raw URL でも参照可
-- AI agent 向け MCP server `@nohrs/mcp-plugin-dev` の `nohrs_wit_lookup(name)` で query 可能
+- AI agent 向け MCP server `@prime-files/mcp-plugin-dev` の `prime_files_wit_lookup(name)` で query 可能

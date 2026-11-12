@@ -916,9 +916,25 @@ pub(crate) trait PaletteBox: PaletteHost {
                 (Some(error), _) => {
                     screen.child(div().px(px(16.0)).text_sm().text_color(rgb(theme::muted())).child(error.clone()))
                 }
-                (None, Some(frame)) => screen
-                    .on_click(cx.listener(|page, _: &ClickEvent, _, cx| page.toggle_hit_preview(cx)))
-                    .child(img(ImageSource::Render(frame.clone())).w(px(inner)).h(px(screen_height)).object_fit(ObjectFit::Contain)),
+                (None, Some(frame)) => {
+                    // The player copies frames at the size they are shown
+                    // (`media::frame_size`).
+                    let room = media.room.clone();
+                    screen
+                        .on_click(cx.listener(|page, _: &ClickEvent, _, cx| page.toggle_hit_preview(cx)))
+                        .child(img(ImageSource::Render(frame.clone())).w(px(inner)).h(px(screen_height)).object_fit(ObjectFit::Contain))
+                        .child(
+                            canvas(
+                                move |_, window, _| {
+                                    let scale = window.scale_factor();
+                                    player::set_frame_room(&room, inner * scale, screen_height * scale);
+                                },
+                                |_, _, _, _| {},
+                            )
+                            .absolute()
+                            .size_0(),
+                        )
+                }
                 (None, None) if player::is_audio(&path) => {
                     let bars = player::waveform_bars(&media.peaks, media.peak_max, media.duration, 400);
                     let track = track.clone();

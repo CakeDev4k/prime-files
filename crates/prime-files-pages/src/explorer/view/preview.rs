@@ -1289,12 +1289,36 @@ fn render_media(page: &ExplorerPane, cx: &mut Context<ExplorerPane>) -> AnyEleme
                 // resolves under `items_center`.
                 let mut screen = screen;
                 screen.style().align_items = Some(gpui::AlignItems::Stretch);
+                // The box the frame is drawn in, zoom included, tells the
+                // player what size to copy frames at (`media::frame_size`).
+                let room = media.room.clone();
+                let measure = canvas(
+                    move |bounds, window, _| {
+                        let scale = window.scale_factor();
+                        crate::explorer::media::set_frame_room(
+                            &room,
+                            f32::from(bounds.size.width) * scale,
+                            f32::from(bounds.size.height) * scale,
+                        );
+                    },
+                    |_, _, _, _| {},
+                )
+                .absolute()
+                .top_0()
+                .left_0()
+                .size_full();
                 screen.child(zoom_frame(
                     page,
                     "preview-media-frame",
-                    img(ImageSource::Render(frame.clone()))
+                    div()
+                        .relative()
                         .size_full()
-                        .object_fit(gpui::ObjectFit::Contain)
+                        .child(
+                            img(ImageSource::Render(frame.clone()))
+                                .size_full()
+                                .object_fit(gpui::ObjectFit::Contain),
+                        )
+                        .child(measure)
                         .into_any_element(),
                     false,
                     cx,

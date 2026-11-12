@@ -28,6 +28,37 @@ pub(crate) const RATES: [f64; 6] = [0.5, 0.75, 1.0, 1.25, 1.5, 2.0];
 /// engine to fit, so a 4K video costs what a 1080p one does.
 const MAX_FRAME: (u32, u32) = (1280, 720);
 
+/// The room the frame is drawn in, in device pixels, packed as
+/// `width << 32 | height`; 0 until the view has laid it out. Written by the
+/// view as it paints, read by the player at each frame.
+pub(crate) type FrameRoom = Arc<AtomicU64>;
+
+pub(crate) fn set_frame_room(room: &FrameRoom, width: f32, height: f32) {
+    // Rounded up to 32 px: dragging the panel's edge would otherwise make a
+    // new bitmap at every pixel it moves.
+    let step = |side: f32| -> u64 { ((side.max(0.0).ceil() as u64).div_ceil(32) * 32).min(u64::from(u32::MAX)) };
+    room.store(step(width) << 32 | step(height), Ordering::Relaxed);
+}
+
+/// The size a frame of a `native` video is copied at: as big as `room`
+/// shows it (`Contain`), never bigger than the video or than `MAX_FRAME`.
+/// Until 12/11/2026 every frame was copied at up to 1280×720, whatever the
+/// preview's size: a 400 px panel took ~6 times the pixels it showed, each
+/// frame copied twice on the CPU and uploaded again (docs/PERFORMANCE.md,
+/// pass 20). `room` 0×0 is a room not laid out yet.
+fn frame_size(native: (u32, u32), room: (u32, u32)) -> (u32, u32) {
+    let (width, height) = (f64::from(native.0.max(1)), f64::from(native.1.max(1)));
+    let mut scale = (f64::from(MAX_FRAME.0) / width).min(f64::from(MAX_FRAME.1) / height).min(1.0);
+    if room.0 > 0 && room.1 > 0 {
+        scale = scale.min((f64::from(room.0) / width).min(f64::from(room.1) / height));
+    }
+    (((width * scale) as u32).max(1), ((height * scale) as u32).max(1))
+}
+
+fn unpack_room(packed: u64) -> (u32, u32) {
+    ((packed >> 32) as u32, packed as u32)
+}
+
 /// What the preview's controls ask of the player.
 pub(crate) enum Command {
     Play,
@@ -87,6 +118,8 @@ pub(crate) struct MediaPreview {
     /// there is more than one.
     pub audio_streams: Vec<AudioStream>,
     pub menu: Option<MediaMenu>,
+    /// Where the view shows the frame, so the player copies it at that size.
+    pub room: FrameRoom,
     _task: Task<()>,
 }
 
@@ -229,9 +262,11 @@ impl MediaPreview {
                 tracing::warn!("could not start reading the waveform: {error}");
             }
         }
-        let spawned = std::thread::Builder::new()
-            .name("prime-files-media".into())
-            .spawn(move || platform::run(&path, &command_receiver, &sender));
+        let room = FrameRoom::default();
+        let spawned = std::thread::Builder::new().name("prime-files-media".into()).spawn({
+            let room = room.clone();
+            move || platform::run(&path, &command_receiver, &sender, room)
+        });
         if let Err(error) = spawned {
             tracing::error!("could not start the media player: {error}");
             return None;
@@ -289,6 +324,7 @@ impl MediaPreview {
             rate,
             audio_streams: Vec::new(),
             menu: None,
+            room,
             _task: task,
         };
         // The engine takes Play before the file is open and starts once it
@@ -481,7 +517,7 @@ mod platform {
     //! The Media Foundation engine. `unsafe` is confined to this module: none
     //! of these interfaces has a safe binding.
 
-    use super::{AudioStream, Command, MAX_FRAME, PEAK_BLOCKS_PER_SECOND, PlayerState, Update, report_if_changed};
+    use super::{AudioStream, Command, PEAK_BLOCKS_PER_SECOND, PlayerState, Update, report_if_changed};
     use std::sync::mpsc;
     use std::time::{Duration, Instant};
     use windows::Win32::Foundation::RECT;
@@ -522,13 +558,18 @@ mod platform {
         }
     }
 
-    pub fn run(path: &str, commands: &mpsc::Receiver<Command>, updates: &async_channel::Sender<Update>) {
+    pub fn run(
+        path: &str,
+        commands: &mpsc::Receiver<Command>,
+        updates: &async_channel::Sender<Update>,
+        room: super::FrameRoom,
+    ) {
         unsafe { CoInitializeEx(None, COINIT_MULTITHREADED) }.ok().ok();
         if let Err(error) = unsafe { MFStartup(MF_VERSION, MFSTARTUP_FULL) } {
             updates.send_blocking(Update::Failed(error.message().to_string())).ok();
             return;
         }
-        let mut wanted = Wanted::default();
+        let mut wanted = Wanted { room, ..Wanted::default() };
         let video = !super::is_audio(path);
         if let Err(error) = play(path, video, commands, updates, &mut wanted) {
             // A video Windows cannot decode (ProRes, Animation...): a copy
@@ -573,6 +614,8 @@ mod platform {
         rate: Option<f64>,
         /// The audio streams to hear; `None` for the file's own choice.
         audio: Option<Vec<u32>>,
+        /// Where the view shows the frame (`super::FrameRoom`).
+        room: super::FrameRoom,
     }
 
     impl Wanted {
@@ -779,7 +822,7 @@ mod platform {
             if has_video
                 && let Ok(time) = unsafe { engine.OnVideoStreamTick() }
                 && time != last_frame
-                && let Some(frame) = grab(&engine, &wic, &mut target)
+                && let Some(frame) = grab(&engine, &wic, &mut target, &wanted.room)
             {
                 last_frame = time;
                 if updates.send_blocking(Update::Frame(frame)).is_err() {
@@ -1053,20 +1096,20 @@ mod platform {
         Ok(())
     }
 
-    // Copies the engine's current frame into a bitmap no larger than
-    // `MAX_FRAME`, keeping the aspect ratio, and returns it as an image.
+    // Copies the engine's current frame into a bitmap the size it is shown
+    // at (`frame_size`), keeping the aspect ratio, and returns it as an image.
     fn grab(
         engine: &IMFMediaEngine,
         wic: &IWICImagingFactory,
         target: &mut Option<(IWICBitmap, u32, u32)>,
+        room: &std::sync::atomic::AtomicU64,
     ) -> Option<gpui::RenderImage> {
         let (mut width, mut height) = (0u32, 0u32);
         unsafe { engine.GetNativeVideoSize(Some(&mut width), Some(&mut height)) }.ok()?;
         if width == 0 || height == 0 {
             return None;
         }
-        let scale = (MAX_FRAME.0 as f64 / width as f64).min(MAX_FRAME.1 as f64 / height as f64).min(1.0);
-        let (width, height) = (((width as f64 * scale) as u32).max(1), ((height as f64 * scale) as u32).max(1));
+        let (width, height) = super::frame_size((width, height), super::unpack_room(room.load(std::sync::atomic::Ordering::Relaxed)));
         if !matches!(target, Some((_, w, h)) if *w == width && *h == height) {
             let bitmap = unsafe {
                 wic.CreateBitmap(width, height, &GUID_WICPixelFormat32bppPBGRA, WICBitmapCacheOnLoad)
@@ -1107,7 +1150,12 @@ mod platform {
     use super::{Command, Update};
     use std::sync::mpsc;
 
-    pub fn run(_path: &str, _commands: &mpsc::Receiver<Command>, updates: &async_channel::Sender<Update>) {
+    pub fn run(
+        _path: &str,
+        _commands: &mpsc::Receiver<Command>,
+        updates: &async_channel::Sender<Update>,
+        _room: super::FrameRoom,
+    ) {
         updates.send_blocking(Update::Failed("Playback is only available on Windows".into())).ok();
     }
 
@@ -1129,9 +1177,24 @@ pub(crate) fn shared_volume() -> f64 {
 #[cfg(test)]
 mod tests {
     use super::{
-        PEAK_BLOCKS_PER_SECOND, PlayerState, clock, effective_volume, is_audio, is_media, report_if_changed,
-        waveform_bars,
+        FrameRoom, PEAK_BLOCKS_PER_SECOND, PlayerState, clock, effective_volume, frame_size, is_audio, is_media,
+        report_if_changed, set_frame_room, unpack_room, waveform_bars,
     };
+
+    // A frame is copied at the size it is shown, never above the video's
+    // own or the 1280×720 most (docs/PERFORMANCE.md, pass 20).
+    #[test]
+    fn a_frame_is_copied_at_the_size_it_is_shown() {
+        let full_hd = (1920, 1080);
+        assert_eq!(frame_size(full_hd, (0, 0)), (1280, 720), "a room not laid out yet keeps the most");
+        assert_eq!(frame_size(full_hd, (480, 800)), (480, 270), "a narrow panel: its width");
+        assert_eq!(frame_size(full_hd, (2000, 300)), (533, 300), "a short one: its height");
+        assert_eq!(frame_size(full_hd, (4000, 4000)), (1280, 720), "zoomed past the most: the most");
+        assert_eq!(frame_size((320, 240), (1920, 1080)), (320, 240), "never above the video's own");
+        let room = FrameRoom::default();
+        set_frame_room(&room, 401.0, 225.5);
+        assert_eq!(unpack_room(room.load(std::sync::atomic::Ordering::Relaxed)), (416, 256), "rounded up to 32 px");
+    }
 
     // A report redraws the whole pane: a paused player, saying the same
     // thing every 100 ms, kept it redrawing ten times a second.

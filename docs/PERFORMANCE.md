@@ -1412,3 +1412,40 @@ extração pelo 7-Zip depende de ele gravar o arquivo no destino aos poucos.
 vezes em 8 rodadas da suíte nesta sessão (94 de 120 e outra), sempre na
 suíte inteira e passando sozinho; os testes novos de vigia, um deles de 8 s,
 rodam em paralelo a ele.
+
+### 25. A busca perdia nomes novos com o disco ocupado (12/11/2026)
+
+**Queixa** (dono, 12/11): um vídeo renderizado e salvo numa pasta não
+aparecia na busca do Ctrl+T; o Listary achava.
+
+**Achado.** Entre uma varredura e outra (6 h; 30 min com o serviço da MFT),
+quem põe nome novo no índice é `watch_drives`: um vigia `notify` recursivo
+na raiz de cada disco. O callback dele fazia `symlink_metadata`, o filtro e
+a trava do `Fresh` para cada caminho, enquanto o Windows enchia o buffer de
+mudanças (16 KB no `notify` 8.2). Quando o buffer estoura, o `notify` não
+avisa nada. Medido num experimento isolado (`notify` 8.2.0, 20.000 arquivos
+novos numa pasta vigiada): callback de 300 µs recebeu 20.677 eventos;
+callback de 3 ms, 3.585, sem erro e sem flag de rescan. O nome perdido só
+volta na próxima varredura.
+
+Também lido no `notify` 8.2: `ERROR_NOTIFY_ENUM_DIR` cai no "erro
+desconhecido" e faz `unwatch()` do disco inteiro até o app reabrir. Não
+reproduzido no experimento (o estouro veio como sucesso com eventos a menos),
+então não corrigido aqui.
+
+**Mudança.** `watch_roots`: o callback só põe o caminho num canal; uma
+thread própria (`prime-files-everything-fresh`) faz o filtro, o
+`symlink_metadata` e o registro.
+
+**Cobertura.** `no_new_name_is_lost_while_the_disk_is_busy`: 3.000 arquivos
+de uma vez e um "Render final.mp4", com 3 ms para olhar cada um; todos os
+3.001 registrados. O mutante com os 3 ms de volta no callback perde o render
+(e reprova).
+
+**Ficou de fora / não conferido.**
+- Não visto no app: depende de o dono renderizar de novo com o disco
+  ocupado.
+- Outras causas possíveis da mesma queixa, não verificadas: disco externo
+  removível (só os fixos são vigiados), Google Drive (fora de propósito) e o
+  `unwatch()` acima. Um sinal de estouro só existe lendo o
+  `ReadDirectoryChangesW` por conta própria, com buffer maior.

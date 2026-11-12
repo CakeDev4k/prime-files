@@ -1849,8 +1849,30 @@ fn churn(lowered: &str) -> bool {
 // Watches every fixed drive, without administrator rights (Everything's
 // USN journal needs them), for names that appear.
 fn watch_drives(fresh: Arc<Mutex<Fresh>>) -> Option<notify::RecommendedWatcher> {
+    let drives: Vec<PathBuf> = platform::fixed_drives().into_iter().map(PathBuf::from).collect();
+    watch_roots(&drives, fresh, |path| std::fs::symlink_metadata(path).ok().map(|metadata| Found::of(&metadata)))
+}
+
+/// Watches `roots` and everything under them, recording in `fresh` each name
+/// that appears, as `inspect` finds it on disk.
+///
+/// The watcher's callback only queues the paths; `inspect`, the filter and
+/// the lock run on a thread of their own. Until 12/11/2026 they ran inside
+/// the callback, which Windows' change buffer (16 KB in `notify`) waits on:
+/// while it ran, the buffer filled and overflowed, and the overflow is
+/// silent — measured, a handler of 3 ms got 3,585 events out of 20,000 new
+/// files, with no error and no rescan flag. A video rendered while the disk
+/// was busy was among the names lost, and stayed out of the search until the
+/// next walk, hours later (the owner's complaint; `docs/PERFORMANCE.md`,
+/// pass 25).
+fn watch_roots(
+    roots: &[PathBuf],
+    fresh: Arc<Mutex<Fresh>>,
+    inspect: impl Fn(&Path) -> Option<Found> + Send + 'static,
+) -> Option<notify::RecommendedWatcher> {
     use notify::event::{ModifyKind, RenameMode};
     use notify::{EventKind, RecursiveMode, Watcher as _};
+    let (sender, receiver) = std::sync::mpsc::channel::<PathBuf>();
     let mut watcher = notify::recommended_watcher(move |result: notify::Result<notify::Event>| {
         let Ok(event) = result else {
             return;
@@ -1862,20 +1884,32 @@ fn watch_drives(fresh: Arc<Mutex<Fresh>>) -> Option<notify::RecommendedWatcher> 
             _ => return,
         };
         for path in paths {
+            // Fails only once the recorder is gone, with the watcher.
+            if sender.send(path).is_err() {
+                return;
+            }
+        }
+    })
+    .log_err()?;
+    let spawned = std::thread::Builder::new().name("prime-files-everything-fresh".into()).spawn(move || {
+        // Ends when the watcher, and the sender in its callback, are dropped.
+        while let Ok(path) = receiver.recv() {
             let text = path.to_string_lossy().into_owned();
             if churn(&text.to_lowercase()) {
                 continue;
             }
-            let Ok(metadata) = std::fs::symlink_metadata(&path) else {
-                continue;
-            };
-            lock(&fresh).record(text, Found::of(&metadata));
+            if let Some(found) = inspect(&path) {
+                lock(&fresh).record(text, found);
+            }
         }
-    })
-    .log_err()?;
-    for drive in platform::fixed_drives() {
-        if let Err(error) = watcher.watch(Path::new(&drive), RecursiveMode::Recursive) {
-            tracing::warn!("cannot watch {drive} for the everything index: {error}");
+    });
+    if let Err(error) = spawned {
+        tracing::error!("could not start recording new names for the everything index: {error}");
+        return None;
+    }
+    for root in roots {
+        if let Err(error) = watcher.watch(root, RecursiveMode::Recursive) {
+            tracing::warn!("cannot watch {} for the everything index: {error}", root.display());
         }
     }
     Some(watcher)
@@ -2830,6 +2864,40 @@ mod tests {
         assert!(read.entries.iter().zip(&segment.entries).all(|(new, old)| read.lower(new) == segment.lower(old)));
         assert_eq!(search(&loaded, "bonk").len(), 4);
         assert!(search(&loaded, "bonk tamanho:>1kb").is_empty());
+    }
+
+    // A flood of new files while each takes 3 ms to look at (a busy disk, a
+    // cloud folder): every one is recorded, the render among them. With the
+    // look inside the watcher's callback, Windows' change buffer overflowed
+    // and most were lost without a word (`watch_roots`).
+    #[test]
+    fn no_new_name_is_lost_while_the_disk_is_busy() {
+        // Not under the temp folder, whose names the index skips (`churn`).
+        let base = Path::new(env!("CARGO_MANIFEST_DIR")).join("..").join("..").join("target");
+        let dir = tempfile::Builder::new().prefix("everything-flood").tempdir_in(&base).unwrap();
+        let busy = dir.path().join("cache");
+        std::fs::create_dir(&busy).unwrap();
+        let fresh = Arc::new(Mutex::new(Fresh::default()));
+        let watcher = watch_roots(&[dir.path().to_path_buf()], fresh.clone(), |path| {
+            std::thread::sleep(Duration::from_millis(3));
+            std::fs::symlink_metadata(path).ok().map(|metadata| Found::of(&metadata))
+        })
+        .unwrap();
+        std::thread::sleep(Duration::from_millis(200));
+        const FILES: usize = 3_000;
+        for index in 0..FILES {
+            std::fs::write(busy.join(format!("cache-{index:05}-um-nome-comprido-de-cache.bin")), b"x").unwrap();
+        }
+        std::fs::write(dir.path().join("Render final.mp4"), b"video").unwrap();
+        let recorded = || lock(&fresh).table.entries.len();
+        let until = Instant::now() + Duration::from_secs(60);
+        while recorded() < FILES + 1 && Instant::now() < until {
+            std::thread::sleep(Duration::from_millis(100));
+        }
+        drop(watcher);
+        let paths = lock(&fresh).table.paths.clone();
+        assert!(paths.iter().any(|path| path.ends_with("Render final.mp4")), "the render was lost");
+        assert_eq!(paths.len(), FILES + 1, "names lost in the flood");
     }
 
     #[test]

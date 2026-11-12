@@ -27,11 +27,51 @@ use super::ExplorerPane;
 const SETTLE: Duration = Duration::from_millis(200);
 /// The least time between two refreshes of a folder that keeps changing.
 const SPACING: Duration = Duration::from_millis(800);
+/// The most: a folder that takes 500 ms to read is read every 10 s while
+/// something keeps writing in it, not more seldom.
+const MAX_SPACING: Duration = Duration::from_secs(10);
 /// How often a refresh put off (an open rename field, a search on screen) is
 /// tried again.
 const RETRY: Duration = Duration::from_secs(1);
-/// How often a folder whose drive sends no notifications is looked at again.
+/// How often a folder whose drive sends no notifications is looked at again,
+/// at least, and at most.
 const POLL: Duration = Duration::from_secs(3);
+const MAX_POLL: Duration = Duration::from_secs(30);
+/// How often a watch held quiet by an operation of ours looks whether it
+/// ended.
+const QUIET_CHECK: Duration = Duration::from_millis(100);
+
+/// The wait before doing again what took `cost`: twenty times as long, so
+/// the watch never spends more than ~5% of the time reading, between `least`
+/// and `most`. Open Salamander paces its refreshes in the background the same
+/// way (`fileswnb.cpp`, 20× the last refresh, 2–10 s; OTIMIZACAO.md §5.9): a
+/// folder read in 5 ms follows at once, a share that takes 400 ms waits 8 s.
+fn paced(cost: Duration, least: Duration, most: Duration) -> Duration {
+    (cost * 20).clamp(least, most)
+}
+
+/// Prime Files' own operations running on the folder this pane watches.
+#[derive(Default)]
+struct Quiet {
+    running: std::cell::Cell<usize>,
+    /// When the last one ended, and the reload it does began.
+    ended: std::cell::Cell<Option<Instant>>,
+}
+
+/// Held while an operation of ours writes where the pane looks: the events
+/// it raises gather into the one reload it does at the end, instead of a
+/// refresh every [`SPACING`] — Open Salamander's "suspend mode"
+/// (`snooper.cpp`, `BeginSuspendMode`; OTIMIZACAO.md §6.9). Until 11/11/2026
+/// a copy of 60 files over 3 s into the open folder read it 6 times; a copy
+/// of ten minutes, some 750 (`docs/PERFORMANCE.md`, pass 15).
+pub(crate) struct OwnOperation(std::rc::Rc<Quiet>);
+
+impl Drop for OwnOperation {
+    fn drop(&mut self) {
+        self.0.running.set(self.0.running.get().saturating_sub(1));
+        self.0.ended.set(Some(Instant::now()));
+    }
+}
 
 /// The watch on a pane's folders; dropping it stops it.
 pub(crate) struct FolderWatch {
@@ -40,6 +80,7 @@ pub(crate) struct FolderWatch {
     /// Set once the background has built it; `None` until then, or when no
     /// folder could be watched.
     watcher: Option<notify::RecommendedWatcher>,
+    quiet: std::rc::Rc<Quiet>,
     _task: Task<()>,
     _poll: Option<Task<()>>,
 }
@@ -83,8 +124,13 @@ impl ExplorerPane {
         if folders.is_empty() {
             return;
         }
-        let (sender, receiver) = async_channel::unbounded::<()>();
+        // Each event carries when it was heard: one heard before an
+        // operation of ours ended is covered by the reload that operation
+        // does (a logical clock, OTIMIZACAO.md §5.4).
+        let (sender, receiver) = async_channel::unbounded::<Instant>();
         let sender_for_poll = sender.clone();
+        let quiet = std::rc::Rc::new(Quiet::default());
+        let quiet_for_task = quiet.clone();
         let setup = cx.background_spawn({
             let folders = folders.clone();
             async move { start_watching(folders, sender) }
@@ -111,15 +157,25 @@ impl ExplorerPane {
             if !matches!(installed, Ok(true)) {
                 return;
             }
+            let quiet = quiet_for_task;
             let mut last: Option<Instant> = None;
-            while receiver.recv().await.is_ok() {
+            let mut spacing = SPACING;
+            while let Ok(mut heard) = receiver.recv().await {
                 cx.background_executor().timer(SETTLE).await;
                 if let Some(since) = last.map(|last| last.elapsed())
-                    && since < SPACING
+                    && since < spacing
                 {
-                    cx.background_executor().timer(SPACING - since).await;
+                    cx.background_executor().timer(spacing - since).await;
                 }
-                while receiver.try_recv().is_ok() {}
+                while quiet.running.get() > 0 {
+                    cx.background_executor().timer(QUIET_CHECK).await;
+                }
+                while let Ok(also) = receiver.try_recv() {
+                    heard = heard.max(also);
+                }
+                if quiet.ended.get().is_some_and(|ended| heard <= ended) {
+                    continue;
+                }
                 loop {
                     let Ok(done) = this.update(cx, |pane, cx| pane.refresh_from_disk(cx)) else {
                         return;
@@ -129,10 +185,30 @@ impl ExplorerPane {
                     }
                     cx.background_executor().timer(RETRY).await;
                 }
+                // What the read cost sets the pace of the next one.
+                let started = Instant::now();
+                loop {
+                    cx.background_executor().timer(Duration::from_millis(25)).await;
+                    match this.read_with(cx, |pane, _| pane.listing_pending) {
+                        Ok(true) => {}
+                        Ok(false) => break,
+                        Err(_) => return,
+                    }
+                }
+                spacing = paced(started.elapsed(), SPACING, MAX_SPACING);
                 last = Some(Instant::now());
             }
         });
-        self.folder_watch = Some(FolderWatch { folders, watcher: None, _task: task, _poll: None });
+        self.folder_watch = Some(FolderWatch { folders, watcher: None, quiet, _task: task, _poll: None });
+    }
+
+    /// Holds the watch quiet while an operation of ours writes in the
+    /// folder; the operation reloads when done and drops what this returns
+    /// right before (`run_fs_op_with`). `None` with nothing watched.
+    pub(crate) fn begin_own_operation(&self) -> Option<OwnOperation> {
+        let watch = self.folder_watch.as_ref()?;
+        watch.quiet.running.set(watch.quiet.running.get() + 1);
+        Some(OwnOperation(watch.quiet.clone()))
     }
 
     /// Reads the folder again because the disk changed. Put off (false)
@@ -153,7 +229,7 @@ impl ExplorerPane {
 // there is nothing to watch.
 fn start_watching(
     wanted: Vec<String>,
-    sender: async_channel::Sender<()>,
+    sender: async_channel::Sender<Instant>,
 ) -> Option<(notify::RecommendedWatcher, Vec<String>)> {
     #[cfg(test)]
     tests::STARTED.lock().unwrap().extend(wanted.iter().cloned());
@@ -170,7 +246,7 @@ fn start_watching(
         if matches!(event.kind, EventKind::Access(_)) {
             return;
         }
-        if sender.try_send(()).is_err() {
+        if sender.try_send(Instant::now()).is_err() {
             // The pane is gone; its watcher goes with it.
         }
     });
@@ -201,17 +277,23 @@ fn start_watching(
     Some((watcher, polled))
 }
 
-// Looks at `folders` every [`POLL`] and signals when what a listing would show
-// of them (names, sizes, dates, attributes) changed. The reading runs off the
-// UI thread; the first look only records the starting point.
-fn poll(folders: Vec<String>, changed: async_channel::Sender<()>, executor: &BackgroundExecutor) -> Task<()> {
+// Looks at `folders` every [`POLL`] or more and signals when what a listing
+// would show of them (names, sizes, dates, attributes) changed. The reading
+// runs off the UI thread; the first look only records the starting point.
+// Reading a Google Drive folder of thousands of files every 3 s regardless
+// would keep a core busy for a folder that is just open: the wait follows
+// what the last look cost ([`paced`]).
+fn poll(folders: Vec<String>, changed: async_channel::Sender<Instant>, executor: &BackgroundExecutor) -> Task<()> {
     let executor = executor.clone();
     executor.clone().spawn(async move {
         let mut last: Option<u64> = None;
+        let mut wait = POLL;
         loop {
-            executor.timer(POLL).await;
+            executor.timer(wait).await;
+            let started = Instant::now();
             let now = folders.iter().fold(0u64, |sum, folder| sum.wrapping_add(fingerprint(Path::new(folder))));
-            if last.is_some_and(|last| last != now) && changed.send(()).await.is_err() {
+            wait = paced(started.elapsed(), POLL, MAX_POLL);
+            if last.is_some_and(|last| last != now) && changed.send(Instant::now()).await.is_err() {
                 return;
             }
             last = Some(now);
@@ -322,6 +404,119 @@ mod tests {
             std::thread::sleep(std::time::Duration::from_millis(10));
         }
         panic!("the watch never started: {:?}", watching(cx));
+    }
+
+    // Pumps the test's clock along with the real one, so the watcher's
+    // timers keep the pace of the writes on real threads.
+    fn pump(cx: &mut TestAppContext, real: std::time::Duration) {
+        let until = Instant::now() + real;
+        while Instant::now() < until {
+            cx.executor().advance_clock(std::time::Duration::from_millis(10));
+            cx.run_until_parked();
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+    }
+
+    // A pane on `folder`, listed and watched.
+    fn watched_pane(cx: &mut TestAppContext, folder: &std::path::Path) -> WindowHandle<ExplorerPane> {
+        let window = pane(cx);
+        window
+            .update(cx, |pane, _, cx| {
+                pane.cwd = folder.to_string_lossy().into_owned();
+                pane.reload(cx);
+            })
+            .unwrap();
+        for _ in 0..300 {
+            pump(cx, std::time::Duration::from_millis(20));
+            let ready = window
+                .read_with(cx, |pane, _| {
+                    !pane.listing_pending && pane.folder_watch.as_ref().is_some_and(|watch| watch.watcher.is_some())
+                })
+                .unwrap();
+            if ready {
+                return window;
+            }
+        }
+        panic!("the folder was never listed and watched");
+    }
+
+    // How many times a copy of ours into the folder on screen reads it again:
+    // 60 files over ~3 s, then the one reload `run_fs_op_with` does at the
+    // end. Measures and prints; the check is in the test after it.
+    fn reloads_during_an_own_copy(cx: &mut TestAppContext, quiet: bool) -> u64 {
+        cx.executor().allow_parking();
+        let dir = tempfile::tempdir().unwrap();
+        let window = watched_pane(cx, dir.path());
+        let before = window.read_with(cx, |pane, _| pane.listing_generation).unwrap();
+        let guard = quiet.then(|| window.update(cx, |pane, _, _| pane.begin_own_operation()).unwrap()).flatten();
+        let folder = dir.path().to_path_buf();
+        let writer = std::thread::spawn(move || {
+            for index in 0..60 {
+                std::fs::write(folder.join(format!("copiado-{index:03}.txt")), "x").unwrap();
+                std::thread::sleep(std::time::Duration::from_millis(50));
+            }
+        });
+        while !writer.is_finished() {
+            pump(cx, std::time::Duration::from_millis(50));
+        }
+        writer.join().unwrap();
+        // What `run_fs_op_with` does when the batch is done.
+        drop(guard);
+        window.update(cx, |pane, _, cx| pane.reload(cx)).unwrap();
+        pump(cx, std::time::Duration::from_secs(3));
+        let reloads = window.read_with(cx, |pane, _| pane.listing_generation).unwrap() - before;
+        let names = window.read_with(cx, |pane, _| pane.filtered_entries.len()).unwrap();
+        assert_eq!(names, 60, "the listing ends with every file");
+        eprintln!("own copy of 60 files over ~3 s (quiet: {quiet}): {reloads} reloads");
+        reloads
+    }
+
+    // The watch's own refreshes while something else writes, for the record
+    // (6 before 11/11/2026 for this copy, when ours were not told apart).
+    #[gpui::test]
+    #[ignore = "a measurement, not a check"]
+    async fn measure_reloads_without_quiet(cx: &mut TestAppContext) {
+        reloads_during_an_own_copy(cx, false);
+    }
+
+    // A copy of ours reads the folder once, at its end, however long it
+    // writes there (`docs/PERFORMANCE.md`, pass 15).
+    #[gpui::test]
+    async fn an_own_copy_reads_the_folder_once(cx: &mut TestAppContext) {
+        assert_eq!(reloads_during_an_own_copy(cx, true), 1);
+    }
+
+    // Every batch goes through `run_fs_op_with`: it holds the watch quiet
+    // until it is done, and lets go.
+    #[gpui::test]
+    async fn a_file_operation_holds_the_watch_quiet_until_done(cx: &mut TestAppContext) {
+        cx.executor().allow_parking();
+        let dir = tempfile::tempdir().unwrap();
+        let window = watched_pane(cx, dir.path());
+        let running = |cx: &mut TestAppContext| {
+            window.read_with(cx, |pane, _| pane.folder_watch.as_ref().unwrap().quiet.running.get()).unwrap()
+        };
+        let folder = dir.path().to_path_buf();
+        window
+            .update(cx, |pane, _, cx| {
+                pane.run_fs_op(1, "ok".into(), cx, move || {
+                    std::fs::write(folder.join("novo.txt"), "x").unwrap();
+                    super::super::file_ops::OpReport::default()
+                })
+            })
+            .unwrap();
+        assert_eq!(running(cx), 1, "the batch did not hold the watch");
+        pump(cx, std::time::Duration::from_millis(500));
+        assert_eq!(running(cx), 0, "the batch never let the watch go");
+    }
+
+    #[test]
+    fn the_watch_waits_twenty_times_what_a_read_cost() {
+        use super::{MAX_SPACING, SPACING, paced};
+        use std::time::Duration;
+        assert_eq!(paced(Duration::from_millis(5), SPACING, MAX_SPACING), SPACING, "a quick folder follows at once");
+        assert_eq!(paced(Duration::from_millis(100), SPACING, MAX_SPACING), Duration::from_secs(2));
+        assert_eq!(paced(Duration::from_secs(2), SPACING, MAX_SPACING), MAX_SPACING, "never longer than the most");
     }
 
     // How long the UI thread is held when the folder on screen is on a share

@@ -947,6 +947,9 @@ impl ExplorerPane {
         G: FnOnce(T, &mut App) -> Vec<PathBuf> + 'static,
     {
         use prime_files_core::telemetry::LogErr as _;
+        // The folder on screen is read once, at the end, not at every file
+        // the batch writes there (`folder_watch::OwnOperation`).
+        let quiet = self.begin_own_operation();
         let task = cx.background_spawn(async move { op() });
         // A copy of big files takes a while: the status bar says how far it
         // is, and the copied files' rows too (they repaint with it).
@@ -995,6 +998,9 @@ impl ExplorerPane {
                 // whole record of what went wrong with it.
                 let (level, text) = report.footer(total, &success_label);
                 if let Err(error) = this.update(&mut cx, |pane, cx| {
+                    // Ended just before the reload: what the watch heard
+                    // until now, this reload reads.
+                    drop(quiet);
                     pane.reload(cx);
                     // The batch may have been on the folder the preview lists
                     // (its own menu and keys), which the reload does not read.

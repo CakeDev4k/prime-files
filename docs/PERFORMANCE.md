@@ -1059,3 +1059,59 @@ teste).
 - O `.avi` (xvid) aparece preto na prévia parada em 0:00, no app do dono e
   na cópia; tocando, a imagem aparece. Provavelmente é o primeiro quadro do
   episódio; não investigado.
+
+### 15. O vigia calado durante as operações do próprio app, e no ritmo do custo (11/11/2026)
+
+**Origem.** Item 3 da comparação com o Open Salamander. Lá, enquanto o
+próprio programa copia, move ou apaga, o vigia entra em "modo suspenso": as
+pastas mudadas vão para uma lista, e no fim cada painel recebe **um**
+refresh (`snooper.cpp`, `BeginSuspendMode`). E o intervalo entre refreshes
+em segundo plano é 20× o custo do último, entre 2 e 10 s (`fileswnb.cpp`).
+Aqui (`folder_watch.rs`), durante uma cópia nossa para a pasta aberta, o
+vigia relia a pasta inteira a cada 0,8 s, e `run_fs_op_with` relia mais uma
+vez no fim. A sondagem das unidades sem aviso (Google Drive) lia tudo a cada
+3 s fixos, qualquer que fosse o tamanho da pasta.
+
+**Medido** (`reloads_during_an_own_copy`: 60 arquivos escritos em ~3 s por
+uma thread, na pasta aberta, com o relógio do teste andando junto do real;
+conta `listing_generation`):
+
+| | Releituras |
+|---|---:|
+| Cópia nossa, antes (duas rodadas) | 6 e 6 |
+| Cópia nossa, depois | **1** |
+| Outro programa escrevendo, depois | 3 |
+
+O número de antes cresce com a duração: uma cópia de 10 minutos daria ~750
+releituras da pasta. O de outro programa caiu porque o intervalo agora
+conta do **fim** da leitura; nesta pasta pequena o ritmo pelo custo fica no
+piso de 0,8 s.
+
+**Mudança.**
+- `begin_own_operation` → `OwnOperation`: `run_fs_op_with` (por onde passam
+  todas as operações) segura o vigia calado e o solta logo antes da releitura
+  que faz no fim.
+- Cada aviso leva a hora em que chegou (relógio lógico, §5.4 do
+  `OTIMIZACAO.md`): o que chegou antes do fim da operação já é lido pela
+  releitura dela e é descartado; o que chega depois gera refresh normal.
+- Ritmo pelo custo (`paced`): o próximo refresh espera 20× o que a última
+  leitura custou, entre 0,8 e 10 s; a sondagem, entre 3 e 30 s.
+
+**Cobertura.** `an_own_copy_reads_the_folder_once` e
+`a_file_operation_holds_the_watch_quiet_until_done` (mutantes conferidos: sem
+a espera calada, 3 releituras; sem a guarda em `run_fs_op_with`, reprova),
+`the_watch_waits_twenty_times_what_a_read_cost`, e o teste antigo
+`the_folder_on_screen_follows_what_other_programs_do` (arquivo salvo por
+outro programa continua aparecendo).
+
+**Ficou de fora.**
+- Um aviso da nossa operação que chegue depois do fim dela (atraso do
+  sistema) ainda gera um refresh a mais. O Salamander marca o refresh até 1 s
+  depois do fim como "provavelmente inútil" e compara as listagens; aqui não.
+- Outra aba na mesma pasta não fica calada (o modo é por painel).
+- As operações do celular (`run_device_op`, sem commit, de outra sessão) não
+  passam por `run_fs_op_with`.
+- O custo da leitura é medido de 25 em 25 ms (`listing_pending`); abaixo
+  disso dá o piso.
+- Janela em segundo plano trabalha igual (item 4).
+- Não visto no app: só testes.

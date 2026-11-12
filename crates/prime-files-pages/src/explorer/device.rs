@@ -119,6 +119,11 @@ impl super::ExplorerPane {
         owner: Option<i64>,
         cx: &mut gpui::Context<Self>,
     ) {
+        // A copy from a phone into the folder on screen writes there for as
+        // long as the Shell copies; the watch waits for the one reload below
+        // instead of reading the folder every 800 ms (`run_fs_op_with` does
+        // the same; docs/PERFORMANCE.md, pass 15).
+        let quiet = self.begin_own_operation();
         let (sender, receiver) = async_channel::bounded(1);
         let spawned = std::thread::Builder::new().name("device".into()).spawn(move || {
             let _ = sender.send_blocking(op(owner));
@@ -135,6 +140,9 @@ impl super::ExplorerPane {
                 if let Err(error) = outcome {
                     pane.set_status(super::types::StatusLevel::Error, prime_files_core::tf!("O aparelho recusou: {error}", error = error));
                 }
+                // Ended just before the reload, which reads what the watch
+                // heard until now.
+                drop(quiet);
                 pane.reload(cx);
                 cx.notify();
             })

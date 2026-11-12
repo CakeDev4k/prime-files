@@ -650,6 +650,39 @@ mod tests {
         assert_eq!(running(cx), 0, "the batch never let the watch go");
     }
 
+    // A phone's operations run on a thread of their own, not through
+    // `run_fs_op_with`; a copy from the phone into the folder on screen
+    // holds the watch quiet the same way.
+    #[gpui::test]
+    async fn a_device_operation_holds_the_watch_quiet_until_done(cx: &mut TestAppContext) {
+        cx.executor().allow_parking();
+        let dir = tempfile::tempdir().unwrap();
+        let window = watched_pane(cx, dir.path());
+        let running = |cx: &mut TestAppContext| {
+            window.read_with(cx, |pane, _| pane.folder_watch.as_ref().unwrap().quiet.running.get()).unwrap()
+        };
+        let (release, released) = std::sync::mpsc::channel::<()>();
+        let folder = dir.path().to_path_buf();
+        window
+            .update(cx, |pane, _, cx| {
+                pane.run_device_op(
+                    move |_| {
+                        std::fs::write(folder.join("do-celular.jpg"), "x").map_err(|error| error.to_string())?;
+                        released.recv().map_err(|error| error.to_string())
+                    },
+                    None,
+                    cx,
+                )
+            })
+            .unwrap();
+        pump(cx, std::time::Duration::from_millis(300));
+        assert_eq!(running(cx), 1, "the phone's copy did not hold the watch");
+        release.send(()).unwrap();
+        pump(cx, std::time::Duration::from_millis(500));
+        assert_eq!(running(cx), 0, "the phone's copy never let the watch go");
+        assert_eq!(names(&window, cx), vec!["do-celular.jpg".to_string()], "the reload at the end shows the file");
+    }
+
     #[test]
     fn the_watch_waits_twenty_times_what_a_read_cost() {
         use super::{MAX_SPACING, SPACING, paced};

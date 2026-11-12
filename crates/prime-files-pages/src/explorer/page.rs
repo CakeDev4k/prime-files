@@ -1640,11 +1640,36 @@ impl ExplorerPage {
     }
 }
 
-// The tab's folder when it is one on disk; places like "This PC" or the
-// network have no folder a shell can start in.
+// The tab's folder when it is one on disk; places like "This PC", a tag or
+// the network have no folder a shell can start in. Told by the address
+// alone: this is asked on every render of the panel (`follow_tab_folder`),
+// and until 12/11/2026 it asked the disk, which on a share that stopped
+// answering held the window 21 s per frame (docs/PERFORMANCE.md, pass 19).
+// The tab only holds folders it listed, so an address on disk is a folder.
 fn terminal_directory(cwd: &str) -> std::path::PathBuf {
-    let path = std::path::PathBuf::from(cwd);
-    if path.is_dir() { path } else { std::path::PathBuf::from(home_dir()) }
+    if is_disk_folder_address(cwd) { std::path::PathBuf::from(cwd) } else { std::path::PathBuf::from(home_dir()) }
+}
+
+// A drive's folder (`C:\…`) or a share's (`\\server\share\…`); not a
+// server alone, whose shares are a list and no folder.
+fn is_disk_folder_address(address: &str) -> bool {
+    let path = std::path::Path::new(address);
+    if !path.is_absolute() {
+        return false;
+    }
+    match address.strip_prefix(r"\\") {
+        Some(rest) => {
+            let mut parts = rest.split(['\\', '/']).filter(|part| !part.is_empty());
+            match parts.next() {
+                // `\\?\C:\…`: a drive's folder, written long.
+                Some("?") => true,
+                // `\\.\…`: a device, not a folder.
+                Some(".") | None => false,
+                Some(_server) => parts.next().is_some(),
+            }
+        }
+        None => true,
+    }
 }
 
 impl Render for ExplorerPage {
@@ -1912,5 +1937,36 @@ impl ExplorerPage {
     /// stays consistent across splits/closes/new tabs.
     pub(crate) fn subscription_count(&self) -> usize {
         self.tab_subscriptions.len()
+    }
+}
+
+#[cfg(test)]
+mod terminal_directory_tests {
+    use super::{home_dir, is_disk_folder_address, terminal_directory};
+
+    // Told by the address: a share that stopped answering is still a folder
+    // here, and costs nothing to ask about.
+    #[test]
+    fn the_terminal_folder_is_told_by_the_address_alone() {
+        let dead_share = "\\\\192.0.2.1\\morto";
+        for folder in ["C:\\Users", "D:\\", "\\\\192.0.2.1\\morto\\pasta", "\\\\servidor\\share", "\\\\?\\C:\\longo"] {
+            assert!(is_disk_folder_address(folder), "{folder} is a folder");
+        }
+        for place in [
+            crate::explorer::places::THIS_PC,
+            crate::explorer::recycle_bin::RECYCLE_BIN,
+            "::{20D04FE0-3AEA-1069-A2D8-08002B30309D}\\\\?\\usb#vid_1",
+            "\\\\servidor",
+            "\\\\servidor\\",
+            "\\\\.\\PhysicalDrive0",
+            "tag:3",
+            "",
+        ] {
+            assert!(!is_disk_folder_address(place), "{place} is no folder");
+        }
+        let started = std::time::Instant::now();
+        assert_eq!(terminal_directory(dead_share), std::path::PathBuf::from(dead_share));
+        assert!(started.elapsed() < std::time::Duration::from_millis(50), "the disk was asked");
+        assert_eq!(terminal_directory("tag:3"), std::path::PathBuf::from(home_dir()));
     }
 }

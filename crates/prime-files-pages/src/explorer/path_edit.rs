@@ -5,6 +5,7 @@
 use prime_files_core::tf;
 use gpui::{AppContext, Context, Entity, EntityInputHandler, Subscription, Window};
 use gpui_component::input::{InputEvent, InputState};
+use prime_files_core::telemetry::LogErr as _;
 use std::path::Path;
 
 use super::ExplorerPane;
@@ -64,25 +65,56 @@ impl ExplorerPane {
             return;
         };
         let typed = super::network::normalize_address(&state.input.read(cx).value());
-        let path = Path::new(&typed);
         // A network address is gone to without asking the disk here: a
         // server that does not answer would freeze the window for as long,
         // and the listing reads it on a thread of its own (asking for a
         // login if the share wants one).
-        let target = if super::network::is_unc(&typed) {
-            Some(typed.clone())
-        } else if path.is_dir() {
-            Some(typed.clone())
-        } else if path.is_file() {
-            path.parent().map(|parent| parent.to_string_lossy().into_owned())
-        } else {
-            None
-        };
-        let Some(target) = target else {
-            self.set_status(StatusLevel::Error, tf!("Pasta não encontrada: {path}", path = typed));
-            cx.notify();
+        if super::network::is_unc(&typed) {
+            self.go_to_typed(typed, window, cx);
             return;
-        };
+        }
+        // Anything else is asked on another thread too: a mapped drive whose
+        // server is gone (`Z:\`) held the window at every Enter until
+        // 12/11/2026 (docs/PERFORMANCE.md, pass 19). The field stays open
+        // meanwhile, so a typo found missing is still there to fix.
+        let found = cx.background_spawn({
+            let typed = typed.clone();
+            async move {
+                let path = Path::new(&typed);
+                if path.is_dir() {
+                    Some(typed.clone())
+                } else if path.is_file() {
+                    path.parent().map(|parent| parent.to_string_lossy().into_owned())
+                } else {
+                    None
+                }
+            }
+        });
+        cx.spawn_in(window, async move |this, cx| {
+            let target = found.await;
+            this.update_in(cx, |pane, window, cx| {
+                // Typed over or closed while the disk answered: that newer
+                // intent wins.
+                let still_typed = pane.path_edit.as_ref().is_some_and(|state| {
+                    super::network::normalize_address(&state.input.read(cx).value()) == typed
+                });
+                if !still_typed {
+                    return;
+                }
+                match target {
+                    Some(target) => pane.go_to_typed(target, window, cx),
+                    None => {
+                        pane.set_status(StatusLevel::Error, tf!("Pasta não encontrada: {path}", path = typed));
+                        cx.notify();
+                    }
+                }
+            })
+            .log_err();
+        })
+        .detach();
+    }
+
+    fn go_to_typed(&mut self, target: String, window: &mut Window, cx: &mut Context<Self>) {
         self.path_edit = None;
         cx.focus_self(window);
         self.change_dir(target, window, cx);

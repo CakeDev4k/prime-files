@@ -2657,29 +2657,40 @@ async fn path_field_shows_the_path_and_goes_where_it_is_told(cx: &mut TestAppCon
     // An accent, so the UTF-16 selection is exercised on more than ASCII.
     let sub = root.join("Extensões");
     std::fs::create_dir(&sub).unwrap();
-    let window = open_pane_at(cx, root);
-    window
-        .update(cx, |pane, window, cx| {
-            pane.begin_path_edit(window, cx);
-            let input = pane.path_edit.as_ref().unwrap().input.clone();
-            assert_eq!(input.read(cx).value().to_string(), pane.cwd, "the field starts with the folder's path");
+    // In a `Root`, as in the app: the answer from the disk comes back on a
+    // later turn, and the window renders the field in between.
+    let (window, pane) = new_explorer_in_root(cx);
+    let mut cx = gpui::VisualTestContext::from_window(window.into(), cx);
+    pane.update_in(&mut cx, |pane, window, cx| {
+        pane.cwd = root.to_string_lossy().to_string();
+        pane.reload(cx);
+        pane.begin_path_edit(window, cx);
+        let input = pane.path_edit.as_ref().unwrap().input.clone();
+        assert_eq!(input.read(cx).value().to_string(), pane.cwd, "the field starts with the folder's path");
 
-            // A path that does not exist keeps the field open to fix it.
-            input.update(cx, |state, cx| state.set_value(r"Z:\nao\existe", window, cx));
-            pane.commit_path_edit(window, cx);
-            assert!(pane.path_edit.is_some());
+        // A path that does not exist keeps the field open to fix it.
+        input.update(cx, |state, cx| state.set_value(r"Z:\nao\existe", window, cx));
+        pane.commit_path_edit(window, cx);
+    });
+    cx.run_until_parked();
+    pane.update_in(&mut cx, |pane, window, cx| {
+        assert!(pane.path_edit.is_some());
+        let input = pane.path_edit.as_ref().unwrap().input.clone();
+        input.update(cx, |state, cx| state.set_value(sub.to_string_lossy().to_string(), window, cx));
+        pane.commit_path_edit(window, cx);
+        // The disk is asked on another thread: nothing moved yet.
+        assert!(pane.path_edit.is_some(), "the field closed before the disk answered");
+    });
+    cx.run_until_parked();
+    pane.update_in(&mut cx, |pane, window, cx| {
+        assert!(pane.path_edit.is_none(), "Enter on a real folder closes the field");
+        assert_eq!(pane.cwd, sub.to_string_lossy());
 
-            input.update(cx, |state, cx| state.set_value(sub.to_string_lossy().to_string(), window, cx));
-            pane.commit_path_edit(window, cx);
-            assert!(pane.path_edit.is_none(), "Enter on a real folder closes the field");
-            assert_eq!(pane.cwd, sub.to_string_lossy());
-
-            pane.begin_path_edit(window, cx);
-            pane.cancel_path_edit(window, cx);
-            assert!(pane.path_edit.is_none());
-            assert_eq!(pane.cwd, sub.to_string_lossy(), "Escape goes nowhere");
-        })
-        .unwrap();
+        pane.begin_path_edit(window, cx);
+        pane.cancel_path_edit(window, cx);
+        assert!(pane.path_edit.is_none());
+        assert_eq!(pane.cwd, sub.to_string_lossy(), "Escape goes nowhere");
+    });
 }
 
 #[gpui::test]

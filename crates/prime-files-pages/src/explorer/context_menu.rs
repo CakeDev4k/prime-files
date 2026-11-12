@@ -455,10 +455,30 @@ impl ExplorerPane {
                     self.show_properties_of(paths, cx);
                 }
                 Some(Command::OpenInNewTab) => {
-                    for path in or_folder(&paths) {
-                        let is_dir = std::path::Path::new(&path).is_dir();
-                        self.open_path_in_new_tab(&path, is_dir, false, cx);
-                    }
+                    // Which are folders is asked off the window's thread,
+                    // like a place opened with the middle button (pass 12).
+                    let kinds = cx.background_spawn({
+                        let paths = or_folder(&paths);
+                        async move {
+                            paths
+                                .into_iter()
+                                .map(|path| {
+                                    let is_dir = std::path::Path::new(&path).is_dir();
+                                    (path, is_dir)
+                                })
+                                .collect::<Vec<_>>()
+                        }
+                    });
+                    cx.spawn(async move |this: WeakEntity<Self>, cx| {
+                        let kinds = kinds.await;
+                        this.update(cx, |pane, cx| {
+                            for (path, is_dir) in kinds {
+                                pane.open_path_in_new_tab(&path, is_dir, false, cx);
+                            }
+                        })
+                        .log_err();
+                    })
+                    .detach();
                 }
                 Some(Command::NewTag) => {
                     let name = t!("Nova tag").to_string();
@@ -1433,18 +1453,36 @@ impl ExplorerPane {
         let Some(item) = self.selected_paths().into_iter().next() else {
             return;
         };
-        let target = crate::shell_menu::shortcut_target(&item).unwrap_or(item);
-        let target_path = std::path::Path::new(&target);
-        let Some(folder) = target_path.parent().filter(|_| target_path.exists()) else {
-            self.set_status(StatusLevel::Error, t!("O destino do atalho não existe mais").to_string());
-            return;
-        };
-        let folder = folder.to_string_lossy().into_owned();
-        if !super::same_path(&self.cwd, &folder) {
-            self.change_dir(folder, window, cx);
-        }
-        self.ensure_loaded(cx);
-        self.reveal(&target);
+        // Reading the shortcut and asking whether its target is there are
+        // disk work: a target on a share that stopped answering held the
+        // window until 12/11/2026 (docs/PERFORMANCE.md, pass 19).
+        let found = cx.background_spawn(async move {
+            let target = crate::shell_menu::shortcut_target(&item).unwrap_or(item);
+            let target_path = std::path::Path::new(&target);
+            let folder = target_path
+                .parent()
+                .filter(|_| target_path.exists())
+                .map(|folder| folder.to_string_lossy().into_owned());
+            (target, folder)
+        });
+        cx.spawn_in(window, async move |this, cx| {
+            let (target, folder) = found.await;
+            this.update_in(cx, |pane, window, cx| {
+                let Some(folder) = folder else {
+                    pane.set_status(StatusLevel::Error, t!("O destino do atalho não existe mais").to_string());
+                    cx.notify();
+                    return;
+                };
+                if !super::same_path(&pane.cwd, &folder) {
+                    pane.change_dir(folder, window, cx);
+                }
+                pane.ensure_loaded(cx);
+                pane.reveal(&target);
+                cx.notify();
+            })
+            .log_err();
+        })
+        .detach();
     }
 
     fn run_command(&mut self, command: Command, window: &mut Window, cx: &mut Context<Self>) {

@@ -544,7 +544,7 @@ mod tests {
     }
 
     // Another program writes 120 files over ~6 s; how many refreshes the
-    // watch does, and how many of the files are on screen 3 s after the
+    // watch does, and how many of the files are on screen by 4.5 s after the
     // last one.
     fn another_program_writes(cx: &mut TestAppContext, in_front: bool) -> (u64, usize) {
         cx.executor().allow_parking();
@@ -563,7 +563,13 @@ mod tests {
             pump(cx, std::time::Duration::from_millis(50));
         }
         writer.join().unwrap();
-        pump(cx, std::time::Duration::from_secs(3));
+        // Up to 4.5 s for the last refresh: room for a busy machine (one run
+        // of 13 with the whole suite missed 3 s), still short of the 10 s
+        // the old timing pushed it to.
+        let until = Instant::now() + std::time::Duration::from_millis(4500);
+        while Instant::now() < until && window.read_with(cx, |pane, _| pane.filtered_entries.len()).unwrap() < 120 {
+            pump(cx, std::time::Duration::from_millis(50));
+        }
         let reloads = window.read_with(cx, |pane, _| pane.listing_generation).unwrap() - before;
         let shown = window.read_with(cx, |pane, _| pane.filtered_entries.len()).unwrap();
         eprintln!("another program, 120 files over ~6 s (in front: {in_front}): {reloads} reloads, {shown} shown");

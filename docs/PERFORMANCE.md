@@ -1273,7 +1273,7 @@ da barra lateral (passada 12).
 **Mudança.**
 - `terminal_directory` decide pelo endereço (`is_disk_folder_address`):
   pasta de unidade ou de compartilhamento é pasta; Este Computador, tags,
-  celular, servidor sozinho e `\.\` não. A aba só guarda pastas que listou.
+  celular, servidor sozinho e `\\.\` não. A aba só guarda pastas que listou.
 - Campo de caminho (`commit_path_edit`): `is_dir`/`is_file` numa thread de
   fundo; o campo fica aberto até a resposta e a resposta só vale se o texto
   ainda for o mesmo. `Z:` desconectado não segura mais a janela a cada Enter.

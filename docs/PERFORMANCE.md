@@ -958,4 +958,62 @@ distinguiria de pasta, então o teste reprova se ela voltar) e
   símbolos.
 - `open_place` (clique esquerdo num lugar) ainda pergunta `is_file()` na
   thread de interface — uma vez por clique, não por quadro, mas num
-  compartilhamento morto ainda congela 21 s.
+  compartilhamento morto ainda congela 21 s. Feito na passada 13.
+
+### 13. Nenhuma ida ao disco na thread de interface (11/11/2026)
+
+**Origem.** A comparação com o Open Salamander (§2.12 do `OTIMIZACAO.md`
+do hub): lá, testar um caminho de rede roda numa thread descartável, e até
+fechar um handle tem thread própria (`salamdr5.cpp`, `snooper.cpp`). Depois
+da passada 12, a varredura do código achou estes pontos ainda perguntando ao
+disco, com caminho do usuário, na thread de interface:
+
+| Onde | Quando |
+|---|---|
+| `folder_watch.rs`, `watch_listed_folders`: `is_dir()` de cada pasta na tela, abrir o vigia, `GetVolumeInformationW`, fechar o vigia anterior | depois de **toda** listagem |
+| `palette.rs`, `palette_changed`: `exists()` + `is_dir()` do texto digitado | a cada tecla no Ctrl+T, quando o texto é um caminho (`\\s`, `\\se`, … já vão à rede) |
+| `places.rs`, `open_place`: `is_file()` | clique num lugar da barra lateral |
+| `commands.rs`, `folder_for_programs`: `is_dir()` | "Abrir em" |
+
+**Medido** (sonda `watch_on_a_dead_share_holds_the_ui_for`, ignorada por
+padrão, com a pasta da tela em `\\192.0.2.1\share`):
+
+| | Thread de interface presa |
+|---|---:|
+| Antes | **21.046 ms** |
+| Depois (duas rodadas) | 0,0 ms |
+
+**Mudança.**
+- O vigia é montado no fundo (`start_watching`) e se instala quando termina;
+  a interface só filtra o que não é caminho (`is_absolute`, sem disco). O
+  vigia velho é solto numa thread própria (`impl Drop for FolderWatch`):
+  fechar handle de compartilhamento morto também prende.
+- Ctrl+T: a pergunta vai para o fundo; a linha do caminho digitado aparece
+  com a resposta, e a da tecla anterior fica até lá, como os resultados.
+  A seleção que as setas escolheram não pula (`place_typed_row`).
+- `open_place`: arquivo ou pasta é decidido no fundo; o clique segue para o
+  programa ou para a pasta quando a resposta chega.
+- "Abrir em": a pasta é decidida pelo endereço (`is_absolute`, e não é um
+  servidor sozinho), não pelo disco.
+
+**Cobertura.** Cada teste reprova com a versão síncrona antiga (mutante
+conferido nos três): `the_watch_is_opened_off_the_ui_thread` (registra, só em
+teste, onde o disco foi tocado — conferir o campo `watcher` não bastava: o
+primeiro rascunho do teste passava com o mutante),
+`a_typed_path_is_looked_up_off_the_ui_thread`,
+`a_click_on_a_place_asks_the_disk_off_the_ui_thread`. O teste antigo do vigia
+(`the_folder_on_screen_follows_what_other_programs_do`) continua verde.
+
+**Ficou de fora.**
+- `context_menu.rs` (`apply_preview_choice`, `open_item_location`) e
+  `page.rs` (`terminal_directory`) também perguntam ao disco na interface;
+  outra sessão editava esses arquivos ao mesmo tempo.
+- `commit_path_edit` já pulava a rede (`\\`); unidade mapeada desconectada
+  (`Z:`) ainda pergunta na interface, uma vez por Enter.
+- `preview_folder` pergunta `is_dir()` a cada atalho na prévia, mas só de
+  uma pasta que acabou de ser listada.
+- Uma pergunta presa ocupa uma thread do executor do gpui pelos 21 s; o
+  Salamander põe teto (30 threads descartáveis). Aqui não há teto.
+- Clicar num lugar de compartilhamento morto agora não congela, mas também
+  não mostra nada durante os 21 s até a listagem começar.
+- Não visto no app: só testes e a sonda.

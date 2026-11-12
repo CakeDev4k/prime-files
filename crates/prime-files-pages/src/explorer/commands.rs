@@ -178,9 +178,15 @@ impl ExplorerPane {
 
     /// The folder on screen as a place a program can start in: This PC has
     /// none, so programs other than Explorer start in the home folder.
+    ///
+    /// Told by the address, not by the disk: the folder is on screen, and
+    /// asking `is_dir()` of one on a share that stopped answering froze the
+    /// window for 21 s (`docs/PERFORMANCE.md`, pass 13). This PC, Network,
+    /// a tag and the other shell places are no path, nor is a server's list
+    /// of shares.
     fn folder_for_programs(&self) -> PathBuf {
         let cwd = PathBuf::from(&self.cwd);
-        if cwd.is_dir() {
+        if cwd.is_absolute() && !super::network::is_server(&self.cwd) {
             cwd
         } else {
             std::env::var_os("USERPROFILE").map_or_else(|| PathBuf::from("C:\\"), PathBuf::from)

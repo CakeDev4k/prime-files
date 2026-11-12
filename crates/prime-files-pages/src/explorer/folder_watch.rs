@@ -18,7 +18,7 @@
 use std::path::Path;
 use std::time::{Duration, Instant};
 
-use gpui::{Context, Task, WeakEntity};
+use gpui::{AppContext as _, BackgroundExecutor, Context, Task, WeakEntity};
 use notify::{EventKind, RecursiveMode, Watcher as _};
 
 use super::ExplorerPane;
@@ -35,21 +35,44 @@ const POLL: Duration = Duration::from_secs(3);
 
 /// The watch on a pane's folders; dropping it stops it.
 pub(crate) struct FolderWatch {
+    /// The folders asked for, before any was checked on disk.
     folders: Vec<String>,
-    _watcher: notify::RecommendedWatcher,
+    /// Set once the background has built it; `None` until then, or when no
+    /// folder could be watched.
+    watcher: Option<notify::RecommendedWatcher>,
     _task: Task<()>,
     _poll: Option<Task<()>>,
+}
+
+impl Drop for FolderWatch {
+    // Closing the watched folders' handles can hang as long as opening them
+    // on a share that stopped answering ("safe handle killer" in Open
+    // Salamander's `snooper.cpp`, OTIMIZACAO.md §2.12): the watcher goes on a
+    // thread of its own.
+    fn drop(&mut self) {
+        if let Some(watcher) = self.watcher.take() {
+            std::thread::spawn(move || drop(watcher));
+        }
+    }
 }
 
 impl ExplorerPane {
     /// Watches what is on screen now: the folder, and the folders open in
     /// the Tree view. Called after each listing; a no-op when that set did
     /// not change.
+    ///
+    /// Nothing here touches the disk on the UI thread. Until 11/11/2026 the
+    /// `is_dir()` of each folder, opening the watch and asking the drive's
+    /// file system ran here, after every listing: with the folder on a share
+    /// that stopped answering, the window froze for 21 s each time
+    /// (`docs/PERFORMANCE.md`, pass 13). They run in the background now, and
+    /// the watch starts when they are done.
     pub(crate) fn watch_listed_folders(&mut self, cx: &mut Context<Self>) {
         let mut folders: Vec<String> = std::iter::once(self.cwd.clone())
             .chain(self.tree.expanded.iter().cloned())
-            // "Este Computador" and other shell places are no folder on disk.
-            .filter(|folder| Path::new(folder).is_dir())
+            // "Este Computador", tags and other shell places are no path;
+            // whether a path is a folder is the background's question.
+            .filter(|folder| Path::new(folder).is_absolute())
             .collect();
         folders.sort();
         folders.dedup();
@@ -62,45 +85,32 @@ impl ExplorerPane {
         }
         let (sender, receiver) = async_channel::unbounded::<()>();
         let sender_for_poll = sender.clone();
-        let watcher = notify::recommended_watcher(move |result: notify::Result<notify::Event>| {
-            let Ok(event) = result else {
+        let setup = cx.background_spawn({
+            let folders = folders.clone();
+            async move { start_watching(folders, sender) }
+        });
+        let executor = cx.background_executor().clone();
+        let task = cx.spawn(async move |this: WeakEntity<Self>, cx| {
+            let Some((watcher, polled)) = setup.await else {
                 return;
             };
-            // Reading a file (a thumbnail, the preview, a sound under the
-            // mouse) changes nothing in the listing.
-            if matches!(event.kind, EventKind::Access(_)) {
-                return;
-            }
-            if sender.try_send(()).is_err() {
-                // The pane is gone; its watcher goes with it.
-            }
-        });
-        let mut watcher = match watcher {
-            Ok(watcher) => watcher,
-            Err(error) => {
-                tracing::warn!("cannot watch {}: {error}", self.cwd);
-                return;
-            }
-        };
-        // A drive that sends no notifications — the virtual drive of Google
-        // Drive for desktop (FAT32 to Windows), and some network drives —
-        // accepts the watch and then stays silent, so a file saved there
-        // from the cloud only showed after F5. Those folders are looked at
-        // every few seconds instead; NTFS and ReFS (local disks, OneDrive)
-        // do notify, so they cost nothing.
-        let mut polled = Vec::new();
-        for folder in &folders {
-            match watcher.watch(Path::new(folder), RecursiveMode::NonRecursive) {
-                Ok(()) if notifies(Path::new(folder)) => {}
-                Ok(()) => polled.push(folder.clone()),
-                Err(error) => {
-                    tracing::debug!("cannot watch {folder}: {error}");
-                    polled.push(folder.clone());
+            let poll = (!polled.is_empty()).then(|| poll(polled, sender_for_poll, &executor));
+            // This task belongs to the watch it fills: a newer watch dropped
+            // it, and it never gets here.
+            let installed = this.update(cx, |pane, _| match pane.folder_watch.as_mut() {
+                Some(watch) => {
+                    watch.watcher = Some(watcher);
+                    watch._poll = poll;
+                    true
                 }
+                None => {
+                    std::thread::spawn(move || drop(watcher));
+                    false
+                }
+            });
+            if !matches!(installed, Ok(true)) {
+                return;
             }
-        }
-        let poll = (!polled.is_empty()).then(|| poll(polled, sender_for_poll.clone(), cx));
-        let task = cx.spawn(async move |this: WeakEntity<Self>, cx| {
             let mut last: Option<Instant> = None;
             while receiver.recv().await.is_ok() {
                 cx.background_executor().timer(SETTLE).await;
@@ -122,7 +132,7 @@ impl ExplorerPane {
                 last = Some(Instant::now());
             }
         });
-        self.folder_watch = Some(FolderWatch { folders, _watcher: watcher, _task: task, _poll: poll });
+        self.folder_watch = Some(FolderWatch { folders, watcher: None, _task: task, _poll: None });
     }
 
     /// Reads the folder again because the disk changed. Put off (false)
@@ -138,12 +148,65 @@ impl ExplorerPane {
     }
 }
 
+// Off the UI thread: keeps the folders of `wanted` that are folders on disk,
+// watches them, and says which of them must be polled instead. `None` when
+// there is nothing to watch.
+fn start_watching(
+    wanted: Vec<String>,
+    sender: async_channel::Sender<()>,
+) -> Option<(notify::RecommendedWatcher, Vec<String>)> {
+    #[cfg(test)]
+    tests::STARTED.lock().unwrap().extend(wanted.iter().cloned());
+    let folders: Vec<String> = wanted.into_iter().filter(|folder| Path::new(folder).is_dir()).collect();
+    if folders.is_empty() {
+        return None;
+    }
+    let watcher = notify::recommended_watcher(move |result: notify::Result<notify::Event>| {
+        let Ok(event) = result else {
+            return;
+        };
+        // Reading a file (a thumbnail, the preview, a sound under the
+        // mouse) changes nothing in the listing.
+        if matches!(event.kind, EventKind::Access(_)) {
+            return;
+        }
+        if sender.try_send(()).is_err() {
+            // The pane is gone; its watcher goes with it.
+        }
+    });
+    let mut watcher = match watcher {
+        Ok(watcher) => watcher,
+        Err(error) => {
+            tracing::warn!("cannot watch {}: {error}", folders[0]);
+            return None;
+        }
+    };
+    // A drive that sends no notifications — the virtual drive of Google
+    // Drive for desktop (FAT32 to Windows), and some network drives —
+    // accepts the watch and then stays silent, so a file saved there from
+    // the cloud only showed after F5. Those folders are looked at every few
+    // seconds instead; NTFS and ReFS (local disks, OneDrive) do notify, so
+    // they cost nothing.
+    let mut polled = Vec::new();
+    for folder in &folders {
+        match watcher.watch(Path::new(folder), RecursiveMode::NonRecursive) {
+            Ok(()) if notifies(Path::new(folder)) => {}
+            Ok(()) => polled.push(folder.clone()),
+            Err(error) => {
+                tracing::debug!("cannot watch {folder}: {error}");
+                polled.push(folder.clone());
+            }
+        }
+    }
+    Some((watcher, polled))
+}
+
 // Looks at `folders` every [`POLL`] and signals when what a listing would show
 // of them (names, sizes, dates, attributes) changed. The reading runs off the
 // UI thread; the first look only records the starting point.
-fn poll(folders: Vec<String>, changed: async_channel::Sender<()>, cx: &mut Context<ExplorerPane>) -> Task<()> {
-    let executor = cx.background_executor().clone();
-    cx.background_executor().spawn(async move {
+fn poll(folders: Vec<String>, changed: async_channel::Sender<()>, executor: &BackgroundExecutor) -> Task<()> {
+    let executor = executor.clone();
+    executor.clone().spawn(async move {
         let mut last: Option<u64> = None;
         loop {
             executor.timer(POLL).await;
@@ -204,4 +267,81 @@ fn notifies(folder: &Path) -> bool {
 #[cfg(not(windows))]
 fn notifies(_folder: &Path) -> bool {
     true
+}
+
+#[cfg(test)]
+mod tests {
+    use std::time::Instant;
+
+    use gpui::{AppContext as _, TestAppContext, WindowHandle};
+    use gpui_component::input::InputState;
+    use gpui_component::resizable::ResizableState;
+    use prime_files_services::fs::trash::Ledger as TrashLedger;
+
+    use super::ExplorerPane;
+
+    /// The folders `start_watching` began on — where the disk is touched.
+    pub(super) static STARTED: std::sync::Mutex<Vec<String>> = std::sync::Mutex::new(Vec::new());
+
+    fn pane(cx: &mut TestAppContext) -> WindowHandle<ExplorerPane> {
+        cx.update(gpui_component::init);
+        cx.add_window(|window, cx| {
+            let resizable = cx.new(|_| ResizableState::default());
+            let search_input = cx.new(|cx| InputState::new(window, cx));
+            ExplorerPane::new(resizable, search_input, None, TrashLedger::KeptByOs, cx.focus_handle())
+        })
+    }
+
+    // Checking the folders and opening the watch read the disk, which may not
+    // answer for 21 s (a dead share): the call returns with nothing opened,
+    // and the watch is in place once the background is done.
+    #[gpui::test]
+    async fn the_watch_is_opened_off_the_ui_thread(cx: &mut TestAppContext) {
+        cx.executor().allow_parking();
+        let dir = tempfile::tempdir().unwrap();
+        let window = pane(cx);
+        let folder = dir.path().to_string_lossy().into_owned();
+        let watching = |cx: &mut TestAppContext| {
+            window
+                .read_with(cx, |pane, _| pane.folder_watch.as_ref().map(|watch| watch.watcher.is_some()))
+                .unwrap()
+        };
+        let touched_during_the_call = window
+            .update(cx, |pane, _, cx| {
+                pane.cwd = folder.clone();
+                pane.watch_listed_folders(cx);
+                STARTED.lock().unwrap().contains(&folder)
+            })
+            .unwrap();
+        assert!(!touched_during_the_call, "the folder was checked on the UI thread");
+        for _ in 0..200 {
+            cx.run_until_parked();
+            if watching(cx) == Some(true) {
+                return;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        panic!("the watch never started: {:?}", watching(cx));
+    }
+
+    // How long the UI thread is held when the folder on screen is on a share
+    // that stopped answering. Run by hand: it waits on the network.
+    // PRIME_FILES_DEAD_SHARE=\\192.0.2.1\share cargo test -p prime-files-pages
+    //   --lib -- --ignored --nocapture watch_on_a_dead_share
+    #[gpui::test]
+    #[ignore = "waits on the network; a measurement, not a check"]
+    async fn watch_on_a_dead_share_holds_the_ui_for(cx: &mut TestAppContext) {
+        cx.executor().allow_parking();
+        let dead = std::env::var("PRIME_FILES_DEAD_SHARE").unwrap_or_else(|_| r"\\192.0.2.1\share".to_string());
+        let window = pane(cx);
+        let held = window
+            .update(cx, |pane, _, cx| {
+                pane.cwd = dead.clone();
+                let start = Instant::now();
+                pane.watch_listed_folders(cx);
+                start.elapsed()
+            })
+            .unwrap();
+        eprintln!("watch_listed_folders on {dead}: UI thread held {:.1} ms", held.as_secs_f64() * 1000.0);
+    }
 }

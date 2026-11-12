@@ -404,9 +404,29 @@ impl ExplorerPane {
         match &place.path {
             // A favorite is a file: it opens in its program, as a click on it
             // in the Explorer's Home does. Entering it as a folder left an
-            // empty listing with an error.
-            Some(path) if std::path::Path::new(path).is_file() => self.open_with_default_app(path),
-            Some(path) => self.change_dir(path.clone(), window, cx),
+            // empty listing with an error. Which one it is, the disk says,
+            // off the UI thread: on a share that stopped answering the
+            // question takes 21 s, and until 11/11/2026 the window froze for
+            // it (`docs/PERFORMANCE.md`, pass 13).
+            Some(path) => {
+                let path = path.clone();
+                let is_file = cx.background_spawn({
+                    let path = path.clone();
+                    async move { std::path::Path::new(&path).is_file() }
+                });
+                cx.spawn_in(window, async move |this: WeakEntity<Self>, cx| {
+                    let is_file = is_file.await;
+                    this.update_in(cx, |page, window, cx| {
+                        if is_file {
+                            page.open_with_default_app(&path);
+                        } else {
+                            page.change_dir(path, window, cx);
+                        }
+                    })
+                    .log_err();
+                })
+                .detach();
+            }
             None if place.parsing_name.eq_ignore_ascii_case(THIS_PC) => {
                 self.change_dir(THIS_PC.to_string(), window, cx)
             }
@@ -769,5 +789,58 @@ mod tests {
         for place in places.quick_access.iter().chain(&places.drives).chain(&places.other) {
             println!("{place:?}");
         }
+    }
+}
+
+#[cfg(test)]
+mod open_place_tests {
+    use gpui::{AppContext as _, TestAppContext, WindowHandle};
+    use gpui_component::input::InputState;
+    use gpui_component::resizable::ResizableState;
+    use prime_files_services::fs::trash::Ledger as TrashLedger;
+
+    use super::super::navigation::OPENED_WITH_DEFAULT_APP;
+    use super::{ExplorerPane, Place};
+
+    fn pane(cx: &mut TestAppContext) -> WindowHandle<ExplorerPane> {
+        cx.update(gpui_component::init);
+        cx.add_window(|window, cx| {
+            let resizable = cx.new(|_| ResizableState::default());
+            let search_input = cx.new(|cx| InputState::new(window, cx));
+            ExplorerPane::new(resizable, search_input, None, TrashLedger::KeptByOs, cx.focus_handle())
+        })
+    }
+
+    fn place(path: &std::path::Path) -> Place {
+        let path = path.to_string_lossy().into_owned();
+        Place { name: "lugar".into(), path: Some(path.clone()), parsing_name: path, pinned: true }
+    }
+
+    // Whether a place is a favorite file or a folder is the disk's to say,
+    // and a share that stopped answering takes 21 s: the click returns at
+    // once, and the file opens in its program, the folder here, after.
+    #[gpui::test]
+    async fn a_click_on_a_place_asks_the_disk_off_the_ui_thread(cx: &mut TestAppContext) {
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("favorito.txt");
+        std::fs::write(&file, "x").unwrap();
+        let window = pane(cx);
+        OPENED_WITH_DEFAULT_APP.with(|opened| opened.borrow_mut().clear());
+
+        let opened_during_the_click = window
+            .update(cx, |pane, window, cx| {
+                pane.open_place(&place(&file), window, cx);
+                OPENED_WITH_DEFAULT_APP.with(|opened| opened.borrow().len())
+            })
+            .unwrap();
+        assert_eq!(opened_during_the_click, 0, "the disk was asked during the click");
+        cx.run_until_parked();
+        let opened = OPENED_WITH_DEFAULT_APP.with(|opened| opened.borrow().clone());
+        assert_eq!(opened, vec![file.to_string_lossy().into_owned()]);
+
+        window.update(cx, |pane, window, cx| pane.open_place(&place(dir.path()), window, cx)).unwrap();
+        cx.run_until_parked();
+        let cwd = window.read_with(cx, |pane, _| pane.cwd.clone()).unwrap();
+        assert_eq!(cwd, dir.path().to_string_lossy());
     }
 }

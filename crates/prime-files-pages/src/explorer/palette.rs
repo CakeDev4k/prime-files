@@ -86,6 +86,26 @@ const PREVIEW_ACTIONS: f32 = 52.0;
 // How long "copied" stays in the footer.
 const NOTICE_MS: u64 = 1600;
 
+// The disk's answer about the typed path: its row leads the list, or goes.
+// A row the arrows chose stays chosen; untouched, the first row is the pick,
+// as it was when the answer came with the letter.
+fn place_typed_row(palette: &mut Palette, row: Option<Row>) {
+    let had = palette.rows.first().is_some_and(|first| matches!(first, Row::Typed { .. }));
+    if had {
+        palette.rows.remove(0);
+    }
+    let has = row.is_some();
+    if let Some(row) = row {
+        palette.rows.insert(0, row);
+    }
+    match (had, has) {
+        (false, true) if palette.chose => palette.selected += 1,
+        (true, false) if palette.chose && palette.selected > 0 => palette.selected -= 1,
+        _ => {}
+    }
+    palette.selected = palette.selected.min(palette.rows.len().saturating_sub(1));
+}
+
 /// The box while it is open.
 pub(crate) struct Palette {
     input: Entity<InputState>,
@@ -95,6 +115,8 @@ pub(crate) struct Palette {
     selected: usize,
     cancel: Arc<AtomicBool>,
     _search: Option<Task<()>>,
+    // Whether the words typed are a path on disk, asked off the UI thread.
+    _typed: Option<Task<()>>,
     // The row pressed and where, until it is released or becomes a drag.
     press: Option<(usize, Point<Pixels>)>,
     scroll: ScrollHandle,
@@ -337,6 +359,7 @@ pub(crate) trait PaletteBox: PaletteHost {
             selected: 0,
             cancel: Arc::new(AtomicBool::new(false)),
             _search: None,
+            _typed: None,
             press: None,
             scroll: ScrollHandle::new(),
             generation: cx.try_global::<super::everything::Everything>().map_or(0, |state| state.generation),
@@ -389,9 +412,44 @@ pub(crate) trait PaletteBox: PaletteHost {
             })
             .map(|(id, title, folder)| Row::Tab { id, title, folder })
             .collect();
-        let typed = query.trim().trim_matches('"');
-        if Path::new(typed).is_absolute() && Path::new(typed).exists() {
-            rows.insert(0, Row::Typed { path: typed.to_string(), dir: Path::new(typed).is_dir() });
+        // A path typed in full is a row of its own once the disk says it is
+        // there. Asked here until 11/11/2026, at each letter: typing
+        // `\\server\...` asked the network for `\\s`, `\\se`, … and each
+        // question to a name that does not answer held the window for
+        // seconds. Until the answer, the last one's row stays, as the hits do.
+        let typed = query.trim().trim_matches('"').to_string();
+        rows.extend(palette.rows.iter().filter(|row| matches!(row, Row::Typed { .. })).take(1).cloned());
+        palette._typed = None;
+        if Path::new(&typed).is_absolute() {
+            let check = cx.background_spawn({
+                let typed = typed.clone();
+                async move {
+                    let path = Path::new(&typed);
+                    path.exists().then(|| path.is_dir())
+                }
+            });
+            let asked = query.clone();
+            palette._typed = Some(cx.spawn(async move |page: WeakEntity<Self>, cx| {
+                let dir = check.await;
+                page.update(cx, |page, cx| {
+                    let Some(palette) = page.palette_slot().as_mut() else {
+                        return;
+                    };
+                    if palette.query != asked {
+                        return;
+                    }
+                    place_typed_row(palette, dir.map(|dir| Row::Typed { path: typed, dir }));
+                    cx.notify();
+                })
+                .log_err();
+            }));
+        } else {
+            rows.retain(|row| !matches!(row, Row::Typed { .. }));
+        }
+        // The typed row, when there is one, leads.
+        if let Some(at) = rows.iter().position(|row| matches!(row, Row::Typed { .. })) {
+            let row = rows.remove(at);
+            rows.insert(0, row);
         }
         // The hits of the last search stay until the new ones come, so the
         // list does not blink at each letter.
@@ -1986,6 +2044,70 @@ mod tests {
         assert!(icon_size(ZOOM_DEFAULT) < GRID_FROM, "the default is a list");
         assert!(icon_size(1.0) > GRID_FROM, "the largest size is a grid");
         assert_eq!(zoom_percent(ZOOM_DEFAULT), 100);
+    }
+
+    // Whether a typed path is on disk is asked off the UI thread: a name on
+    // the network may not answer for seconds, and the question came at each
+    // letter. The row comes with the answer, and goes with a path not there.
+    #[gpui::test]
+    async fn a_typed_path_is_looked_up_off_the_ui_thread(cx: &mut gpui::TestAppContext) {
+        use gpui::AppContext as _;
+
+        use super::super::ExplorerPage;
+        use super::{PaletteBox as _, Row};
+
+        let dir = tempfile::tempdir().unwrap();
+        let folder = dir.path().to_string_lossy().into_owned();
+        cx.update(gpui_component::init);
+        // The box's input wants the Root layer the app mounts.
+        let mut made = None;
+        let window = cx.add_window(|window, cx| {
+            let resizable = cx.new(|_| gpui_component::resizable::ResizableState::default());
+            let page = cx.new(|cx| {
+                ExplorerPage::new(
+                    resizable,
+                    None,
+                    None,
+                    prime_files_services::fs::trash::Ledger::KeptByOs,
+                    false,
+                    window,
+                    cx,
+                )
+            });
+            made = Some(page.clone());
+            gpui_component::Root::new(page, window, cx)
+        });
+        let page = made.unwrap();
+        let typed_row = |page: &ExplorerPage| -> Option<(String, bool)> {
+            page.palette.as_ref()?.rows.iter().find_map(|row| match row {
+                Row::Typed { path, dir } => Some((path.clone(), *dir)),
+                _ => None,
+            })
+        };
+        let type_in = |text: String, cx: &mut gpui::TestAppContext| {
+            window
+                .update(cx, |_, window, cx| {
+                    page.update(cx, |page, cx| {
+                        let input = page.palette.as_ref().unwrap().input.clone();
+                        input.update(cx, |state, cx| state.set_value(text, window, cx));
+                        page.palette_changed(cx);
+                        typed_row(page)
+                    })
+                })
+                .unwrap()
+        };
+        let shown = |cx: &mut gpui::TestAppContext| cx.read(|cx| typed_row(page.read(cx)));
+        window
+            .update(cx, |_, window, cx| page.update(cx, |page, cx| page.toggle_palette(window, cx)))
+            .unwrap();
+
+        assert_eq!(type_in(folder.clone(), cx), None, "the disk was asked during the letter");
+        cx.run_until_parked();
+        assert_eq!(shown(cx), Some((folder.clone(), true)));
+
+        type_in(format!("{folder}\\nao-existe"), cx);
+        cx.run_until_parked();
+        assert_eq!(shown(cx), None);
     }
 
     #[test]

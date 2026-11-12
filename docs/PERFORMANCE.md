@@ -905,3 +905,57 @@ temporizador não tem teste) e os de leitura que já existiam, que passam pelo
   blocos de 14–32 MB quase todos zerados (listas de primitivas de quadro do
   gpui, que crescem até o pior quadro e não encolhem) e o teto de 192 MB de
   miniaturas por painel.
+
+### 12. A barra lateral lia o disco a cada quadro (11/11/2026)
+
+**Queixa** (X, 11/11): "de umas atualizações pra cá, demora um bom tempo
+depois de clicar até executar a ação. Mas quando vou pras configurações roda
+liso."
+
+**Achado.** Amostrando a pilha da thread de interface do app do dono aberto
+(0.3.10 instalada; 400 amostras, `SuspendThread` + `StackWalk64`, sem tocar no
+app), parte do tempo ocupado era `CreateFileW` + `GetFileInformationByHandle`
++ `CloseHandle` — um `fs::metadata` do Rust — dentro do desenho. A origem:
+`sidebar.rs::row` chamava `ExplorerPane::place_address` em toda linha, a cada
+quadro, para decidir se ligava o clique do meio (issue #14, 0.3.8), e
+`place_address` perguntava `Path::is_file()` para não abrir aba de favorito
+que é arquivo. As Configurações não desenham a barra lateral: por isso "rodam
+liso".
+
+**Medido** (`Path::is_file`, binário de release à parte, mediana de 50):
+
+| Onde está o item da barra | Por chamada |
+|---|---:|
+| C: (SSD, em cache) | 0,022 ms |
+| G:/I: (Google Drive) | 0,13–0,18 ms |
+| Os 16 itens do Acesso rápido do dono, somados | 0,83 ms por quadro |
+| Compartilhamento que não responde (`\192.0.2.1\share\pasta`) | **21.051 ms**, toda vez |
+
+Num disco saudável o custo cabe no quadro. Basta um item fixado num
+compartilhamento desligado, numa VPN caída ou num HD que dormiu para cada
+quadro da lista esperar o disco — e o Windows não guarda a falha, então a
+espera se repete no quadro seguinte.
+
+**Mudança.** `place_address` não lê mais o disco: caminho volta como
+endereço. A pergunta "é arquivo?" passou para `open_place_in_new_tab`, feita
+só no clique do meio e numa thread de fundo (§2.12 do `OTIMIZACAO.md` do
+hub). O comportamento do #14 fica o mesmo: favorito que é arquivo não abre
+aba, pasta abre.
+
+**Cobertura.** `a_places_address_is_answered_without_reading_the_disk`
+(arquivo existente responde com o caminho: só uma leitura do disco o
+distinguiria de pasta, então o teste reprova se ela voltar) e
+`the_middle_click_on_a_place_opens_folders_and_skips_files`.
+
+**Não conferido.**
+- A máquina de quem reclamou: não sabemos se ela tem item fixado em rede ou
+  HD externo. A causa encontrada explica exatamente o sintoma relatado, mas
+  pode não ser a única.
+- O app do dono, parado e visível, gasta ~10% de um núcleo na thread de
+  interface (90% das amostras em `GetMessage`, o resto desenhando quadros
+  seguidos). A cópia isolada com a configuração padrão fica em 0,8%. Quem
+  pede esses quadros não foi achado: a amostra do binário publicado não tem
+  símbolos.
+- `open_place` (clique esquerdo num lugar) ainda pergunta `is_file()` na
+  thread de interface — uma vez por clique, não por quadro, mas num
+  compartilhamento morto ainda congela 21 s.

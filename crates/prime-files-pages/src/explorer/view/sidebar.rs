@@ -998,11 +998,7 @@ fn band_cell(item: BandItem, cx: &mut Context<ExplorerPane>) -> AnyElement {
             cx.listener(move |this, _, _, cx| {
                 cx.stop_propagation();
                 match &in_tab {
-                    BandTarget::Place(place) => {
-                        if let Some(address) = ExplorerPane::place_address(place) {
-                            this.open_path_in_new_tab(&address, true, true, cx);
-                        }
-                    }
+                    BandTarget::Place(place) => this.open_place_in_new_tab(place, cx),
                     BandTarget::Folder(folder) => this.open_path_in_new_tab(folder, true, true, cx),
                 }
             }),
@@ -1536,12 +1532,13 @@ fn row(
         .on_click(cx.listener(move |this, _, window, cx| this.open_place(&opened, window, cx)))
         // Any place can be carried to a group of bookmarks.
         .on_drag(dragged, |drag, _, _, cx| cx.new(|_| DragChip { name: drag.place.name.clone() }))
-        .when_some(ExplorerPane::place_address(place), |this, path| {
+        .when(ExplorerPane::place_address(place).is_some(), |this| {
+            let place = place.clone();
             this.on_mouse_down(
                 MouseButton::Middle,
                 cx.listener(move |this, _, _, cx| {
                     cx.stop_propagation();
-                    this.open_path_in_new_tab(&path, true, true, cx);
+                    this.open_place_in_new_tab(&place, cx);
                 }),
             )
         })

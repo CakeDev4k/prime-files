@@ -431,10 +431,17 @@ impl ExplorerPane {
     /// The address a place opens at in Prime Files (its folder, This PC,
     /// Network, a share, the Recycle Bin), for the middle click that opens it
     /// in a new tab (issue #14). `None` for one only the Explorer opens.
+    ///
+    /// Never touches the disk: the sidebar asks this of every row on every
+    /// frame. Until 11/11/2026 it asked `is_file()` here, and a place on a
+    /// share that stopped answering held each frame for the 21 s of the SMB
+    /// timeout (a sleeping disk, the seconds of its spin-up): clicks in the
+    /// file list waited, while Settings, with no sidebar, stayed smooth.
+    /// Whether a path is a favorite file is the click's question
+    /// (`open_place_in_new_tab`), asked off the UI thread.
     pub(crate) fn place_address(place: &Place) -> Option<String> {
         if let Some(path) = &place.path {
-            // A favorite file has no tab to open.
-            return (!std::path::Path::new(path).is_file()).then(|| path.clone());
+            return Some(path.clone());
         }
         let name = place.parsing_name.as_str();
         (name.eq_ignore_ascii_case(THIS_PC)
@@ -442,6 +449,31 @@ impl ExplorerPane {
             || super::network::is_unc(name)
             || super::recycle_bin::is_recycle_bin(name))
         .then(|| if super::recycle_bin::is_recycle_bin(name) { super::recycle_bin::RECYCLE_BIN.to_string() } else { name.to_string() })
+    }
+
+    /// The middle click on a place: its address in a new tab. A favorite is
+    /// a file and has no tab to open; finding that out reads the disk, which
+    /// may not answer for seconds, so it is read in the background.
+    pub(crate) fn open_place_in_new_tab(&mut self, place: &Place, cx: &mut Context<Self>) {
+        let Some(address) = Self::place_address(place) else {
+            return;
+        };
+        if place.path.is_none() {
+            self.open_path_in_new_tab(&address, true, true, cx);
+            return;
+        }
+        let is_file = cx.background_spawn({
+            let path = address.clone();
+            async move { std::path::Path::new(&path).is_file() }
+        });
+        cx.spawn(async move |this: WeakEntity<Self>, cx| {
+            if is_file.await {
+                return;
+            }
+            this.update(cx, |page, cx| page.open_path_in_new_tab(&address, true, true, cx))
+                .log_err();
+        })
+        .detach();
     }
 
     /// Opens a field in the sidebar for `purpose`, holding `text` selected.

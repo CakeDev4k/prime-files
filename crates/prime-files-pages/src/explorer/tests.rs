@@ -3470,3 +3470,56 @@ async fn a_rectangle_dragged_over_the_preview_lines_picks_them(cx: &mut TestAppC
 async fn a_rectangle_dragged_over_the_preview_grid_picks_its_items(cx: &mut TestAppContext) {
     drag_a_rectangle_over_the_preview(cx, 3.0);
 }
+
+// The sidebar asks every row for its address on every frame; reading the
+// disk there held each frame for the 21 s of a dead share's SMB timeout
+// (11/11/2026, a user on X: "it takes a long time after a click, but
+// Settings is smooth"). An existing file answers with its path: only a
+// disk read could tell it from a folder.
+#[test]
+fn a_places_address_is_answered_without_reading_the_disk() {
+    use super::places::Place;
+    let dir = tempfile::tempdir().unwrap();
+    let file = dir.path().join("favorito.txt");
+    std::fs::write(&file, "x").unwrap();
+    let path = file.to_string_lossy().into_owned();
+    let place = Place { name: "favorito.txt".into(), path: Some(path.clone()), parsing_name: path.clone(), pinned: true };
+    assert_eq!(ExplorerPane::place_address(&place), Some(path));
+}
+
+// The click still tells them apart, off the UI thread: a favorite file has
+// no tab to open (issue #14), a folder opens in one.
+#[gpui::test]
+async fn the_middle_click_on_a_place_opens_folders_and_skips_files(cx: &mut TestAppContext) {
+    use super::places::Place;
+    use super::types::PaneEvent;
+    let dir = tempfile::tempdir().unwrap();
+    let file = dir.path().join("favorito.txt");
+    std::fs::write(&file, "x").unwrap();
+    let place = |path: &std::path::Path| {
+        let path = path.to_string_lossy().into_owned();
+        Place { name: "lugar".into(), path: Some(path.clone()), parsing_name: path, pinned: true }
+    };
+    let window = new_explorer(cx);
+    let pane = window.root(cx).unwrap();
+    let opened = Arc::new(std::sync::Mutex::new(Vec::new()));
+    cx.update({
+        let opened = opened.clone();
+        |cx| {
+            cx.subscribe(&pane, move |_, event: &PaneEvent, _| {
+                if let PaneEvent::OpenInNewTab { folder, .. } = event {
+                    opened.lock().unwrap().push(folder.clone());
+                }
+            })
+            .detach()
+        }
+    });
+    window
+        .update(cx, |page, _, cx| {
+            page.open_place_in_new_tab(&place(&file), cx);
+            page.open_place_in_new_tab(&place(dir.path()), cx);
+        })
+        .unwrap();
+    cx.run_until_parked();
+    assert_eq!(*opened.lock().unwrap(), vec![dir.path().to_string_lossy().into_owned()]);
+}

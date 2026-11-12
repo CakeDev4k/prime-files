@@ -20,7 +20,6 @@ pub fn render(
     window: &mut Window,
     cx: &mut Context<ExplorerPane>,
 ) -> AnyElement {
-    page.ensure_list_initialized(window, cx);
     // In both modes: the preview pane draws from the same cache, and the list
     // has to release a folder's thumbnails on leaving it just as the grid does.
     page.thumbnails.show_directory(&page.cwd, cx);

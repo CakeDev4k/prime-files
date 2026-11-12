@@ -1,57 +1,10 @@
 use prime_files_core::t;
 use prime_files_core::config;
-use prime_files_ui::components::file_list::FileListDelegate;
-
-use gpui::{AppContext, Context, Window};
-use gpui_component::list::{ListEvent, ListState};
 
 use super::ExplorerPane;
 use super::types::ResizingColumn;
 
 impl ExplorerPane {
-    pub(crate) fn ensure_list_initialized(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if self.list.is_none() {
-            let mut delegate = FileListDelegate::new();
-            delegate.set_items(self.filtered_entries.clone());
-            let list = cx.new(|cx| ListState::new(delegate, window, cx));
-            let sub = cx.subscribe_in(
-                &list,
-                window,
-                |this, _list, event: &ListEvent, window, cx| match event {
-                    ListEvent::Select(ix) => {
-                        this.select_single(ix.row);
-                        if let Some(item) = this.filtered_entries.get(ix.row).cloned() {
-                            this.open_preview(item.path, window, cx);
-                        }
-                    }
-                    ListEvent::Confirm(ix) => {
-                        if let Some(info) = this.last_click_info.as_ref()
-                            && info.row == ix.row
-                            && info.timestamp.elapsed() < config::CONFIRM_SUPPRESS_WINDOW
-                            && info.click_count >= 2
-                        {
-                            this.last_click_info = None;
-                            return;
-                        }
-                        this.last_click_info = None;
-                        this.select_single(ix.row);
-                        if let Some(item) = this.filtered_entries.get(ix.row).cloned() {
-                            this.activate_entry(item, window, cx);
-                        }
-                    }
-                    ListEvent::Cancel => {}
-                },
-            );
-            self.subs.push(sub);
-            self.list = Some(list);
-        } else if let Some(list) = &self.list {
-            let items = self.filtered_entries.clone();
-            list.update(cx, |l, _cx| {
-                l.delegate_mut().set_items(items);
-            });
-        }
-    }
-
     pub(crate) fn start_column_resize(
         &mut self,
         column_index: usize,

@@ -449,6 +449,12 @@ mod tests {
                 pane.reload(cx);
                 let total = live() - before;
                 let count = pane.entries.len();
+                // What the unused list state copied at every frame until
+                // 12/11/2026 (`docs/PERFORMANCE.md`, pass 23).
+                let started = std::time::Instant::now();
+                let copy = std::hint::black_box(pane.filtered_entries.clone());
+                eprintln!("  a copy of the visible items: {:.1} ms", started.elapsed().as_secs_f64() * 1000.0);
+                drop(copy);
                 let mark = live();
                 drop(std::mem::take(&mut pane.filtered_entries));
                 let filtered = mark - live();

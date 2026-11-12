@@ -3,12 +3,10 @@ use prime_files_services::fs::listing::FileEntryDto;
 use prime_files_services::fs::trash::Ledger as TrashLedger;
 use prime_files_services::search::{SearchScope, SearchService};
 use prime_files_services::syntax::SyntaxService;
-use prime_files_ui::components::file_list::FileListDelegate;
 
 use gpui::{AppContext, Context, Entity, EventEmitter, FocusHandle, Focusable, Window, px, size};
 use gpui_component::VirtualListScrollHandle;
 use gpui_component::input::InputState;
-use gpui_component::list::ListState;
 use gpui_component::resizable::ResizableState;
 use std::{rc::Rc, sync::Arc, time::Instant};
 
@@ -128,8 +126,6 @@ pub struct ExplorerPane {
     pub search_input: Entity<InputState>,
     /// State of the resizable split between listing and preview.
     pub resizable: Entity<ResizableState>,
-    /// The listing's virtualized list entity, once initialized.
-    pub list: Option<Entity<ListState<FileListDelegate>>>,
     /// GPUI subscriptions kept alive for the lifetime of the page.
     pub subs: Vec<gpui::Subscription>,
     /// Path of the file currently shown in the preview pane.
@@ -613,7 +609,6 @@ impl ExplorerPane {
             search_visible: false,
             search_input,
             resizable,
-            list: None,
             subs: Vec::new(),
             preview_path: None,
             preview_text: None,

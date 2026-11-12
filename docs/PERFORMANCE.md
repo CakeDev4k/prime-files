@@ -1261,3 +1261,114 @@ ignoradas `measure_grid_name_memory` e `measure_listing_memory`.
 reprovou uma vez em ~13 com a máquina ocupada: dava só 3 s para o último
 refresh. Agora espera até 4,5 s, parando quando os 120 aparecem; com o
 código antigo continua reprovando (56 e 39 de 120).
+
+### 19. O resto do disco na interface (12/11/2026)
+
+**Origem.** O "Ficou de fora" da passada 13, e um caso pior achado no
+caminho: `terminal_directory` (`page.rs`) era chamado a cada render do
+painel do terminal (`follow_tab_folder`) e fazia `is_dir()` — com o terminal
+aberto numa aba de compartilhamento morto, 21 s por quadro, o mesmo defeito
+da barra lateral (passada 12).
+
+**Mudança.**
+- `terminal_directory` decide pelo endereço (`is_disk_folder_address`):
+  pasta de unidade ou de compartilhamento é pasta; Este Computador, tags,
+  celular, servidor sozinho e `\.\` não. A aba só guarda pastas que listou.
+- Campo de caminho (`commit_path_edit`): `is_dir`/`is_file` numa thread de
+  fundo; o campo fica aberto até a resposta e a resposta só vale se o texto
+  ainda for o mesmo. `Z:` desconectado não segura mais a janela a cada Enter.
+- "Abrir local do arquivo" (`open_item_location`): ler o atalho e o
+  `exists()` no fundo.
+- "Abrir em nova aba" do menu da prévia: `is_dir()` no fundo.
+- `run_device_op` segura o vigia calado como `run_fs_op_with` (commit
+  próprio, bf2764f): a cópia do celular para a pasta aberta relia a cada
+  800 ms.
+
+**Cobertura.** `the_terminal_folder_is_told_by_the_address_alone` (cronometra
+o compartilhamento morto: < 50 ms),
+`path_field_shows_the_path_and_goes_where_it_is_told` (o campo não fecha
+antes da resposta; com a versão síncrona reprova),
+`a_device_operation_holds_the_watch_quiet_until_done` (mutante sem o guarda
+reprova).
+
+**Ficou de fora.**
+- "Abrir local do arquivo" e "Abrir em nova aba" da prévia sem teste.
+- Teto de threads presas numa pergunta ao disco (o Salamander usa 30) e
+  algum sinal na tela durante os 21 s de um compartilhamento morto.
+
+### 20. O quadro do vídeo no tamanho em que aparece (12/11/2026)
+
+**Origem.** A prévia tocando gastava ~23% de um núcleo (passada 14). Cada
+quadro era copiado em até 1280×720 qualquer que fosse o painel — num painel
+de 400 px, ~6 vezes os pixels mostrados —, copiado duas vezes na CPU
+(`TransferVideoFrame` no bitmap WIC, linha a linha para o `Vec`) e enviado
+de novo à placa.
+
+**Mudança.** A view mede a caixa do quadro, zoom incluído, num `canvas`
+(`media::set_frame_room`, arredondado a 32 px para não recriar o bitmap a
+cada pixel ao arrastar a borda); o player copia em `frame_size(nativo,
+caixa)`, nunca acima do vídeo nem de 1280×720. Vale para a prévia e para a
+busca do Ctrl+T.
+
+**Cobertura.** `a_frame_is_copied_at_the_size_it_is_shown`.
+
+**Ficou de fora.**
+- Não medido no app: a CPU tocando não foi medida de novo.
+- Cada quadro ainda redesenha o painel inteiro. Redesenhar só o player
+  exigiria lista e barra lateral como views com `.cached()`: o gpui marca
+  sujos os ancestrais de quem chama `notify`, e nada no app é cacheado hoje.
+
+### 21. Outra aba na mesma pasta também espera (12/11/2026)
+
+**Origem.** "Ficou de fora" da passada 15: o silêncio do vigia era do
+painel que começou a operação; outra aba na mesma pasta relia a cada 800 ms.
+
+**Mudança.** `BUSY` (thread local da janela): pastas ocupadas por uma
+operação nossa e quantas. `OwnOperation` registra as pastas do painel e
+solta no `Drop`; o vigia de qualquer aba que olhe uma delas espera o fim e
+relê uma vez (o painel de origem relê sozinho). Aba em outra pasta não
+espera.
+
+**Cobertura.** `another_tab_on_the_folder_waits_for_our_copy` (a outra aba
+relê 1 vez; a aba em outra pasta continua seguindo o disco); mutante sem
+`any_busy` reprova.
+
+**Ficou de fora.** O aviso que chega depois do fim da operação ainda gera
+uma releitura. O Salamander a marca como "provavelmente inútil" e compara as
+listagens; aqui a releitura seria feita do mesmo jeito e o ganho seria só o
+redesenho, contra o risco de engolir uma mudança de outro programa no
+mesmo segundo.
+
+### 22. Um teste para o ritmo em pasta lenta (12/11/2026)
+
+**Origem.** "Ficou de fora" da passada 17: nenhum teste provava que o vigia
+usa `last_read_cost`; pastas temporárias leem em ~1 ms, o piso de qualquer
+jeito.
+
+**Mudança.** Gancho só de teste `make_read_slow` (por caminho, para não
+atrasar os testes ao lado). `a_slow_folder_is_read_at_the_pace_of_its_cost`:
+pasta de 500 ms, ~8 s de escritas de outro programa, leitura no fundo
+(`listing_wait` 0). Com o custo: 1 releitura (duas rodadas); com o custo
+zerado: 3 (mutante, duas rodadas). Limite em 2. Com 150 ms a diferença era
+3 contra 4 — margem curta demais, trocada.
+
+### 23. Uma terceira cópia da listagem, a cada quadro (12/11/2026)
+
+**Achado.** `ensure_list_initialized` rodava em todo render da listagem e,
+depois da primeira vez, clonava `filtered_entries` inteira para um
+`FileListDelegate` numa `ListState` que nunca é desenhada nem lida (resto do
+upstream). Na WinSxS (27.385 itens, debug): 10,2 ms por quadro só nessa
+cópia, e 8,5 MB guardados numa terceira cópia da listagem. A passada 18 não
+viu porque `measure_listing_memory` não desenha.
+
+**Mudança.** A `ListState`, o delegate e a função saíram; a medida da cópia
+entrou em `measure_listing_memory`.
+
+**Ficou de fora.** `entries` e `filtered_entries` continuam duas cópias
+(8,5 MB cada na WinSxS). Compartilhar por `Arc` troca o tipo em ~230 usos;
+com a terceira cópia fora, o ganho fica nas pastas de dezenas de milhares
+de itens.
+
+**De quebra.** `the_watch_keeps_up_with_another_program_writing` reprovou
+uma vez de novo (94 de 120) numa rodada da suíte que levou 25 s, contra
+13 s das outras; sozinho passou 3 de 3, a suíte 2 de 2.

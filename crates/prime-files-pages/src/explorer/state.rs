@@ -58,6 +58,10 @@ pub struct ExplorerPane {
     /// Closes the open menu when the window loses focus, as a native menu
     /// does (issue #15); made on the first frame, which has the window.
     pub(crate) activation_watch: Option<gpui::Subscription>,
+    /// Whether the window is the one in front, kept by `activation_watch`.
+    /// Shared with the folder watch's background tasks, which slow down
+    /// behind another window (`folder_watch`).
+    pub(crate) in_front: std::sync::Arc<std::sync::atomic::AtomicBool>,
     /// The folder the rows on screen were read from. A read of the same folder
     /// is a refresh and keeps what the user had open (`navigation::reload`).
     pub(crate) listed_cwd: Option<String>,
@@ -576,6 +580,7 @@ impl ExplorerPane {
             rename_when_listed: None,
             slow_rename: None,
             activation_watch: None,
+            in_front: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(true)),
             listed_cwd: None,
             default_sort_key: SortKey::Name,
             default_sort_asc: true,

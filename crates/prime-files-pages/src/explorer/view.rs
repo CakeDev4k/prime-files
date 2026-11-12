@@ -57,7 +57,9 @@ pub fn render(
     }
     page.take_rename_when_listed(window, cx);
     if page.activation_watch.is_none() {
+        page.in_front.store(window.is_window_active(), std::sync::atomic::Ordering::Relaxed);
         page.activation_watch = Some(cx.observe_window_activation(window, |page, window, cx| {
+            page.in_front.store(window.is_window_active(), std::sync::atomic::Ordering::Relaxed);
             if !window.is_window_active() {
                 page.slow_rename = None;
                 let had_menu = page.context_menu.take().is_some() || page.zoom_menu_open || page.open_in_menu;

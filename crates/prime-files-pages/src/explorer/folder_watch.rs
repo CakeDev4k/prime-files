@@ -37,6 +37,19 @@ const RETRY: Duration = Duration::from_secs(1);
 /// at least, and at most.
 const POLL: Duration = Duration::from_secs(3);
 const MAX_POLL: Duration = Duration::from_secs(30);
+/// The least time between two refreshes while the window is behind another:
+/// Open Salamander's `MIN_DELAY_BETWEENINACTIVEREFRESHES` (`fileswnb.cpp`,
+/// OTIMIZACAO.md §5.9). Whoever is looking at another program still sees a
+/// window beside it follow the disk, only less often.
+const BEHIND_SPACING: Duration = Duration::from_secs(2);
+/// The same for a drive that sends no notifications, where each look reads
+/// the whole folder: a Google Drive folder left open behind the browser was
+/// read every 3 s all day. Coming to the front looks at once.
+const BEHIND_POLL: Duration = Duration::from_secs(10);
+const MAX_BEHIND_POLL: Duration = Duration::from_secs(60);
+/// How often a poll waiting out the slower pace looks whether the window
+/// came to the front.
+const POLL_CHECK: Duration = Duration::from_millis(500);
 /// How often a watch held quiet by an operation of ours looks whether it
 /// ended.
 const QUIET_CHECK: Duration = Duration::from_millis(100);
@@ -48,6 +61,20 @@ const QUIET_CHECK: Duration = Duration::from_millis(100);
 /// folder read in 5 ms follows at once, a share that takes 400 ms waits 8 s.
 fn paced(cost: Duration, least: Duration, most: Duration) -> Duration {
     (cost * 20).clamp(least, most)
+}
+
+/// The wait between two refreshes after one that took `cost`.
+fn refresh_spacing(cost: Duration, in_front: bool) -> Duration {
+    paced(cost, if in_front { SPACING } else { BEHIND_SPACING }, MAX_SPACING)
+}
+
+/// The wait between two looks at a folder that sends no notifications.
+fn poll_wait(cost: Duration, in_front: bool) -> Duration {
+    if in_front { paced(cost, POLL, MAX_POLL) } else { paced(cost, BEHIND_POLL, MAX_BEHIND_POLL) }
+}
+
+fn is_in_front(in_front: &std::sync::atomic::AtomicBool) -> bool {
+    in_front.load(std::sync::atomic::Ordering::Relaxed)
 }
 
 /// Prime Files' own operations running on the folder this pane watches.
@@ -131,6 +158,7 @@ impl ExplorerPane {
         let sender_for_poll = sender.clone();
         let quiet = std::rc::Rc::new(Quiet::default());
         let quiet_for_task = quiet.clone();
+        let in_front = self.in_front.clone();
         let setup = cx.background_spawn({
             let folders = folders.clone();
             async move { start_watching(folders, sender) }
@@ -140,7 +168,7 @@ impl ExplorerPane {
             let Some((watcher, polled)) = setup.await else {
                 return;
             };
-            let poll = (!polled.is_empty()).then(|| poll(polled, sender_for_poll, &executor));
+            let poll = (!polled.is_empty()).then(|| poll(polled, sender_for_poll, in_front.clone(), &executor));
             // This task belongs to the watch it fills: a newer watch dropped
             // it, and it never gets here.
             let installed = this.update(cx, |pane, _| match pane.folder_watch.as_mut() {
@@ -159,13 +187,17 @@ impl ExplorerPane {
             }
             let quiet = quiet_for_task;
             let mut last: Option<Instant> = None;
-            let mut spacing = SPACING;
+            let mut cost = Duration::ZERO;
             while let Ok(mut heard) = receiver.recv().await {
                 cx.background_executor().timer(SETTLE).await;
-                if let Some(since) = last.map(|last| last.elapsed())
-                    && since < spacing
-                {
-                    cx.background_executor().timer(spacing - since).await;
+                // Waited in steps, so coming to the front ends a wait set by
+                // the slower pace behind.
+                while let Some(since) = last.map(|last| last.elapsed()) {
+                    let spacing = refresh_spacing(cost, is_in_front(&in_front));
+                    if since >= spacing {
+                        break;
+                    }
+                    cx.background_executor().timer((spacing - since).min(QUIET_CHECK)).await;
                 }
                 while quiet.running.get() > 0 {
                     cx.background_executor().timer(QUIET_CHECK).await;
@@ -195,7 +227,7 @@ impl ExplorerPane {
                         Err(_) => return,
                     }
                 }
-                spacing = paced(started.elapsed(), SPACING, MAX_SPACING);
+                cost = started.elapsed();
                 last = Some(Instant::now());
             }
         });
@@ -282,17 +314,34 @@ fn start_watching(
 // runs off the UI thread; the first look only records the starting point.
 // Reading a Google Drive folder of thousands of files every 3 s regardless
 // would keep a core busy for a folder that is just open: the wait follows
-// what the last look cost ([`paced`]).
-fn poll(folders: Vec<String>, changed: async_channel::Sender<Instant>, executor: &BackgroundExecutor) -> Task<()> {
+// what the last look cost ([`paced`]), and is longer behind another window
+// ([`poll_wait`]).
+fn poll(
+    folders: Vec<String>,
+    changed: async_channel::Sender<Instant>,
+    in_front: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    executor: &BackgroundExecutor,
+) -> Task<()> {
     let executor = executor.clone();
     executor.clone().spawn(async move {
         let mut last: Option<u64> = None;
-        let mut wait = POLL;
+        let mut looked = Instant::now();
+        let mut cost = Duration::ZERO;
         loop {
-            executor.timer(wait).await;
+            loop {
+                let wait = poll_wait(cost, is_in_front(&in_front));
+                let since = looked.elapsed();
+                if since >= wait {
+                    break;
+                }
+                executor.timer((wait - since).min(POLL_CHECK)).await;
+            }
             let started = Instant::now();
             let now = folders.iter().fold(0u64, |sum, folder| sum.wrapping_add(fingerprint(Path::new(folder))));
-            wait = paced(started.elapsed(), POLL, MAX_POLL);
+            cost = started.elapsed();
+            looked = Instant::now();
+            #[cfg(test)]
+            tests::LOOKS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
             if last.is_some_and(|last| last != now) && changed.send(Instant::now()).await.is_err() {
                 return;
             }
@@ -364,6 +413,9 @@ mod tests {
 
     /// The folders `start_watching` began on — where the disk is touched.
     pub(super) static STARTED: std::sync::Mutex<Vec<String>> = std::sync::Mutex::new(Vec::new());
+    /// The looks `poll` took. Only the test below polls: the other tests'
+    /// folders are on NTFS, which notifies.
+    pub(super) static LOOKS: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
 
     fn pane(cx: &mut TestAppContext) -> WindowHandle<ExplorerPane> {
         cx.update(gpui_component::init);
@@ -517,6 +569,105 @@ mod tests {
         assert_eq!(paced(Duration::from_millis(5), SPACING, MAX_SPACING), SPACING, "a quick folder follows at once");
         assert_eq!(paced(Duration::from_millis(100), SPACING, MAX_SPACING), Duration::from_secs(2));
         assert_eq!(paced(Duration::from_secs(2), SPACING, MAX_SPACING), MAX_SPACING, "never longer than the most");
+    }
+
+    #[test]
+    fn behind_another_window_the_watch_keeps_a_slower_pace() {
+        use super::{
+            BEHIND_POLL, BEHIND_SPACING, MAX_BEHIND_POLL, MAX_POLL, MAX_SPACING, POLL, SPACING, poll_wait,
+            refresh_spacing,
+        };
+        use std::time::Duration;
+        let quick = Duration::from_millis(5);
+        assert_eq!(refresh_spacing(quick, true), SPACING);
+        assert_eq!(refresh_spacing(quick, false), BEHIND_SPACING);
+        assert_eq!(refresh_spacing(Duration::from_secs(2), false), MAX_SPACING, "the most is the same");
+        assert_eq!(poll_wait(quick, true), POLL);
+        assert_eq!(poll_wait(quick, false), BEHIND_POLL);
+        assert_eq!(poll_wait(Duration::from_millis(400), false), Duration::from_secs(10));
+        assert_eq!(poll_wait(Duration::from_secs(2), true), MAX_POLL);
+        assert_eq!(poll_wait(Duration::from_secs(5), false), MAX_BEHIND_POLL);
+    }
+
+    fn set_in_front(window: &WindowHandle<ExplorerPane>, cx: &mut TestAppContext, in_front: bool) {
+        window
+            .update(cx, |pane, _, _| pane.in_front.store(in_front, std::sync::atomic::Ordering::Relaxed))
+            .unwrap();
+    }
+
+    fn names(window: &WindowHandle<ExplorerPane>, cx: &mut TestAppContext) -> Vec<String> {
+        window.read_with(cx, |pane, _| pane.filtered_entries.iter().map(|entry| entry.name.clone()).collect()).unwrap()
+    }
+
+    // Behind another window, a second save right after a refresh waits the
+    // 2 s floor instead of 0.8 s; coming to the front shows it at once.
+    #[gpui::test]
+    async fn behind_another_window_refreshes_wait_longer_until_it_comes_to_the_front(cx: &mut TestAppContext) {
+        cx.executor().allow_parking();
+        let dir = tempfile::tempdir().unwrap();
+        let window = watched_pane(cx, dir.path());
+        set_in_front(&window, cx, false);
+        std::fs::write(dir.path().join("a.txt"), "A").unwrap();
+        for _ in 0..300 {
+            pump(cx, std::time::Duration::from_millis(20));
+            if names(&window, cx) == ["a.txt"] {
+                break;
+            }
+        }
+        assert_eq!(names(&window, cx), ["a.txt"], "the first save shows behind, too");
+        std::fs::write(dir.path().join("b.txt"), "B").unwrap();
+        pump(cx, std::time::Duration::from_millis(1200));
+        assert_eq!(names(&window, cx), ["a.txt"], "behind, the second refresh came before the 2 s floor");
+        set_in_front(&window, cx, true);
+        pump(cx, std::time::Duration::from_millis(400));
+        assert_eq!(names(&window, cx), ["a.txt", "b.txt"], "coming to the front did not refresh at once");
+    }
+
+    // A folder that sends no notifications is not read every 3 s behind
+    // another window; coming to the front, it is looked at at once.
+    #[gpui::test]
+    async fn behind_another_window_a_polled_folder_is_looked_at_less(cx: &mut TestAppContext) {
+        use std::sync::atomic::{AtomicBool, Ordering};
+        cx.executor().allow_parking();
+        let dir = tempfile::tempdir().unwrap();
+        let in_front = std::sync::Arc::new(AtomicBool::new(false));
+        let (sender, _receiver) = async_channel::unbounded();
+        LOOKS.store(0, Ordering::Relaxed);
+        let _poll = super::poll(
+            vec![dir.path().to_string_lossy().into_owned()],
+            sender,
+            in_front.clone(),
+            &cx.executor(),
+        );
+        let advance = |cx: &mut TestAppContext, real: std::time::Duration| {
+            let until = Instant::now() + real;
+            while Instant::now() < until {
+                cx.executor().advance_clock(std::time::Duration::from_millis(10));
+                cx.executor().run_until_parked();
+                std::thread::sleep(std::time::Duration::from_millis(10));
+            }
+        };
+        advance(cx, std::time::Duration::from_millis(4000));
+        assert_eq!(LOOKS.load(Ordering::Relaxed), 0, "behind, it looked before the 10 s floor");
+        in_front.store(true, Ordering::Relaxed);
+        advance(cx, std::time::Duration::from_millis(800));
+        assert_eq!(LOOKS.load(Ordering::Relaxed), 1, "coming to the front did not look at once");
+    }
+
+    // The window losing focus is what tells the watch it is behind.
+    #[gpui::test]
+    async fn the_pane_knows_when_its_window_goes_behind(cx: &mut TestAppContext) {
+        let window = pane(cx);
+        let mut cx = gpui::VisualTestContext::from_window(window.into(), cx);
+        cx.update(|window, _| window.activate_window());
+        cx.run_until_parked();
+        let in_front = |cx: &mut gpui::VisualTestContext| {
+            window.read_with(cx, |pane, _| pane.in_front.load(std::sync::atomic::Ordering::Relaxed)).unwrap()
+        };
+        assert!(window.read_with(&cx, |pane, _| pane.activation_watch.is_some()).unwrap(), "never drawn");
+        assert!(in_front(&mut cx), "a window just opened is in front");
+        cx.deactivate_window();
+        assert!(!in_front(&mut cx), "the pane missed the window going behind");
     }
 
     // How long the UI thread is held when the folder on screen is on a share

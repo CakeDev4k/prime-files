@@ -1115,3 +1115,51 @@ outro programa continua aparecendo).
   disso dá o piso.
 - Janela em segundo plano trabalha igual (item 4).
 - Não visto no app: só testes.
+
+### 16. Atrás de outra janela, o vigia anda mais devagar (12/11/2026)
+
+**Origem.** Item 4 da comparação com o Open Salamander. Lá, com a janela em
+segundo plano, o intervalo entre refreshes de pasta tem piso de 2 s
+(`MIN_DELAY_BETWEENINACTIVEREFRESHES`, `fileswnb.cpp`); em foco, só a pausa
+mínima. Aqui (`folder_watch.rs`) o vigia e a sondagem das unidades sem aviso
+andavam igual na frente e atrás: uma pasta do Google Drive aberta atrás do
+navegador era lida inteira a cada 3 s o dia todo.
+
+**Mudança.**
+- O painel guarda se a janela está na frente (`in_front`), atualizado pelo
+  observador de ativação que já fechava os menus (issue #15).
+- Atrás, o piso entre refreshes sobe de 0,8 s para 2 s (o teto de 10 s e os
+  20× o custo continuam), e a sondagem passa de 3–30 s para 10–60 s.
+- As duas esperas andam em passos (100 ms o vigia, 500 ms a sondagem): ao
+  voltar para a frente, o que estava esperando o ritmo de trás sai na hora.
+- Miniaturas não mudaram: já são pedidas só para as linhas desenhadas, sem
+  vizinhança, então atrás já se lê só o visível (o `InactWinOptimizedReading`
+  do Salamander).
+
+**Em números** (conta pelas regras, não medida): pasta rápida com outro
+programa gravando sem parar, de até 75 para até 30 refreshes por minuto
+atrás; pasta pequena do Google Drive, de 20 para 6 leituras por minuto atrás.
+
+**Cobertura.** `behind_another_window_the_watch_keeps_a_slower_pace` (as
+regras), `behind_another_window_refreshes_wait_longer_until_it_comes_to_the_front`
+(atrás, o segundo save não aparece em 1,2 s; ao voltar, aparece em 0,4 s),
+`behind_another_window_a_polled_folder_is_looked_at_less` (atrás, nenhuma
+leitura em 4 s; ao voltar, uma em 0,8 s) e
+`the_pane_knows_when_its_window_goes_behind` (a ligação com a ativação da
+janela). Mutantes conferidos: sem o piso de trás, sem as esperas em passos
+(vigia e sondagem), sondagem sem olhar a janela e observador sem gravar o
+estado; cada um reprova o teste dele.
+
+**Achado, não mexido.** O custo que dá o ritmo (passada 15) é cronometrado
+na thread de interface, de 25 em 25 ms, até `listing_pending` cair. Com a
+interface ocupada, uma leitura de 1 ms conta como cara e empurra o próximo
+refresh para até 10 s. Nos testes isso aparece forte: o relógio do teste anda
+mais devagar que o real, a leitura de uma pasta com poucas dezenas de
+arquivos teve "custo" de 1,13 s e o vigia parou de seguir por 10 s (só 37–40 dos 120 na tela 3 s depois de outro
+programa terminar de gravar). Por isso não há medida de releituras desta
+passada. O certo é a própria leitura (`PendingListing`, em `navigation.rs`)
+devolver quanto levou.
+
+**Ficou de fora.**
+- Janela minimizada é tratada como atrás, não parada.
+- Não visto no app: só testes.

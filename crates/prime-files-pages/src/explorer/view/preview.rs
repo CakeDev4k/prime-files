@@ -2054,7 +2054,7 @@ fn whole_archive_strip(
                     .child(name),
             )
             .child(if extracting {
-                extracting_label(usize::MAX)
+                extracting_label(usize::MAX, page.archive_extract_progress)
             } else {
                 div()
                     .flex_shrink_0()
@@ -2114,10 +2114,9 @@ fn extracting_entry(page: &ExplorerPane, item: &crate::explorer::preview_listing
     page.archive_extracting.is_some() && page.archive_extracting == item.archive_member
 }
 
-// A thin stripe sweeping along the bottom of an entry being extracted. There
-// is no percentage to show (7-Zip runs out of sight, and a zip entry's own
-// inflate is too quick to need one); what the eye needs is that it is still
-// going, and when it stops.
+// A thin stripe sweeping along the bottom of an entry being extracted: that
+// it is still going, and when it stops. The label beside it carries the
+// percentage once it is measured (`drag::bytes_on_disk`).
 fn extracting_bar(ix: usize) -> AnyElement {
     div()
         .absolute()
@@ -2143,13 +2142,18 @@ fn extracting_bar(ix: usize) -> AnyElement {
         .into_any_element()
 }
 
-// "Extracting…" where the entry's size was, pulsing with the stripe.
-fn extracting_label(ix: usize) -> AnyElement {
+// "Extracting…" where the entry's size was, pulsing with the stripe, with
+// how far it is once that is known.
+fn extracting_label(ix: usize, progress: Option<f32>) -> AnyElement {
+    let text = match progress {
+        Some(done) => format!("{} {:.0}%", t!("Extraindo…"), done * 100.0),
+        None => t!("Extraindo…").to_string(),
+    };
     div()
         .flex_shrink_0()
         .text_xs()
         .text_color(rgb(theme::accent()))
-        .child(t!("Extraindo…"))
+        .child(text)
         .with_animation(
             ("archive-extracting-label", ix),
             Animation::new(std::time::Duration::from_millis(1100))
@@ -2277,7 +2281,7 @@ fn render_listing_rows(
                                         .child(crate::explorer::preview_listing::human_size(bytes)),
                                 )
                             })
-                            .when(extracting, |row| row.child(extracting_label(ix)).child(extracting_bar(ix)));
+                            .when(extracting, |row| row.child(extracting_label(ix, page.archive_extract_progress)).child(extracting_bar(ix)));
                     Some(page.track_preview_hit(line, ix).into_any_element())
                 })
                 .collect()

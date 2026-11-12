@@ -1372,3 +1372,43 @@ de itens.
 **De quebra.** `the_watch_keeps_up_with_another_program_writing` reprovou
 uma vez de novo (94 de 120) numa rodada da suíte que levou 25 s, contra
 13 s das outras; sozinho passou 3 de 3, a suíte 2 de 2.
+
+### 24. Arrastar de um .zip não trava mais a janela ao soltar (12/11/2026)
+
+**Queixa** (dono, 12/11): arrastar um item de um compactado para uma pasta
+travava a janela do Prime Files até a extração acabar, sem nenhum sinal de
+progresso.
+
+**Causa.** `PendingSource::QueryContinueDrag` (`drag.rs`), ao soltar,
+chamava `Extraction::wait()` na thread de interface, dentro do laço do
+`DoDragDrop`. Nada era despachado: nem os quadros, nem as tarefas do gpui,
+nem o "Extraindo…" que a linha já tinha.
+
+**Mudança.**
+- `hold_until_extracted`: em vez de bloquear, roda as mensagens da thread
+  (o gpui posta suas tarefas e quadros como mensagens para uma janela, então
+  despachá-las mantém a janela viva) até a extração acabar. Mouse e teclado
+  são descartados (`held_while_dropping`): a queda já está decidida, e um
+  clique no meio começaria outra coisa embaixo dela. Esc desiste; `WM_QUIT`
+  volta para a fila do app. O cursor de espera é reposto a cada volta.
+- Porcentagem: o total esperado sai dos tamanhos que a prévia já leu
+  (`expected_bytes`: a entrada, o conteúdo da pasta ou o arquivo inteiro);
+  a cada 250 ms uma thread de fundo soma o que já está no disco
+  (`bytes_on_disk`), e a linha mostra "Extraindo… 42%" (até 99% enquanto
+  não termina).
+- `Extraction::wait` e a `Condvar` saíram.
+
+**Cobertura.** `a_waiting_drop_keeps_the_window_running` (um timer da
+thread dispara durante a espera; a espera termina com a extração; Esc
+postado na fila desiste; o mutante que não despacha reprova com 0 ticks),
+`a_waiting_drop_holds_back_input_only`,
+`an_extraction_expects_the_sizes_the_listing_read`.
+
+**Não conferido.** Nada visto na tela: o arraste de verdade, até o Explorador
+ou o Premiere e para dentro do próprio app, é do dono. A porcentagem de
+extração pelo 7-Zip depende de ele gravar o arquivo no destino aos poucos.
+
+**De quebra.** `the_watch_keeps_up_with_another_program_writing` reprovou 2
+vezes em 8 rodadas da suíte nesta sessão (94 de 120 e outra), sempre na
+suíte inteira e passando sozinho; os testes novos de vigia, um deles de 8 s,
+rodam em paralelo a ele.

@@ -331,6 +331,9 @@ pub struct ExplorerPane {
     /// drawn as loading in the preview until its files are whole: the drop
     /// waits for them, and without this the wait looked like a freeze.
     pub(crate) archive_extracting: Option<(std::path::PathBuf, String)>,
+    /// How far that extraction is, 0..1, once measured: what is on disk
+    /// against the sizes the listing read. `None` while unknown.
+    pub(crate) archive_extract_progress: Option<f32>,
     /// A selection rectangle being dragged over the listing (`marquee.rs`).
     pub(crate) marquee: Option<super::marquee::Marquee>,
     /// Where each entry was painted, for the rectangle's hit test.
@@ -692,6 +695,7 @@ impl ExplorerPane {
             preview_marquee: None,
             preview_hit_boxes: Default::default(),
             archive_extracting: None,
+            archive_extract_progress: None,
             marquee: None,
             hit_boxes: Default::default(),
             paste_plan: None,

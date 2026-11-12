@@ -250,6 +250,11 @@ impl ExplorerPane {
             }
         };
         let target = stage.target.clone();
+        let expected = self
+            .preview_listing
+            .as_ref()
+            .map_or(0, |listing| expected_bytes(&listing.items, &archive, &member, is_dir));
+        self.archive_extract_progress = None;
         // The extraction runs while the pointer travels, so a drop seldom
         // waits for all of it. A thread of its own rather than the background
         // executor: one large entry would hold one of its few workers for as
@@ -266,14 +271,39 @@ impl ExplorerPane {
         // drag does: an entry that is whole while the button is still down is
         // ready to drop, and the mark going away is what says so. gpui keeps
         // running tasks inside the drag's message loop, so this one does too.
+        // How far it is, from what is on disk against the sizes the listing
+        // read, every 250 ms on another thread.
         let watched = extraction.clone();
+        let measured = target.clone();
         cx.spawn_in(window, async move |this, cx| {
+            let mut last_measure = std::time::Instant::now();
             while watched.result().is_none() {
                 cx.background_executor().timer(std::time::Duration::from_millis(60)).await;
+                if expected == 0 || last_measure.elapsed() < std::time::Duration::from_millis(250) {
+                    continue;
+                }
+                last_measure = std::time::Instant::now();
+                let written = cx.background_executor().spawn({
+                    let measured = measured.clone();
+                    async move { bytes_on_disk(&measured) }
+                });
+                let fraction = (written.await as f64 / expected as f64).clamp(0.0, 0.99) as f32;
+                let shown = this.update(cx, |pane, cx| {
+                    if pane.archive_extracting.as_ref() != Some(&entry) {
+                        return false;
+                    }
+                    pane.archive_extract_progress = Some(fraction);
+                    cx.notify();
+                    true
+                });
+                if !matches!(shown, Ok(true)) {
+                    break;
+                }
             }
             this.update(cx, |pane, cx| {
                 if pane.archive_extracting.as_ref() == Some(&entry) {
                     pane.archive_extracting = None;
+                    pane.archive_extract_progress = None;
                     cx.notify();
                 }
             })
@@ -499,7 +529,6 @@ pub(crate) fn drop_effect_hint<E: InteractiveElement>(element: E, folder: PathBu
 #[derive(Default)]
 pub(crate) struct Extraction {
     result: std::sync::Mutex<Option<Result<(), String>>>,
-    ended: std::sync::Condvar,
 }
 
 impl Extraction {
@@ -507,30 +536,69 @@ impl Extraction {
         if let Ok(mut slot) = self.result.lock() {
             *slot = Some(result);
         }
-        self.ended.notify_all();
     }
 
     /// How it ended, or `None` while it runs.
     fn result(&self) -> Option<Result<(), String>> {
         self.result.lock().ok().and_then(|slot| slot.clone())
     }
+}
 
-    /// Blocks until it ends.
-    #[cfg_attr(not(windows), allow(dead_code))]
-    fn wait(&self) -> Result<(), String> {
-        let Ok(mut slot) = self.result.lock() else {
-            return Err("extraction lock poisoned".to_string());
-        };
-        loop {
-            if let Some(result) = slot.as_ref() {
-                return result.clone();
-            }
-            slot = match self.ended.wait(slot) {
-                Ok(slot) => slot,
-                Err(_) => return Err("extraction lock poisoned".to_string()),
-            };
-        }
+/// How many bytes extracting `member` of `archive` writes, from the sizes
+/// the preview's listing read: the entry's, a folder's whole contents, or
+/// everything when `member` is empty. 0 when the listing has none of it.
+fn expected_bytes(items: &[super::preview_listing::ListingItem], archive: &Path, member: &str, is_dir: bool) -> u64 {
+    let folder = format!("{}/", member.trim_end_matches('/'));
+    items
+        .iter()
+        .filter_map(|item| {
+            let (at, name) = item.archive_member.as_ref()?;
+            let inside = at == archive
+                && if member.is_empty() {
+                    true
+                } else if is_dir {
+                    name.starts_with(&folder)
+                } else {
+                    name == member
+                };
+            inside.then_some(item.size.unwrap_or(0))
+        })
+        .sum()
+}
+
+/// The bytes under `path` on disk: a file's length, or a folder's files'.
+/// Read on a background thread while an extraction writes there.
+fn bytes_on_disk(path: &Path) -> u64 {
+    let Ok(metadata) = std::fs::symlink_metadata(path) else {
+        return 0;
+    };
+    if !metadata.is_dir() {
+        return metadata.len();
     }
+    let Ok(children) = std::fs::read_dir(path) else {
+        return 0;
+    };
+    children.flatten().map(|child| bytes_on_disk(&child.path())).sum()
+}
+
+/// Whether a window message is held back while a drop waits for its
+/// extraction: the mouse's and the keyboard's, inside the window and on its
+/// frame. Everything else (gpui's tasks and frames, paint, timers) goes on.
+#[cfg_attr(not(windows), allow(dead_code))]
+fn held_while_dropping(message: u32) -> bool {
+    const WM_KEYFIRST: u32 = 0x0100;
+    const WM_KEYLAST: u32 = 0x0109;
+    const WM_MOUSEFIRST: u32 = 0x0200;
+    const WM_MOUSELAST: u32 = 0x020E;
+    const WM_NCMOUSEMOVE: u32 = 0x00A0;
+    const WM_NCXBUTTONDBLCLK: u32 = 0x00AD;
+    const WM_MOUSEHOVER: u32 = 0x02A1;
+    const WM_MOUSELEAVE: u32 = 0x02A3;
+    (WM_KEYFIRST..=WM_KEYLAST).contains(&message)
+        || (WM_MOUSEFIRST..=WM_MOUSELAST).contains(&message)
+        || (WM_NCMOUSEMOVE..=WM_NCXBUTTONDBLCLK).contains(&message)
+        || message == WM_MOUSEHOVER
+        || message == WM_MOUSELEAVE
 }
 
 /// Makes `element` take files dropped on it into `folder`, tinted while a
@@ -665,6 +733,46 @@ mod platform {
         })
     }
 
+    /// Runs the thread's messages until `extraction` ends: its outcome, or
+    /// `None` when Esc gave up on the drop (or the app is quitting). Mouse
+    /// and keyboard messages are dropped (`super::held_while_dropping`).
+    pub(super) fn hold_until_extracted(extraction: &Extraction) -> Option<Result<(), String>> {
+        use windows::Win32::UI::WindowsAndMessaging::{
+            DispatchMessageW, MSG, MWMO_INPUTAVAILABLE, MsgWaitForMultipleObjectsEx, PM_REMOVE, PeekMessageW,
+            PostQuitMessage, QS_ALLINPUT, TranslateMessage, WM_KEYDOWN, WM_QUIT,
+        };
+        const VK_ESCAPE: usize = 0x1B;
+        let wait_cursor = unsafe { LoadCursorW(None, IDC_WAIT) }.ok();
+        loop {
+            if let Some(result) = extraction.result() {
+                return Some(result);
+            }
+            // Something dispatched may have put the arrow back.
+            if let Some(cursor) = wait_cursor {
+                unsafe { SetCursor(Some(cursor)) };
+            }
+            unsafe { MsgWaitForMultipleObjectsEx(None, 50, QS_ALLINPUT, MWMO_INPUTAVAILABLE) };
+            let mut message = MSG::default();
+            while unsafe { PeekMessageW(&mut message, None, 0, 0, PM_REMOVE) }.as_bool() {
+                if message.message == WM_QUIT {
+                    // Left for the app's own loop, which ends on it.
+                    unsafe { PostQuitMessage(message.wParam.0 as i32) };
+                    return None;
+                }
+                if message.message == WM_KEYDOWN && message.wParam.0 == VK_ESCAPE {
+                    return None;
+                }
+                if super::held_while_dropping(message.message) {
+                    continue;
+                }
+                unsafe {
+                    let _ = TranslateMessage(&message);
+                    DispatchMessageW(&message);
+                }
+            }
+        }
+    }
+
     #[implement(IDropSource)]
     struct PendingSource {
         extraction: Arc<Extraction>,
@@ -679,15 +787,16 @@ mod platform {
                 return S_OK;
             }
             // Released: the target gets the files only once they are whole.
-            // The wait cursor, since nothing repaints while this blocks.
-            if self.extraction.result().is_none()
-                && let Ok(cursor) = unsafe { LoadCursorW(None, IDC_WAIT) }
-            {
-                unsafe { SetCursor(Some(cursor)) };
-            }
-            match self.extraction.wait() {
-                Ok(()) => DRAGDROP_S_DROP,
-                Err(_) => DRAGDROP_S_CANCEL,
+            // Until 12/11/2026 this blocked on the extraction, and the whole
+            // window froze until it ended — no repaint, no "Extracting…"
+            // (an owner's complaint). The window's own messages go on here
+            // instead, as they do in the drag's loop: gpui's tasks and
+            // frames are posted messages, so the row's progress keeps
+            // moving. Input is held back: the drop is decided, and a click
+            // meanwhile would start something under it.
+            match hold_until_extracted(&self.extraction) {
+                Some(Ok(())) => DRAGDROP_S_DROP,
+                Some(Err(_)) | None => DRAGDROP_S_CANCEL,
             }
         }
 
@@ -721,6 +830,95 @@ mod platform {
 mod tests {
     use super::same_volume;
     use std::path::Path;
+
+    // While a drop waits for its extraction, the window keeps its own
+    // messages and gpui's (paint, timers, posted tasks) and drops the
+    // mouse's and keyboard's.
+    #[test]
+    fn a_waiting_drop_holds_back_input_only() {
+        use super::held_while_dropping;
+        for input in [0x0100, 0x0101, 0x0102, 0x0200, 0x0201, 0x0202, 0x020A, 0x020E, 0x00A0, 0x00A1, 0x02A3] {
+            assert!(held_while_dropping(input), "input {input:#x} went through");
+        }
+        // WM_PAINT, WM_TIMER, WM_SETCURSOR, WM_USER + 3 (gpui's tasks),
+        // WM_USER + 5 (gpui's frames).
+        for kept in [0x000F, 0x0113, 0x0020, 0x0400 + 3, 0x0400 + 5] {
+            assert!(!held_while_dropping(kept), "{kept:#x} was held");
+        }
+    }
+
+    // A drop waiting for its extraction keeps the thread's messages going:
+    // a timer of the thread fires during the wait (until 12/11/2026 the
+    // wait blocked and nothing ran, the window froze); the drop goes when
+    // the extraction ends, and Esc gives up on it.
+    // `unsafe` as in `platform`: Windows' timer and thread messages.
+    #[cfg(windows)]
+    #[allow(unsafe_code)]
+    #[test]
+    fn a_waiting_drop_keeps_the_window_running() {
+        use super::Extraction;
+        use super::platform::hold_until_extracted;
+        use std::sync::Arc;
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        use windows::Win32::System::Threading::GetCurrentThreadId;
+        use windows::Win32::UI::WindowsAndMessaging::{KillTimer, PostThreadMessageW, SetTimer, WM_KEYDOWN};
+
+        static TICKS: AtomicUsize = AtomicUsize::new(0);
+        unsafe extern "system" fn tick(_: windows::Win32::Foundation::HWND, _: u32, _: usize, _: u32) {
+            TICKS.fetch_add(1, Ordering::Relaxed);
+        }
+        let timer = unsafe { SetTimer(None, 0, 20, Some(tick)) };
+        assert_ne!(timer, 0);
+
+        let extraction = Arc::new(Extraction::default());
+        let writer = extraction.clone();
+        let started = std::time::Instant::now();
+        std::thread::spawn(move || {
+            std::thread::sleep(std::time::Duration::from_millis(300));
+            writer.finish(Ok(()));
+        });
+        assert_eq!(hold_until_extracted(&extraction), Some(Ok(())));
+        assert!(started.elapsed() >= std::time::Duration::from_millis(300));
+        let ticks = TICKS.load(Ordering::Relaxed);
+        assert!(ticks >= 3, "the thread's messages stood still while waiting: {ticks} ticks in 300 ms");
+        unsafe { KillTimer(None, timer) }.ok();
+
+        let never = Extraction::default();
+        unsafe { PostThreadMessageW(GetCurrentThreadId(), WM_KEYDOWN, windows::Win32::Foundation::WPARAM(0x1B), windows::Win32::Foundation::LPARAM(0)) }.unwrap();
+        assert_eq!(hold_until_extracted(&never), None, "Esc did not give up on the drop");
+    }
+
+    // The progress of an extraction is measured against the sizes the
+    // preview read: one entry, a folder's contents, or the whole archive.
+    #[test]
+    fn an_extraction_expects_the_sizes_the_listing_read() {
+        use crate::explorer::preview_listing::ListingItem;
+        let archive = Path::new(r"C:\x\pacote.zip");
+        let item = |name: &str, size: Option<u64>| ListingItem {
+            name: name.to_string(),
+            path: None,
+            archive_member: Some((archive.to_path_buf(), name.to_string())),
+            is_dir: size.is_none(),
+            size,
+            depth: 0,
+            modified: 0,
+        };
+        let items =
+            vec![item("fotos/", None), item("fotos/a.jpg", Some(100)), item("fotos/b.jpg", Some(50)), item("leia.txt", Some(7))];
+        assert_eq!(super::expected_bytes(&items, archive, "leia.txt", false), 7);
+        assert_eq!(super::expected_bytes(&items, archive, "fotos", true), 150);
+        assert_eq!(super::expected_bytes(&items, archive, "fotos/", true), 150);
+        assert_eq!(super::expected_bytes(&items, archive, "", true), 157);
+        assert_eq!(super::expected_bytes(&items, Path::new(r"C:\outro.zip"), "", true), 0);
+
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::create_dir(dir.path().join("fotos")).unwrap();
+        std::fs::write(dir.path().join("fotos").join("a.jpg"), [0u8; 100]).unwrap();
+        std::fs::write(dir.path().join("leia.txt"), [0u8; 7]).unwrap();
+        assert_eq!(super::bytes_on_disk(dir.path()), 107);
+        assert_eq!(super::bytes_on_disk(&dir.path().join("leia.txt")), 7);
+        assert_eq!(super::bytes_on_disk(&dir.path().join("sumiu")), 0);
+    }
 
     // Issue #64: what an archiver extracted to the temp folder for a drag
     // is still there after the archiver deletes its own copy.

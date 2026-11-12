@@ -242,6 +242,7 @@ fn render_section(
                 for drive in &places.drives {
                     list = tree(page, list, drive, "drives", 0, draw, icon_px, cx);
                 }
+                list = device_rows(page, list, &places.devices, "drives", 0, draw, icon_px, cx);
             }
             list
         }
@@ -264,6 +265,7 @@ fn render_section(
                 for drive in &places.drives {
                     list = tree(page, list, drive, "this-pc", 1, Draw { tree: true, ..draw }, icon_px, cx);
                 }
+                list = device_rows(page, list, &places.devices, "this-pc", 1, Draw { tree: true, ..draw }, icon_px, cx);
             }
             list
         }
@@ -308,7 +310,7 @@ fn section_is_empty(section: SidebarSection, places: &Places, look: &SidebarLook
         SidebarSection::QuickAccess => places.quick_access.is_empty(),
         SidebarSection::Favorites => places.favorites.is_empty(),
         SidebarSection::UserFolders => places.user_folders.is_empty(),
-        SidebarSection::Drives => places.drives.is_empty(),
+        SidebarSection::Drives => places.drives.is_empty() && places.devices.is_empty(),
         SidebarSection::Recent => look.recent_count == 0 || Bookmarks::recent(cx).is_empty(),
         SidebarSection::Tags => !crate::explorer::tags::in_sidebar(),
         SidebarSection::Bookmarks | SidebarSection::ThisPc | SidebarSection::Network => false,
@@ -782,7 +784,8 @@ fn render_band(
                 }
             }
             SidebarSection::Drives => {
-                let drives = place_items(page, &places.drives, "drive", cx);
+                let mut drives = place_items(page, &places.drives, "drive", cx);
+                drives.extend(place_items(page, &places.devices, "device", cx));
                 sections.push((t!("Discos").to_string(), "icons/database.svg", drives, None));
             }
             SidebarSection::ThisPc => {
@@ -796,6 +799,7 @@ fn render_band(
                     drives.push(band_place(page, this_pc, "pc", label, icon_px, cx));
                 }
                 drives.extend(place_items(page, &places.drives, "pc-drive", cx));
+                drives.extend(place_items(page, &places.devices, "pc-device", cx));
                 sections.push((pc_name, "icons/app-window.svg", drives, None));
             }
             SidebarSection::Network => {
@@ -1446,6 +1450,26 @@ fn tree(
         for child in &children {
             list = tree(page, list, child, prefix, depth + 1, draw, icon_px, cx);
         }
+    }
+    list
+}
+
+// The phones and cameras under the drives: leaves, since the tree reads
+// subfolders from disk and a phone has none there.
+#[allow(clippy::too_many_arguments)]
+fn device_rows(
+    page: &mut ExplorerPane,
+    mut list: Div,
+    devices: &[Place],
+    prefix: &str,
+    depth: usize,
+    draw: Draw,
+    icon_px: u32,
+    cx: &mut Context<ExplorerPane>,
+) -> Div {
+    for device in devices {
+        let spec = RowSpec { prefix, depth, expandable: None, menu: RowMenu::Place };
+        list = list.child(row(page, device, spec, draw, icon_px, cx));
     }
     list
 }

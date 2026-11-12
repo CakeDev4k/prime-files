@@ -84,7 +84,10 @@ en.MediaRestart=The Media Feature Pack was turned on. Restart Windows before ope
 
 [Tasks]
 Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{cm:AdditionalIcons}"; Flags: unchecked
-Name: "sevenzip"; Description: "{cm:SevenZipTask}"; GroupDescription: "{cm:Extras}"; Check: SevenZipMissing
+; Never in a silent run: the app's own updates are silent, and with the task
+; on by default every update downloaded 7-Zip and asked for elevation to
+; install it again for whoever had declined it (issue #62).
+Name: "sevenzip"; Description: "{cm:SevenZipTask}"; GroupDescription: "{cm:Extras}"; Check: SevenZipMissing and not WizardSilent
 
 [Files]
 Source: "{#ExeSource}"; DestDir: "{app}"; DestName: "{#AppExe}"; Flags: ignoreversion
@@ -126,10 +129,16 @@ begin
   Result := not (RegQueryDWordValue(HKLM64, 'SOFTWARE\Microsoft\VisualStudio\14.0\VC\Runtimes\x64', 'Installed', Installed) and (Installed = 1));
 end;
 
-// The program finds 7z.exe where its installer puts it.
+// The program finds 7z.exe where its installer puts it, 64- or 32-bit, or
+// wherever 7-Zip's own registry key says it went.
 function SevenZipMissing: Boolean;
+var
+  Folder: String;
 begin
-  Result := not FileExists(ExpandConstant('{commonpf64}\7-Zip\7z.exe'));
+  Result := not FileExists(ExpandConstant('{commonpf64}\7-Zip\7z.exe'))
+    and not FileExists(ExpandConstant('{commonpf32}\7-Zip\7z.exe'))
+    and not (RegQueryStringValue(HKLM64, 'SOFTWARE\7-Zip', 'Path', Folder) and FileExists(AddBackslash(Folder) + '7z.exe'))
+    and not (RegQueryStringValue(HKCU, 'SOFTWARE\7-Zip', 'Path', Folder) and FileExists(AddBackslash(Folder) + '7z.exe'));
 end;
 
 function MediaFoundationMissing: Boolean;

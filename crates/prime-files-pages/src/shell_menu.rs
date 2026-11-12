@@ -387,6 +387,61 @@ pub fn shortcut_target(_path: &str) -> Option<String> {
     None
 }
 
+/// Whether `verb` pins to or unpins from the Start menu. Since Windows 10
+/// 1809 those verbs act only inside explorer.exe: run from another program
+/// they return success and do nothing (issue #55, as #13 before it).
+pub fn is_start_pin_verb(verb: &str) -> bool {
+    let verb = verb.to_ascii_lowercase();
+    verb == "pintostartscreen" || verb == "unpinfromstart" || verb == "unpinfromstartscreen"
+}
+
+/// Runs the Shell verb `verb` on `path` inside explorer.exe: through the
+/// desktop's own `Shell.Application`, which lives in the Explorer's process,
+/// the way the Explorer runs it from its own menu. Blocks while COM talks
+/// to the Explorer, so it is called off the UI thread.
+#[cfg(windows)]
+#[allow(unsafe_code)]
+pub fn run_verb_in_explorer(path: &str, verb: &str) -> Result<(), String> {
+    use windows::Win32::System::Com::{CLSCTX_ALL, COINIT_APARTMENTTHREADED, CoCreateInstance, CoInitializeEx, CoUninitialize, IDispatch, IServiceProvider};
+    use windows::Win32::System::Variant::VARIANT;
+    use windows::Win32::UI::Shell::{
+        IShellBrowser, IShellDispatch, IShellFolderViewDual, IShellWindows, SID_STopLevelBrowser, SVGIO_BACKGROUND,
+        SWC_DESKTOP, SWFO_NEEDDISPATCH, ShellWindows,
+    };
+    use windows::core::{BSTR, Interface};
+
+    let target = std::path::Path::new(path);
+    let folder = target.parent().map(|parent| parent.to_string_lossy().into_owned()).ok_or("no folder")?;
+    let name = target.file_name().map(|name| name.to_string_lossy().into_owned()).ok_or("no name")?;
+    let initialized = unsafe { CoInitializeEx(None, COINIT_APARTMENTTHREADED) }.is_ok();
+    let result = (|| -> windows::core::Result<()> {
+        let windows: IShellWindows = unsafe { CoCreateInstance(&ShellWindows, None, CLSCTX_ALL) }?;
+        let desktop = VARIANT::from(0i32); // CSIDL_DESKTOP
+        let empty = VARIANT::default();
+        let mut hwnd = 0i32;
+        let dispatch: IDispatch =
+            unsafe { windows.FindWindowSW(&desktop, &empty, SWC_DESKTOP, &mut hwnd, SWFO_NEEDDISPATCH) }?;
+        let provider: IServiceProvider = dispatch.cast()?;
+        let browser: IShellBrowser = unsafe { provider.QueryService(&SID_STopLevelBrowser) }?;
+        let view = unsafe { browser.QueryActiveShellView() }?;
+        let background: IDispatch = unsafe { view.GetItemObject(SVGIO_BACKGROUND) }?;
+        let folder_view: IShellFolderViewDual = background.cast()?;
+        let shell: IShellDispatch = unsafe { folder_view.Application() }?.cast()?;
+        let namespace = unsafe { shell.NameSpace(&VARIANT::from(BSTR::from(folder.as_str()))) }?;
+        let item = unsafe { namespace.ParseName(&BSTR::from(name.as_str())) }?;
+        unsafe { item.InvokeVerb(&VARIANT::from(BSTR::from(verb))) }
+    })();
+    if initialized {
+        unsafe { CoUninitialize() };
+    }
+    result.map_err(|error| error.to_string())
+}
+
+#[cfg(not(windows))]
+pub fn run_verb_in_explorer(_path: &str, _verb: &str) -> Result<(), String> {
+    Err("only on Windows".into())
+}
+
 #[cfg(windows)]
 #[allow(unsafe_code)]
 mod platform {

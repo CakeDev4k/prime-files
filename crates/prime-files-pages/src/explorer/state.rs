@@ -729,7 +729,7 @@ impl ExplorerPane {
             hover_audio_enabled: true,
             hover_audio_delay_ms: 400,
             context_menu: None,
-            preview_visible: true,
+            preview_visible: super::view::panels::preview_shown(),
             quick_look: false,
             zoom_menu_open: false,
             zoom_menu_flash: None,

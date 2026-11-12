@@ -43,9 +43,14 @@ pub fn render(page: &ExplorerPane, window: &mut Window, cx: &mut Context<Explore
             .left_0()
             .w(px(vw))
             .h(px(vh))
-            .capture_any_mouse_down(cx.listener(|page, _, _, cx| {
+            .capture_any_mouse_down(cx.listener(|page, event: &MouseDownEvent, _, cx| {
                 page.close_menu(cx);
-                cx.stop_propagation();
+                // A right press goes on to what is under it, which opens
+                // its own menu in place of this one, as in Explorer (issue
+                // #57); stopped, it only closed this one.
+                if event.button != MouseButton::Right {
+                    cx.stop_propagation();
+                }
             }))
             .on_scroll_wheel(|_, _, cx| cx.stop_propagation())
             .into_any_element(),

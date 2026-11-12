@@ -65,7 +65,7 @@ impl ExplorerClipboard {
     // Replaces the clipboard contents, returning the generation stamped on this
     // write. Mutates in place rather than replacing the global so a write during
     // a cut paste does not lose the in-flight count.
-    fn write(entry: Option<(ClipMode, Vec<PathBuf>)>, cx: &mut App) -> u64 {
+    pub(crate) fn write(entry: Option<(ClipMode, Vec<PathBuf>)>, cx: &mut App) -> u64 {
         let clipboard = cx.default_global::<ExplorerClipboard>();
         clipboard.generation = clipboard.generation.wrapping_add(1);
         clipboard.cut = match &entry {
@@ -1031,6 +1031,12 @@ impl ExplorerPane {
         if paths.is_empty() {
             return;
         }
+        // A phone has no Recycle Bin: the Shell deletes for good, after its
+        // own question, as the Explorer does there.
+        if paths.iter().any(|path| super::device::is_device(path)) {
+            self.run_device_op(move |owner| super::device::delete(paths, owner), None, cx);
+            return;
+        }
         // The same ledger `noh rm` writes, on the platforms that need one: macOS
         // keeps its trash index inside Finder's private `.DS_Store` and exposes
         // nothing to read it back, so an item trashed without a record here can
@@ -1372,6 +1378,12 @@ impl ExplorerPane {
         if paths.is_empty() {
             return;
         }
+        // A phone's files have no path to put there: the Shell's own data
+        // goes instead, the one the Explorer's Copy puts there.
+        if paths.iter().any(|path| super::device::is_device(path)) {
+            self.copy_device_items(mode, &paths, cx);
+            return;
+        }
         let buffers: Vec<PathBuf> = paths.iter().map(PathBuf::from).collect();
         write_system_clipboard(mode, &buffers, paths.join("\n"), cx);
         ExplorerClipboard::write(Some((mode, buffers)), cx);
@@ -1385,10 +1397,10 @@ impl ExplorerPane {
 
     /// Whether Paste has anything to paste.
     pub(crate) fn can_paste(&self, cx: &App) -> bool {
-        self.read_clipboard(cx).is_some()
+        self.read_clipboard(cx).is_some() || super::device::clipboard_has_items()
     }
 
-    fn read_clipboard(&self, cx: &App) -> Option<(ClipMode, Vec<PathBuf>)> {
+    pub(crate) fn read_clipboard(&self, cx: &App) -> Option<(ClipMode, Vec<PathBuf>)> {
         let current = explorer_clipboard_is_current();
         if current
             && let Some((mode, paths)) = cx
@@ -1420,6 +1432,9 @@ impl ExplorerPane {
     /// Pastes the clipboard contents into the current directory, prompting for
     /// each name collision (§1.2).
     pub(crate) fn paste_into_cwd(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.paste_through_shell(self.cwd.clone(), window, cx) {
+            return;
+        }
         let has_pending = self.prepare_paste(cx);
         if self.paste_plan.is_none() {
             return;
@@ -1453,6 +1468,9 @@ impl ExplorerPane {
     /// Pastes the clipboard into `folder`, the one the preview lists, with
     /// the same plan and conflict dialog as a paste into the open folder.
     pub(crate) fn paste_into_folder(&mut self, folder: PathBuf, window: &mut Window, cx: &mut Context<Self>) {
+        if self.paste_through_shell(folder.to_string_lossy().into_owned(), window, cx) {
+            return;
+        }
         self.paste_plan = None;
         let Some((mode, sources)) = self.read_clipboard(cx) else {
             return;
@@ -1783,6 +1801,17 @@ impl ExplorerPane {
         cx.focus_self(window);
         let new_name = state.input.read(cx).value().trim().to_string();
         let original_path = state.original_path;
+        // On a phone the path's last part is an id, not the name.
+        let address = original_path.to_string_lossy().into_owned();
+        if super::device::is_device(&address) {
+            let unchanged = self.entries.iter().any(|entry| entry.path == address && entry.name == new_name);
+            if !new_name.is_empty() && !unchanged {
+                let owner = crate::ipc::window_hwnd(window);
+                self.run_device_op(move |owner| super::device::rename(address, new_name, owner), owner, cx);
+            }
+            cx.notify();
+            return;
+        }
         let original_name = file_name_of(&original_path).unwrap_or_default();
         if new_name.is_empty() || new_name == original_name {
             cx.notify();
@@ -1919,6 +1948,12 @@ impl ExplorerPane {
     /// Creates a new folder in the current directory and immediately starts an
     /// inline rename of it so the user can name it (§1, §6).
     pub(crate) fn create_new_folder(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if super::device::is_device(&self.cwd) {
+            let (dest, name) = (self.cwd.clone(), t!("Nova pasta").to_string());
+            let owner = crate::ipc::window_hwnd(window);
+            self.run_device_op(move |owner| super::device::new_folder(dest, name, owner), owner, cx);
+            return;
+        }
         let parent = PathBuf::from(&self.cwd);
         let name = ops::unique_name(&parent, t!("Nova pasta"));
         match ops::create_dir(&parent, &name) {

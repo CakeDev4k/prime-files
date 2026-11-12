@@ -26,6 +26,12 @@ impl ExplorerPane {
         if paths.is_empty() {
             return;
         }
+        // On a phone every delete is for good, and the Shell asks first.
+        if paths.iter().any(|path| crate::explorer::device::is_device(path)) {
+            let owner = crate::ipc::window_hwnd(window);
+            self.run_device_op(move |owner| crate::explorer::device::delete(paths, owner), owner, cx);
+            return;
+        }
         let count = paths.len();
         let title = if count == 1 {
             let name =

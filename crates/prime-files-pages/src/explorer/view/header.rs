@@ -56,7 +56,44 @@ pub fn render(
             cx,
         );
     }
-    if let Some(name) = location {
+    // On a phone the address is the Shell's ids: the crumbs are the names
+    // the listing read on the way down, under the computer, each leading
+    // back there.
+    let device_trail = crate::explorer::device::is_device(&page.cwd)
+        .then(|| crate::explorer::device::trail(&page.cwd))
+        .flatten()
+        .filter(|trail| !trail.is_empty());
+    if let Some(trail) = device_trail {
+        push_crumb(
+            &mut crumbs,
+            page,
+            &mut crumb_id,
+            "\u{e7f4}",
+            theme::fg_secondary(),
+            Some(theme::icon_font()),
+            Some(Box::new(|this, _, window, cx| {
+                this.change_dir(crate::explorer::places::THIS_PC.to_string(), window, cx)
+            })),
+            None,
+            cx,
+        );
+        let last = trail.len() - 1;
+        for (index, crumb) in trail.into_iter().enumerate() {
+            let color = if index == last { theme::fg() } else { theme::fg_secondary() };
+            let address = crumb.address;
+            push_crumb(
+                &mut crumbs,
+                page,
+                &mut crumb_id,
+                crumb.name,
+                color,
+                None,
+                Some(Box::new(move |this, _, window, cx| this.change_dir(address.clone(), window, cx))),
+                None,
+                cx,
+            );
+        }
+    } else if let Some(name) = location {
         push_crumb(&mut crumbs, page, &mut crumb_id, name, theme::fg_secondary(), None, None, None, cx);
     } else if under_this_pc {
         // A computer, as the Explorer draws it there: the name took a
@@ -317,6 +354,7 @@ pub fn render(
                         .rounded(px(6.0))
                         .on_click(cx.listener(|view, _, _, cx| {
                             view.preview_visible = !view.preview_visible;
+                            super::panels::remember_preview_shown(view.preview_visible, cx);
                             cx.notify();
                         }))
                         .child(

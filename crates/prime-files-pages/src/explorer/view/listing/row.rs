@@ -226,7 +226,7 @@ pub fn render(
                                 this.open_preview(item_for_preview.path.clone(), window, cx);
                             }
                             if mouse.up.click_count >= 2 {
-                                this.activate_entry(item_for_activate.clone(), window, cx);
+                                this.double_click_entry(item_for_activate.clone(), modifiers.alt, window, cx);
                             }
                             cx.notify();
                         }

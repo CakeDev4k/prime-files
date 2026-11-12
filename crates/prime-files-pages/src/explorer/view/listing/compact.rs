@@ -191,7 +191,7 @@ fn render_item(
                     this.open_preview(preview_item.path.clone(), window, cx);
                 }
                 if event.click_count >= 2 {
-                    this.activate_entry(activation_item.clone(), window, cx);
+                    this.double_click_entry(activation_item.clone(), modifiers.alt, window, cx);
                 }
                 cx.notify();
             }),

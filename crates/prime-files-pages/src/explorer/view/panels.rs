@@ -147,18 +147,47 @@ pub(crate) fn load_sizes() {
             return;
         };
         let numbers: Vec<f32> = text.split_whitespace().filter_map(|word| word.parse().ok()).collect();
-        let [sidebar_column, sidebar_band, preview_column, preview_band] = numbers[..] else {
-            return;
+        // A fifth number, since 11/11/2026, says whether the preview was
+        // open; files written before it have four and keep it open.
+        let (sizes, preview) = match numbers[..] {
+            [a, b, c, d] => ([a, b, c, d], None),
+            [a, b, c, d, shown] => ([a, b, c, d], Some(shown != 0.0)),
+            _ => return,
         };
+        let [sidebar_column, sidebar_band, preview_column, preview_band] = sizes;
         let mut arrangement = ARRANGEMENT.get();
         arrangement.sizes = [[sidebar_column, sidebar_band], [preview_column, preview_band]];
         ARRANGEMENT.set(arrangement);
+        if let Some(shown) = preview {
+            PREVIEW_SHOWN.set(shown);
+        }
     });
+}
+
+thread_local! {
+    // Whether a new tab opens with the preview: the last one opened or
+    // closed by hand, kept across runs (issue #66, which found it open
+    // again after every restart).
+    static PREVIEW_SHOWN: Cell<bool> = const { Cell::new(true) };
+}
+
+/// Whether a new tab opens with its preview.
+pub(crate) fn preview_shown() -> bool {
+    PREVIEW_SHOWN.get()
+}
+
+/// Remembers the preview opened or closed by hand, for new tabs and the
+/// next run.
+pub(crate) fn remember_preview_shown(shown: bool, cx: &mut App) {
+    if PREVIEW_SHOWN.replace(shown) != shown {
+        save_sizes(cx);
+    }
 }
 
 fn save_sizes(cx: &mut App) {
     let [[sidebar_column, sidebar_band], [preview_column, preview_band]] = ARRANGEMENT.get().sizes;
-    let text = format!("{sidebar_column} {sidebar_band} {preview_column} {preview_band}");
+    let preview = u8::from(PREVIEW_SHOWN.get());
+    let text = format!("{sidebar_column} {sidebar_band} {preview_column} {preview_band} {preview}");
     cx.background_spawn(async move {
         let path = sizes_file();
         let written = path.parent().map_or(Ok(()), std::fs::create_dir_all).and_then(|()| {
@@ -373,10 +402,13 @@ impl ExplorerPane {
         }
     }
 
-    fn set_panel_visible(&mut self, panel: Panel, visible: bool) {
+    fn set_panel_visible(&mut self, panel: Panel, visible: bool, cx: &mut App) {
         match panel {
             Panel::Sidebar => self.sidebar_visible = visible,
-            Panel::Preview => self.preview_visible = visible,
+            Panel::Preview => {
+                self.preview_visible = visible;
+                remember_preview_shown(visible, cx);
+            }
         }
     }
 
@@ -448,7 +480,7 @@ impl ExplorerPane {
             (Gesture::Resize { start_size, .. }, Some(panel)) if drag.collapsing => {
                 // Hidden at the size it had, which it opens at again.
                 set_size(panel, start_size);
-                self.set_panel_visible(panel, false);
+                self.set_panel_visible(panel, false, cx);
             }
             (Gesture::Move, Some(panel)) => {
                 let target = dock::nearest_side(bounds, drag.pointer);
@@ -484,7 +516,7 @@ impl ExplorerPane {
                         }
                         let (min, max) = range(panel);
                         set_size(panel, depth.clamp(min, max));
-                        self.set_panel_visible(panel, true);
+                        self.set_panel_visible(panel, true, cx);
                         cx.refresh_windows();
                     }
                     Opening::Terminal => cx.emit(PaneEvent::TerminalRequested {
@@ -653,7 +685,7 @@ pub(crate) fn render(
                 cx.stop_propagation();
                 match claimant {
                     Some(panel) if event.click_count >= 2 => {
-                        this.set_panel_visible(panel, true);
+                        this.set_panel_visible(panel, true, cx);
                         this.dock_drag = None;
                     }
                     _ => this.start_edge_pull(edge, event.position),

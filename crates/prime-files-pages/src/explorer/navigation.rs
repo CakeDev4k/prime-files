@@ -67,6 +67,11 @@ pub(crate) fn parent_location(path: &str) -> Option<String> {
     if let Some(parent) = super::network::parent_location(path) {
         return Some(parent);
     }
+    // A phone's folders have no path to take apart: their parent is the one
+    // the Shell gave when the folder was read.
+    if super::device::is_device(path) {
+        return Some(super::device::parent(path));
+    }
     let bytes = path.trim_end_matches(['\\', '/']).as_bytes();
     if bytes.len() == 2 && bytes[0].is_ascii_alphabetic() && bytes[1] == b':' {
         return Some(super::places::THIS_PC.to_string());
@@ -81,6 +86,10 @@ fn read_folder(path: &str) -> Listing {
     }
     if super::recycle_bin::is_recycle_bin(path) {
         return super::recycle_bin::read_entries();
+    }
+    // A phone or camera: the Shell lists it.
+    if super::device::is_device(path) {
+        return super::device::read_entries(path);
     }
     // A tag's items, wherever each is.
     if let Some(id) = super::tags::tag_of_location(path) {
@@ -466,6 +475,16 @@ impl ExplorerPane {
         }
     }
 
+    /// A double click on an item: opens it, or with Alt shows its
+    /// Properties, as Explorer does (issue #65; Alt+Enter is #52).
+    pub(crate) fn double_click_entry(&mut self, item: FileEntryDto, alt: bool, window: &mut Window, cx: &mut Context<Self>) {
+        if alt {
+            self.show_properties_of(vec![std::path::PathBuf::from(&item.path)], cx);
+        } else {
+            self.activate_entry(item, window, cx);
+        }
+    }
+
     pub(crate) fn activate_entry(
         &mut self,
         item: FileEntryDto,
@@ -531,6 +550,12 @@ impl ExplorerPane {
         // open windows on the machine running them.
         #[cfg(test)]
         OPENED_WITH_DEFAULT_APP.with(|opened| opened.borrow_mut().push(path.to_owned()));
+        // A file on a phone has no path ShellExecute can take as text.
+        #[cfg(not(test))]
+        if super::device::is_device(path) {
+            super::device::open(path);
+            return;
+        }
         // The file's default verb, through the Shell, as the Explorer's
         // double click: the program the user picked for the type. Until
         // 06/11/2026 this ran `explorer.exe <file>`, and for a .zip the

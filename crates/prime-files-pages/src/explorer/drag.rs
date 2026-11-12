@@ -305,6 +305,25 @@ impl ExplorerPane {
     /// rules: Shift moves, Ctrl copies, and otherwise a drop on the same drive
     /// moves and one from another drive copies.
     pub(crate) fn drop_paths(&mut self, paths: &[PathBuf], dest: PathBuf, window: &mut Window, cx: &mut Context<Self>) {
+        // Onto a phone: the Shell copies, with its own progress window, as a
+        // drop on the phone in the Explorer does.
+        let address = dest.to_string_lossy().into_owned();
+        if super::device::is_device(&address) {
+            let sources: Vec<String> = paths.iter().map(|path| path.to_string_lossy().into_owned()).collect();
+            let owner = crate::ipc::window_hwnd(window);
+            self.run_device_op(move |owner| super::device::transfer(sources, address, false, owner), owner, cx);
+            return;
+        }
+        // Files another program put in the temp folder for this drag (WinRAR,
+        // 7-Zip) are its own, and it deletes them once the drag returns,
+        // before the copy in the background reaches them: "1 of 1 failed"
+        // (issue #64). They are held here first, while the program waits.
+        // Not in tests, whose files all live in the temp folder.
+        #[cfg(not(test))]
+        let staged = hold_foreign_temp_files(paths);
+        #[cfg(test)]
+        let staged: Option<Vec<PathBuf>> = None;
+        let paths = staged.as_deref().unwrap_or(paths);
         let DropPlan { mode, sources, into_itself } = drop_plan(paths, &dest, window.modifiers());
         if into_itself {
             self.set_status(StatusLevel::Warning, t!("Uma pasta não pode ir para dentro dela mesma."));
@@ -319,6 +338,98 @@ impl ExplorerPane {
             self.execute_paste_plan(cx);
         }
     }
+}
+
+/// Where dropped files from another program's temp folder are held.
+const HELD_FOLDER: &str = "PrimeFiles-Dropped";
+
+/// Held drops older than this are gone: the transfer that took them is over.
+const HELD_KEPT: std::time::Duration = std::time::Duration::from_secs(6 * 60 * 60);
+
+/// When some of `paths` lie in the temp folder and not in one of Prime
+/// Files' own, holds them all in a folder of Prime Files' own: hard links,
+/// which outlive the program deleting its copy and take no time or room
+/// (the temp folder is one volume), or a copy where a link is refused. The
+/// held files are the same volume as the temp folder, so the drop moves
+/// them on that drive like any same-drive drop, and a copy elsewhere.
+/// `None` leaves the drop as it was, and so does a hold that fails.
+fn hold_foreign_temp_files(paths: &[PathBuf]) -> Option<Vec<PathBuf>> {
+    let temp = std::env::temp_dir();
+    let held_root = temp.join(HELD_FOLDER);
+    let foreign = |path: &Path| {
+        starts_with_ignoring_case(path, &temp)
+            && !starts_with_ignoring_case(path, &held_root)
+            && !starts_with_ignoring_case(path, &temp.join("PrimeFiles-ArchiveDrag"))
+    };
+    if !paths.iter().any(|path| foreign(path)) {
+        return None;
+    }
+    sweep_held(&held_root);
+    let stamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|since| since.as_nanos())
+        .unwrap_or_default();
+    let folder = held_root.join(format!("{stamp:x}"));
+    let mut held = Vec::with_capacity(paths.len());
+    for path in paths {
+        if !foreign(path) {
+            held.push(path.clone());
+            continue;
+        }
+        let Some(name) = path.file_name() else {
+            held.push(path.clone());
+            continue;
+        };
+        let target = folder.join(name);
+        if let Err(error) = std::fs::create_dir_all(&folder).and_then(|()| hold(path, &target)) {
+            tracing::warn!("could not hold the dropped {}: {error}", path.display());
+            return None;
+        }
+        held.push(target);
+    }
+    Some(held)
+}
+
+// Links `source` (a file, or a folder walked whole) at `target`, copying what
+// cannot be linked.
+fn hold(source: &Path, target: &Path) -> std::io::Result<()> {
+    if std::fs::symlink_metadata(source)?.is_dir() {
+        std::fs::create_dir_all(target)?;
+        for entry in std::fs::read_dir(source)? {
+            let entry = entry?;
+            hold(&entry.path(), &target.join(entry.file_name()))?;
+        }
+        return Ok(());
+    }
+    match std::fs::hard_link(source, target) {
+        Ok(()) => Ok(()),
+        Err(_) => std::fs::copy(source, target).map(|_| ()),
+    }
+}
+
+// Removes held drops from earlier transfers.
+fn sweep_held(held_root: &Path) {
+    let Ok(entries) = std::fs::read_dir(held_root) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let old = entry
+            .metadata()
+            .and_then(|metadata| metadata.modified())
+            .ok()
+            .and_then(|modified| modified.elapsed().ok())
+            .is_some_and(|age| age > HELD_KEPT);
+        if old && let Err(error) = std::fs::remove_dir_all(entry.path()) {
+            tracing::debug!("could not clear the held drop {}: {error}", entry.path().display());
+        }
+    }
+}
+
+fn starts_with_ignoring_case(path: &Path, prefix: &Path) -> bool {
+    let path = path.to_string_lossy().to_lowercase();
+    let prefix = prefix.to_string_lossy().to_lowercase();
+    let prefix = prefix.trim_end_matches(['\\', '/']);
+    path.strip_prefix(prefix).is_some_and(|rest| rest.is_empty() || rest.starts_with(['\\', '/']))
 }
 
 /// What a drop of `paths` on `dest` does, by Explorer's rules.
@@ -610,6 +721,30 @@ mod platform {
 mod tests {
     use super::same_volume;
     use std::path::Path;
+
+    // Issue #64: what an archiver extracted to the temp folder for a drag
+    // is still there after the archiver deletes its own copy.
+    #[test]
+    fn files_from_another_programs_temp_folder_outlive_it() {
+        let source = tempfile::Builder::new().prefix("Rar$DRa").tempdir_in(std::env::temp_dir()).unwrap();
+        let file = source.path().join("leia.txt");
+        std::fs::write(&file, "conteúdo").unwrap();
+        std::fs::create_dir(source.path().join("pasta")).unwrap();
+        std::fs::write(source.path().join("pasta").join("b.txt"), "b").unwrap();
+        let dropped = vec![file.clone(), source.path().join("pasta")];
+
+        let held = super::hold_foreign_temp_files(&dropped).expect("temp files are held");
+        source.close().unwrap();
+
+        assert_eq!(held[0].file_name(), file.file_name());
+        assert_eq!(std::fs::read_to_string(&held[0]).unwrap(), "conteúdo");
+        assert_eq!(std::fs::read_to_string(held[1].join("b.txt")).unwrap(), "b");
+        assert!(super::hold_foreign_temp_files(&held).is_none(), "held files are not held again");
+        assert!(super::hold_foreign_temp_files(&[Path::new(r"C:\Windows\win.ini").to_path_buf()]).is_none());
+        if let Some(folder) = held[0].parent() {
+            std::fs::remove_dir_all(folder).unwrap();
+        }
+    }
 
     #[test]
     fn volumes_compare_by_drive_without_case() {

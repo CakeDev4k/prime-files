@@ -5978,6 +5978,17 @@ pub(super) static EXTRA: &[(&str, [&str; 6])] = &[
         ],
     ),
     (
+        "Não foi possível fixar no Iniciar: {error}",
+        [
+            "Impossible d’épingler au menu Démarrer : {error}",
+            "Konnte nicht an Start angeheftet werden: {error}",
+            "Impossibile aggiungere a Start: {error}",
+            "Не удалось закрепить на начальном экране: {error}",
+            "スタートにピン留めできませんでした: {error}",
+            "无法固定到“开始”：{error}",
+        ],
+    ),
+    (
         "Padrão",
         [
             "Par défaut",
@@ -6239,6 +6250,32 @@ pub(super) static EXTRA: &[(&str, [&str; 6])] = &[
             "Корзина не ответила",
             "ごみ箱が応答しませんでした",
             "回收站没有响应",
+        ],
+    ),
+    (
+        "Aparelho",
+        ["Appareil", "Gerät", "Dispositivo", "Устройство", "デバイス", "设备"],
+    ),
+    (
+        "O aparelho recusou: {error}",
+        [
+            "L'appareil a refusé : {error}",
+            "Das Gerät hat abgelehnt: {error}",
+            "Il dispositivo ha rifiutato: {error}",
+            "Устройство отказало: {error}",
+            "デバイスが拒否しました: {error}",
+            "设备拒绝了：{error}",
+        ],
+    ),
+    (
+        "No aparelho, Recortar copia: apague depois de colar.",
+        [
+            "Sur un appareil, Couper copie : supprimez après avoir collé.",
+            "Auf einem Gerät kopiert Ausschneiden: nach dem Einfügen löschen.",
+            "Su un dispositivo, Taglia copia: elimina dopo aver incollato.",
+            "На устройстве «Вырезать» копирует: удалите после вставки.",
+            "デバイスでは切り取りはコピーになります。貼り付け後に削除してください。",
+            "在设备上，剪切会复制：粘贴后再删除。",
         ],
     ),
     (

@@ -278,6 +278,11 @@ impl ExplorerPage {
         if let Some(hwnd) = crate::ipc::window_hwnd(window) {
             super::network::set_owner(hwnd);
         }
+        // Before the first tab is built: it opens with the preview the last
+        // run left (issue #66). Not in tests, which must not read this
+        // machine's file.
+        #[cfg(not(test))]
+        super::view::panels::load_sizes();
         let build_search_service = search_service.clone();
         let (group, first_tab) = PaneGroup::new(
             Box::new(move |window, cx| {
@@ -320,6 +325,14 @@ impl ExplorerPage {
         // through a background task (see `schedule_save`).
         if restore_tabs && let Some(snapshot) = page.load_session() {
             page.restore_session(snapshot, &first_tab, window, cx);
+        } else {
+            // Otherwise the first tab would open in the process's working
+            // folder: the install folder from the shortcut, System32 from
+            // Win+E (issue #63). Explorer opens This PC. A folder given on
+            // the command line is opened over this by `open_initial_path`.
+            // Not in tests, which build panes in their own folders.
+            #[cfg(not(test))]
+            page.configure_tab(&first_tab, Some(super::places::THIS_PC.to_string()), true, cx);
         }
         page
     }

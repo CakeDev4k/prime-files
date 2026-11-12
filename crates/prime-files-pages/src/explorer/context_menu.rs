@@ -201,9 +201,15 @@ pub(crate) fn menu_entry_info(id: &str) -> Option<(&'static str, &'static str)> 
 /// navigates here instead of opening another window.
 fn intercepted(target_is_one_folder: bool) -> &'static [&'static str] {
     if target_is_one_folder {
-        &["copy", "cut", "delete", "rename", "open", "explore", "opencontaining"]
+        &[
+            "copy", "cut", "delete", "rename", "open", "explore", "opencontaining",
+            "pintostartscreen", "unpinfromstart", "unpinfromstartscreen",
+        ]
     } else {
-        &["copy", "cut", "delete", "rename", "opencontaining"]
+        &[
+            "copy", "cut", "delete", "rename", "opencontaining",
+            "pintostartscreen", "unpinfromstart", "unpinfromstartscreen",
+        ]
     }
 }
 
@@ -1385,6 +1391,7 @@ impl ExplorerPane {
                     }
                 }
                 "opencontaining" => self.open_item_location(window, cx),
+                pin if crate::shell_menu::is_start_pin_verb(pin) => self.run_start_pin(pin.to_string(), cx),
                 _ => {}
             },
             // The Shell may have created, moved or deleted something ("New",
@@ -1397,6 +1404,26 @@ impl ExplorerPane {
             }
         }
         cx.notify();
+    }
+
+    // Pin to (or unpin from) Start, run inside explorer.exe, the only
+    // process Windows lets pin (issue #55).
+    fn run_start_pin(&mut self, verb: String, cx: &mut Context<Self>) {
+        let Some(path) = self.selected_paths().into_iter().next() else {
+            return;
+        };
+        let run = cx.background_spawn(async move { crate::shell_menu::run_verb_in_explorer(&path, &verb) });
+        cx.spawn(async move |this, cx| {
+            if let Err(error) = run.await {
+                tracing::warn!("could not pin to Start: {error}");
+                this.update(cx, |pane, cx| {
+                    pane.set_status(StatusLevel::Error, tf!("Não foi possível fixar no Iniciar: {error}", error = error));
+                    cx.notify();
+                })
+                .ok();
+            }
+        })
+        .detach();
     }
 
     // "Open file location" run by the Shell starts the Explorer's own reveal,

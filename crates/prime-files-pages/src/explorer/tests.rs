@@ -3335,6 +3335,7 @@ async fn every_sidebar_style_draws_and_the_tree_follows_the_folder(cx: &mut Test
         favorites: Vec::new(),
         this_pc: None,
         drives: vec![drive.clone()],
+        devices: Vec::new(),
         other: Vec::new(),
         user_folders: vec![folder(&dir.path().join("Projetos"))],
     };
@@ -3373,6 +3374,20 @@ async fn every_sidebar_style_draws_and_the_tree_follows_the_folder(cx: &mut Test
     }
     super::view::panels::set_sides(DockSide::Left, DockSide::Right);
     super::view::panels::set_icon_strip(false);
+    // Following is off in Explorer's style since issue #59, as in Windows
+    // 11; turned on, the tree walks down to the folder.
+    super::places::set_look(prime_files_core::config::SidebarLook {
+        follow_folder: true,
+        ..SidebarStyle::Explorer.look()
+    });
+    for _ in 0..4 {
+        window
+            .update(cx, |pane, window, cx| {
+                super::view::sidebar::render(pane, window, cx);
+            })
+            .unwrap();
+        cx.run_until_parked();
+    }
     super::places::set_look(SidebarStyle::Explorer.look());
 
     let projetos = dir.path().join("Projetos").to_string_lossy().into_owned();

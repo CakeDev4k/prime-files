@@ -289,14 +289,15 @@ fn render_grid_item(
     // A folder drawn as a picture inside it, with that option on; Windows'
     // own folder until the picture is known, or when it has none.
     let cover = (is_dir && page.folder_previews).then(|| page.folder_cover(&item.path, cx)).flatten();
-    let thumbnail = match (waveform_wanted, &waveform, cover) {
-        (_, Some(_), _) => None,
-        (true, None, _) => page.thumbnails.icon(&item.path, false, tile.thumbnail, cx),
-        (false, None, Some(cover)) => page
-            .thumbnails
-            .get(&cover, tile.thumbnail, cx)
-            .or_else(|| page.thumbnails.get(&item.path, tile.thumbnail, cx)),
-        (false, None, None) => page.thumbnails.get(&item.path, tile.thumbnail, cx),
+    let cover_image = match (waveform_wanted, &waveform, cover) {
+        (false, None, Some(cover)) => page.thumbnails.get(&cover, tile.thumbnail, cx),
+        _ => None,
+    };
+    let thumbnail = match (waveform_wanted, &waveform) {
+        _ if cover_image.is_some() => None,
+        (_, Some(_)) => None,
+        (true, None) => page.thumbnails.icon(&item.path, false, tile.thumbnail, cx),
+        (false, None) => page.thumbnails.get(&item.path, tile.thumbnail, cx),
     };
     let waveform_shown = waveform.is_some();
     let activation_item = item.clone();
@@ -374,7 +375,7 @@ fn render_grid_item(
                     this.open_preview(preview_item.path.clone(), window, cx);
                 }
                 if event.click_count >= 2 {
-                    this.activate_entry(activation_item.clone(), window, cx);
+                    this.double_click_entry(activation_item.clone(), modifiers.alt, window, cx);
                 }
                 cx.notify();
             }),
@@ -389,18 +390,19 @@ fn render_grid_item(
                 .when(crate::explorer::file_ops::is_cut(&item.path, cx), |this| {
                     this.opacity(super::row::CUT_OPACITY)
                 })
-                .child(match (waveform, thumbnail) {
-                    (Some(bars), _) => crate::explorer::waveforms::canvas(
+                .child(match (cover_image, waveform, thumbnail) {
+                    (Some(image), _, _) => folder_with_cover(image, tile.icon),
+                    (None, Some(bars), _) => crate::explorer::waveforms::canvas(
                         bars,
                         tile.icon,
                         selected,
                         crate::explorer::hover_audio::progress_of(&item.path),
                     ),
-                    (None, Some(image)) => img(ImageSource::Render(image))
+                    (None, None, Some(image)) => img(ImageSource::Render(image))
                         .size_full()
                         .object_fit(ObjectFit::Contain)
                         .into_any_element(),
-                    (None, None) => Icon::new(icon_name)
+                    (None, None, None) => Icon::new(icon_name)
                         .size(px((tile.icon * 0.6).max(24.0)))
                         .text_color(rgb(if is_dir {
                             theme::accent()
@@ -763,4 +765,47 @@ mod tests {
             kept as f64 / count.max(1) as f64
         );
     }
+}
+
+/// A folder drawn with a picture inside it at full size, kept a folder by
+/// its tab and a frame in the folder's colour: the bare picture could not be
+/// told from a picture file beside it (issue #58).
+fn folder_with_cover(image: std::sync::Arc<RenderImage>, icon: f32) -> AnyElement {
+    // Windows 11's folder yellow, the back and the front.
+    const BACK: u32 = 0xE8B84A;
+    const FRONT: u32 = 0xF8D775;
+    let tab_height = (icon * 0.1).max(4.0);
+    let border = (icon * 0.045).max(2.0);
+    let radius = (icon * 0.05).max(2.0);
+    div()
+        .size_full()
+        .flex()
+        .flex_col()
+        .child(
+            div()
+                .w(relative(0.42))
+                .h(px(tab_height))
+                .flex_shrink_0()
+                .rounded_tl(px(radius))
+                .rounded_tr(px(radius))
+                .bg(rgb(BACK)),
+        )
+        .child(
+            div()
+                .flex_1()
+                .min_h(px(0.0))
+                .w_full()
+                .p(px(border))
+                .rounded_br(px(radius))
+                .rounded_bl(px(radius))
+                .rounded_tr(px(radius))
+                .bg(rgb(FRONT))
+                .child(
+                    img(ImageSource::Render(image))
+                        .size_full()
+                        .rounded(px((radius - border * 0.5).max(1.0)))
+                        .object_fit(ObjectFit::Cover),
+                ),
+        )
+        .into_any_element()
 }

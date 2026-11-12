@@ -17,6 +17,7 @@ mod folder_views;
 mod grouping;
 mod info_tip;
 mod folder_covers;
+pub(crate) mod device;
 pub(crate) mod hover_audio;
 mod list_setup;
 mod marquee;

@@ -544,7 +544,10 @@ impl SidebarStyle {
             Self::Explorer => SidebarLook {
                 sections: vec![QuickAccess, Favorites, ThisPc, Network, Tags],
                 tree: true,
-                follow_folder: true,
+                // Windows 11's "Expand to open folder" is off by default:
+                // the tree and the listing go their own ways (issue #59).
+                // `follow_folder = true` turns it on.
+                follow_folder: false,
                 headers: false,
                 drive_usage: DriveUsage::Beside,
                 ..base

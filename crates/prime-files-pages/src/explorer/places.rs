@@ -37,6 +37,11 @@ pub struct Places {
     /// This PC itself, for its localized name.
     pub this_pc: Option<Place>,
     pub drives: Vec<Place>,
+    /// What This PC holds that is no folder on disk: phones and cameras
+    /// plugged in by USB (MTP), media servers. Until 10/11/2026 they were
+    /// left out, and a phone plugged in showed nowhere (a report on X).
+    /// They open here, read through the Shell (`device.rs`).
+    pub devices: Vec<Place>,
     /// Network and Linux, when present.
     pub other: Vec<Place>,
     /// Home, Desktop, Documents, Downloads, Pictures, Music and Videos,
@@ -156,15 +161,30 @@ pub const THIS_PC: &str = "::{20D04FE0-3AEA-1069-A2D8-08002B30309D}";
 /// What This PC is called when the Shell's own name has not been read yet.
 pub const THIS_PC_NAME: &str = prime_files_core::k!("Este Computador");
 
-/// This PC's contents for the listing: the folders and drives it holds that
-/// are folders on disk, each a row that opens here. Portable devices and
-/// other virtual items have no folder and are left out. Slow like `load`
-/// (the Shell may touch network drives); called from the listing thread.
+/// Whether `address` is something inside This PC that is no folder on disk:
+/// a phone, a camera, a media server. Its address is the Shell's parsing
+/// name, This PC's CLSID and then the device's own (`\\?\usb#vid_…`).
+pub fn is_device(address: &str) -> bool {
+    address
+        .get(..THIS_PC.len())
+        .is_some_and(|start| start.eq_ignore_ascii_case(THIS_PC))
+        && address[THIS_PC.len()..].starts_with('\\')
+        && address.len() > THIS_PC.len() + 1
+}
+
+/// This PC's contents for the listing: its drives and folders, and its
+/// devices (phones), whose rows carry the Shell's parsing name for a path
+/// (`device.rs`). Each opens here. Slow like `load` (the
+/// Shell may touch network drives); called from the listing thread.
 pub fn this_pc_entries() -> Vec<prime_files_services::fs::listing::FileEntryDto> {
     platform::this_pc()
         .into_iter()
         .filter_map(|place| {
-            let path = place.path?;
+            let path = match place.path {
+                Some(path) => path,
+                None if is_device(&place.parsing_name) => place.parsing_name,
+                None => return None,
+            };
             Some(prime_files_services::fs::listing::FileEntryDto {
                 name: place.name,
                 path,
@@ -440,8 +460,8 @@ impl ExplorerPane {
             None if super::recycle_bin::is_recycle_bin(&place.parsing_name) => {
                 self.change_dir(super::recycle_bin::RECYCLE_BIN.to_string(), window, cx)
             }
-            // A server or a share found on the network.
-            None if super::network::is_unc(&place.parsing_name) => {
+            // A server or a share found on the network, or a phone.
+            None if super::network::is_unc(&place.parsing_name) || is_device(&place.parsing_name) => {
                 self.change_dir(place.parsing_name.clone(), window, cx)
             }
             None => open_in_explorer(&place.parsing_name),
@@ -467,6 +487,7 @@ impl ExplorerPane {
         (name.eq_ignore_ascii_case(THIS_PC)
             || name.eq_ignore_ascii_case(super::network::NETWORK)
             || super::network::is_unc(name)
+            || is_device(name)
             || super::recycle_bin::is_recycle_bin(name))
         .then(|| if super::recycle_bin::is_recycle_bin(name) { super::recycle_bin::RECYCLE_BIN.to_string() } else { name.to_string() })
     }
@@ -597,6 +618,9 @@ impl ExplorerPane {
                 .map(|place| place.name.clone());
             return Some(shell_name.unwrap_or_else(|| prime_files_core::i18n::tr(super::recycle_bin::RECYCLE_BIN_NAME).to_string()));
         }
+        if is_device(&self.cwd) {
+            return Some(super::device::name(&self.cwd).unwrap_or_else(|| prime_files_core::t!("Aparelho").to_string()));
+        }
         if !self.cwd.eq_ignore_ascii_case(THIS_PC) {
             return None;
         }
@@ -638,10 +662,16 @@ mod platform {
                 place.pinned && place.path.as_deref().is_some_and(|path| std::path::Path::new(path).is_file())
             });
         // This PC also lists the user folders and portable devices; the
-        // drives are the ones whose path is a root.
-        let drives = children(THIS_PC)
+        // drives are the ones whose path is a root, the devices the ones
+        // with no path at all.
+        let in_this_pc: Vec<Place> = children(THIS_PC).into_iter().filter_map(|item| place(&item)).collect();
+        let devices = in_this_pc
+            .iter()
+            .filter(|place| place.path.is_none() && super::is_device(&place.parsing_name))
+            .cloned()
+            .collect();
+        let drives = in_this_pc
             .into_iter()
-            .filter_map(|item| place(&item))
             .filter(|place| place.path.as_deref().is_some_and(|path| path.ends_with(":\\")))
             .collect();
         let mut other = Vec::new();
@@ -657,6 +687,7 @@ mod platform {
             favorites,
             this_pc: item(THIS_PC).and_then(|item| place(&item)),
             drives,
+            devices,
             other,
             user_folders: user_folders(),
         }
@@ -781,6 +812,22 @@ mod platform {
 
 #[cfg(test)]
 mod tests {
+    use super::{THIS_PC, is_device};
+
+    // A phone over USB is named by This PC's CLSID and its device path; This
+    // PC itself and the things that are folders are no devices.
+    #[test]
+    fn a_phone_in_this_pc_is_a_device() {
+        let phone = format!(r"{THIS_PC}\\?\usb#vid_04e8&pid_6860#r58m#{{6ac27878-a6fa-4155-ba85-f98f491d4f33}}");
+        assert!(is_device(&phone));
+        assert!(is_device(&phone.to_lowercase()));
+        assert!(!is_device(THIS_PC));
+        assert!(!is_device(&format!(r"{THIS_PC}\")));
+        assert!(!is_device(r"C:\Users"));
+        assert!(!is_device(r"\\nas\edicao"));
+        assert!(!is_device("::{645FF040-5081-101B-9F08-00AA002F954E}"));
+    }
+
     // Reads the real machine's places; run by hand with `--ignored --nocapture`.
     #[test]
     #[ignore]

@@ -217,17 +217,22 @@ impl ExplorerPane {
                     }
                     cx.background_executor().timer(RETRY).await;
                 }
-                // What the read cost sets the pace of the next one.
-                let started = Instant::now();
+                // What the read cost sets the pace of the next one, as timed
+                // by the read's own thread. Until 12/11/2026 it was timed
+                // here, by looking every 25 ms whether the listing was in: a
+                // busy UI thread made a 1 ms read look like a second, and the
+                // next refresh waited the 10 s most (`docs/PERFORMANCE.md`,
+                // pass 17).
                 loop {
-                    cx.background_executor().timer(Duration::from_millis(25)).await;
-                    match this.read_with(cx, |pane, _| pane.listing_pending) {
-                        Ok(true) => {}
-                        Ok(false) => break,
+                    match this.read_with(cx, |pane, _| (!pane.listing_pending).then_some(pane.last_read_cost)) {
+                        Ok(Some(took)) => {
+                            cost = took;
+                            break;
+                        }
+                        Ok(None) => cx.background_executor().timer(Duration::from_millis(25)).await,
                         Err(_) => return,
                     }
                 }
-                cost = started.elapsed();
                 last = Some(Instant::now());
             }
         });
@@ -536,6 +541,83 @@ mod tests {
     #[gpui::test]
     async fn an_own_copy_reads_the_folder_once(cx: &mut TestAppContext) {
         assert_eq!(reloads_during_an_own_copy(cx, true), 1);
+    }
+
+    // Another program writes 120 files over ~6 s; how many refreshes the
+    // watch does, and how many of the files are on screen 3 s after the
+    // last one.
+    fn another_program_writes(cx: &mut TestAppContext, in_front: bool) -> (u64, usize) {
+        cx.executor().allow_parking();
+        let dir = tempfile::tempdir().unwrap();
+        let window = watched_pane(cx, dir.path());
+        set_in_front(&window, cx, in_front);
+        let before = window.read_with(cx, |pane, _| pane.listing_generation).unwrap();
+        let folder = dir.path().to_path_buf();
+        let writer = std::thread::spawn(move || {
+            for index in 0..120 {
+                std::fs::write(folder.join(format!("baixado-{index:03}.txt")), "x").unwrap();
+                std::thread::sleep(std::time::Duration::from_millis(50));
+            }
+        });
+        while !writer.is_finished() {
+            pump(cx, std::time::Duration::from_millis(50));
+        }
+        writer.join().unwrap();
+        pump(cx, std::time::Duration::from_secs(3));
+        let reloads = window.read_with(cx, |pane, _| pane.listing_generation).unwrap() - before;
+        let shown = window.read_with(cx, |pane, _| pane.filtered_entries.len()).unwrap();
+        eprintln!("another program, 120 files over ~6 s (in front: {in_front}): {reloads} reloads, {shown} shown");
+        (reloads, shown)
+    }
+
+    // The pace follows what the read cost on its own thread. Until 12/11/2026
+    // it was timed on the UI thread, in 25 ms steps, until the listing was
+    // in: a busy UI thread made a 1 ms read look like a second, and the next
+    // refresh waited the 10 s most — here, 37 of the 120 files on screen 3 s
+    // after the last was written (`docs/PERFORMANCE.md`, pass 17).
+    #[gpui::test]
+    async fn the_watch_keeps_up_with_another_program_writing(cx: &mut TestAppContext) {
+        assert_eq!(another_program_writes(cx, true).1, 120);
+    }
+
+    // The cost is what the read took on its thread, not how long the UI
+    // thread took to take the answer in: here it is busy 300 ms first.
+    #[gpui::test]
+    async fn a_read_is_timed_by_its_own_thread(cx: &mut TestAppContext) {
+        cx.executor().allow_parking();
+        let dir = tempfile::tempdir().unwrap();
+        for index in 0..50 {
+            std::fs::write(dir.path().join(format!("arquivo-{index:02}.txt")), "x").unwrap();
+        }
+        let window = pane(cx);
+        window
+            .update(cx, |pane, _, cx| {
+                pane.cwd = dir.path().to_string_lossy().into_owned();
+                // The background path, as on a slow drive.
+                pane.listing_wait = std::time::Duration::ZERO;
+                pane.reload(cx);
+                std::thread::sleep(std::time::Duration::from_millis(300));
+            })
+            .unwrap();
+        for _ in 0..300 {
+            cx.run_until_parked();
+            if !window.read_with(cx, |pane, _| pane.listing_pending).unwrap() {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        let cost = window.read_with(cx, |pane, _| pane.last_read_cost).unwrap();
+        assert!(!cost.is_zero(), "the read's cost never reached the pane");
+        assert!(cost < std::time::Duration::from_millis(300), "the busy UI thread was counted: {cost:?}");
+    }
+
+    // For the record: the refreshes in front and behind another window.
+    #[gpui::test]
+    #[ignore = "a measurement, not a check"]
+    async fn measure_reloads_in_front_and_behind(cx: &mut TestAppContext) {
+        for in_front in [true, false, true, false] {
+            another_program_writes(cx, in_front);
+        }
     }
 
     // Every batch goes through `run_fs_op_with`: it holds the watch quiet

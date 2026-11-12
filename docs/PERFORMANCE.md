@@ -1163,3 +1163,43 @@ devolver quanto levou.
 **Ficou de fora.**
 - Janela minimizada é tratada como atrás, não parada.
 - Não visto no app: só testes.
+
+### 17. O ritmo do vigia pelo custo da leitura, não da espera (12/11/2026)
+
+**Origem.** Achado da passada 16. O custo que dá o ritmo (`paced`, passada
+15) era cronometrado na thread de interface: o vigia olhava de 25 em 25 ms
+se `listing_pending` tinha caído. Interface ocupada fazia uma leitura de
+1 ms parecer cara, e o próximo refresh esperava o teto de 10 s.
+
+**Medido** (`another_program_writes`: outro programa grava 120 arquivos em
+~6 s na pasta aberta; conta refreshes e quantos arquivos estão na tela 3 s
+depois do último):
+
+| | Refreshes | Na tela |
+|---|---:|---:|
+| Antes (duas rodadas, na frente) | 2 e 2 | 38 e 42 de 120 |
+| Depois, na frente (cinco rodadas) | 8–9 | 120 |
+| Depois, atrás de outra janela (duas rodadas) | 4 e 4 | 120 |
+
+Nos testes o "antes" é exagerado pelo relógio do teste, que anda mais
+devagar que o real; no app o efeito aparece quando a interface está ocupada
+(miniaturas, prévia, rolagem) no momento em que a leitura chega.
+
+**Mudança.** A thread da leitura (`PendingListing`) cronometra a si mesma e
+devolve `took` no `FolderRead`; `apply_listing` guarda em `last_read_cost`, e
+o vigia usa esse número. O laço de 25 ms ficou só para saber quando a
+leitura terminou. De quebra, o custo agora conta também a parte síncrona da
+leitura (até 30 ms dentro de `reload`), que antes ficava de fora.
+
+**Cobertura.** `the_watch_keeps_up_with_another_program_writing` (reprovava
+no código antigo: 38 e 42 de 120) e `a_read_is_timed_by_its_own_thread` (com a
+interface ocupada 300 ms, o custo fica abaixo de 300 ms e acima de zero;
+mutante sem guardar o custo reprova). A medida da passada 16 agora existe:
+`measure_reloads_in_front_and_behind` (ignorado), 8–9 refreshes na frente
+contra 4 atrás.
+
+**Ficou de fora.**
+- Nenhum teste prova que o vigia usa `last_read_cost` para pastas lentas:
+  um mutante que trocasse o custo por zero passaria (pastas de teste leem em
+  ~1 ms, o piso de qualquer jeito).
+- Não visto no app: só testes.

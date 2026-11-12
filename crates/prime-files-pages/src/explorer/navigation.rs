@@ -39,6 +39,9 @@ struct FolderRead {
     /// On a refresh, whether the file in the preview is gone. Asked here, off
     /// the UI thread, because it is a disk access like the listing itself.
     preview_gone: bool,
+    /// How long the read took on its own thread: what paces the folder
+    /// watch (`folder_watch::refresh_spacing`).
+    took: Duration,
 }
 
 /// What a refresh reads besides the folder itself.
@@ -114,6 +117,7 @@ impl PendingListing {
         let read = {
             let slot = slot.clone();
             move || {
+                let started = std::time::Instant::now();
                 let listing = read_folder(&path);
                 let open_folders = extras
                     .open_folders
@@ -134,6 +138,7 @@ impl PendingListing {
                             listing,
                             open_folders,
                             preview_gone,
+                            took: started.elapsed(),
                         })
                     }
                     Err(error) => tracing::error!("listing slot poisoned: {error}"),
@@ -154,6 +159,7 @@ impl PendingListing {
                         listing: Err(format!("could not start reading: {error}")),
                         open_folders: Vec::new(),
                         preview_gone: false,
+                        took: Duration::ZERO,
                     })
                 }
                 Err(poisoned) => tracing::error!("listing slot poisoned: {poisoned}"),
@@ -262,6 +268,7 @@ impl ExplorerPane {
     }
 
     fn apply_listing(&mut self, read: FolderRead, refresh: bool, cx: &mut Context<Self>) {
+        self.last_read_cost = read.took;
         match read.listing {
             Ok(entries) => {
                 crate::startup::mark_once("first-listing");

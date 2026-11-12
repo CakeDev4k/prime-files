@@ -695,6 +695,39 @@ mod tests {
         assert_eq!(running(cx), 0, "the batch never let the watch go");
     }
 
+    // A folder that takes 500 ms to read is read every 10 s while another
+    // program keeps writing there (20× its cost, at most 10 s), not every
+    // 0.8 s: 1 read in these ~8 s, against 3 with the cost taken for zero.
+    // Until 12/11/2026 no test held this: a watch that took the cost for
+    // zero passed them all, since temp folders read in ~1 ms.
+    #[gpui::test]
+    async fn a_slow_folder_is_read_at_the_pace_of_its_cost(cx: &mut TestAppContext) {
+        cx.executor().allow_parking();
+        let dir = tempfile::tempdir().unwrap();
+        let window = watched_pane(cx, dir.path());
+        crate::explorer::navigation::make_read_slow(&dir.path().to_string_lossy(), std::time::Duration::from_millis(500));
+        // Read in the background, as in the app: waited for on the UI
+        // thread, the slow read would also hold the test's clock.
+        window.update(cx, |pane, _, _| pane.listing_wait = std::time::Duration::ZERO).unwrap();
+        let before = window.read_with(cx, |pane, _| pane.listing_generation).unwrap();
+        let folder = dir.path().to_path_buf();
+        let writer = std::thread::spawn(move || {
+            for index in 0..160 {
+                std::fs::write(folder.join(format!("baixado-{index:03}.txt")), "x").unwrap();
+                std::thread::sleep(std::time::Duration::from_millis(50));
+            }
+        });
+        while !writer.is_finished() {
+            pump(cx, std::time::Duration::from_millis(50));
+        }
+        writer.join().unwrap();
+        let reloads = window.read_with(cx, |pane, _| pane.listing_generation).unwrap() - before;
+        let cost = window.read_with(cx, |pane, _| pane.last_read_cost).unwrap();
+        eprintln!("slow folder, ~8 s of writes: {reloads} reloads, last cost {cost:?}");
+        assert!(cost >= std::time::Duration::from_millis(500), "the slow read was not timed: {cost:?}");
+        assert!(reloads <= 2, "a 500 ms folder was read {reloads} times in ~8 s");
+    }
+
     // Another tab on the folder an operation of ours writes in waits it out
     // too, and reads once at the end; a tab on another folder is not held.
     #[gpui::test]

@@ -21,6 +21,24 @@ pub(crate) const LISTING_WAIT: Duration = Duration::from_millis(30);
 #[cfg(test)]
 pub(crate) const LISTING_WAIT: Duration = Duration::from_secs(10);
 
+/// Folders whose read a test makes slow by this much, as a share would be.
+/// By path, so the tests running beside it read at their own speed.
+#[cfg(test)]
+static SLOW_READS: std::sync::Mutex<Vec<(String, Duration)>> = std::sync::Mutex::new(Vec::new());
+
+#[cfg(test)]
+pub(crate) fn make_read_slow(path: &str, delay: Duration) {
+    if let Ok(mut slow) = SLOW_READS.lock() {
+        slow.push((path.to_string(), delay));
+    }
+}
+
+#[cfg(test)]
+fn slow_read_for(path: &str) -> Option<Duration> {
+    let slow = SLOW_READS.lock().ok()?;
+    slow.iter().find(|(slow_path, _)| super::same_path(slow_path, path)).map(|(_, delay)| *delay)
+}
+
 /// How long the previous folder stays on screen while a slow one is read. The
 /// path in the header changes at once, which shows the click worked; the old
 /// rows only give way to "Reading…" if the new ones are not there by then, so a
@@ -127,6 +145,10 @@ impl PendingListing {
             let slot = slot.clone();
             move || {
                 let started = std::time::Instant::now();
+                #[cfg(test)]
+                if let Some(delay) = slow_read_for(&path) {
+                    std::thread::sleep(delay);
+                }
                 let listing = read_folder(&path);
                 let open_folders = extras
                     .open_folders

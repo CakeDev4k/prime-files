@@ -7,12 +7,16 @@ Explorador de arquivos para Windows, rápido, escrito em Rust.
 - **Celular e câmera por USB**: aparelhos ligados ao computador aparecem em Este Computador e abrem dentro do Prime Files. Dá para copiar, colar, excluir, renomear e criar pastas neles. No aparelho, Recortar copia: apague o original depois de colar.
 - **Alt+duplo clique** abre as Propriedades do item.
 - O visualizador lembra se estava aberto ou fechado.
+- **Extração com porcentagem**: ao arrastar algo de dentro de um .zip, .7z ou .rar, a linha mostra quanto já foi extraído.
 
 ### Correções da 0.3.11
 
-- Depois de clicar, algumas ações demoravam a acontecer, principalmente com uma unidade de rede que não responde. A janela não espera mais pelo disco.
-- Com um vídeo parado na prévia, o Prime Files continuava gastando CPU. Agora fica perto de zero.
-- Durante uma cópia feita pelo próprio app, a pasta era relida várias vezes por segundo; e com a janela atrás de outra, ela continuava conferindo as pastas no mesmo ritmo.
+- Arrastar um item de dentro de um arquivo compactado para uma pasta travava a janela até a extração terminar. Agora a janela continua respondendo, e Esc cancela.
+- A busca rápida às vezes não achava um arquivo recém-criado (um vídeo que acabou de ser renderizado, por exemplo) enquanto o disco estava ocupado.
+- Depois de clicar, algumas ações demoravam a acontecer, principalmente com uma unidade de rede que não responde. A janela não espera mais pelo disco, inclusive com o terminal aberto, no campo de caminho e nos menus da prévia.
+- Pastas com muitos arquivos ficam mais leves: a lista era copiada inteira a cada quadro desenhado (em uma pasta de 27 mil itens, cerca de 10 ms por quadro).
+- Com um vídeo parado na prévia, o Prime Files continuava gastando CPU. Agora fica perto de zero. Tocando, cada quadro do vídeo é preparado só no tamanho em que aparece.
+- Durante uma cópia feita pelo próprio app, a pasta era relida várias vezes por segundo, em todas as abas abertas nela; e com a janela atrás de outra, ela continuava conferindo as pastas no mesmo ritmo.
 - Menos memória em pastas com muitos arquivos no modo ícones (em uma pasta de 23 mil itens, de 76 MB para 20 MB).
 - A atualização automática reinstalava o 7-Zip pedindo permissão de administrador para quem tinha recusado; o instalador também acha o 7-Zip de 32 bits.
 - Sem abas para reabrir, a primeira aba abre em Este Computador.

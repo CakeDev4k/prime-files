@@ -1017,3 +1017,45 @@ primeiro rascunho do teste passava com o mutante),
 - Clicar num lugar de compartilhamento morto agora não congela, mas também
   não mostra nada durante os 21 s até a listagem começar.
 - Não visto no app: só testes e a sonda.
+
+### 14. O player parado redesenhava a tela dez vezes por segundo (11/11/2026)
+
+**Sintoma.** O app do dono, parado e visível, gastava ~10% de um núcleo na
+thread de interface (passada 12, "Não conferido"). A captura da janela
+mostrou o estado: vista em grade com um `.avi` selecionado e o player da
+prévia aberto, parado em 0:00.
+
+**Causa.** A thread do player (`media.rs`, `platform::run`) mandava
+`Update::State` a cada 100 ms, mudasse algo ou não, e cada um faz
+`cx.notify()` no painel inteiro (lista, barra lateral, prévia). É o mesmo
+erro que o #53 corrigiu no `root.rs`.
+
+**Medido** na cópia isolada (pasta com 13 `.avi`, janela fora da tela,
+clique por `PostMessage`; `player-idle.ps1`), A/B alternado:
+
+| | Sem seleção | Vídeo na prévia, parado |
+|---|---:|---:|
+| 0.3.10 instalada, rodada 1 | 1,2% | 11,2% |
+| Com a correção, rodada 1 | 1,7% | 1,7% |
+| 0.3.10 instalada, rodada 2 | 0,5% | 9,1% |
+| Com a correção, rodada 2 | 0,8% | 1,2% |
+
+(% de um núcleo, 10 s cada. A build da correção é o HEAD 2475d8f + só esta
+mudança, numa worktree limpa.)
+
+**Mudança.** `report_if_changed`: o estado só vai à interface quando muda.
+Parado, a posição não anda e nada é enviado; tocando, a posição muda e o
+relatório segue a cada 100 ms. Conferido na tela, mudo: o relógio andou de
+0:03 para 0:09.
+
+**Cobertura.** `the_player_reports_only_what_changed` (só a regra; que o laço
+do player a use não tem teste — o motor de mídia do Windows não roda em
+teste).
+
+**Visto e não mexido.**
+- Tocando, o app gasta ~23% de um núcleo: cada quadro de vídeo também
+  redesenha o painel inteiro, porque o player mora dentro dele. Um player
+  como view própria redesenharia só a si mesmo.
+- O `.avi` (xvid) aparece preto na prévia parada em 0:00, no app do dono e
+  na cópia; tocando, a imagem aparece. Provavelmente é o primeiro quadro do
+  episódio; não investigado.

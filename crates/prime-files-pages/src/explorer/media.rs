@@ -106,6 +106,31 @@ enum Update {
     Failed(String),
 }
 
+/// What the player thread reports of itself every 100 ms.
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct PlayerState {
+    position: f64,
+    duration: f64,
+    playing: bool,
+    has_video: bool,
+}
+
+/// Whether `now` is news since the last report sent, which it then becomes.
+///
+/// Each report redraws the whole pane (list, sidebar, preview). Until
+/// 11/11/2026 one went every 100 ms whether anything moved or not: with a
+/// video paused in the preview, ten full redraws a second took ~10% of a
+/// core on the UI thread, measured, for as long as the preview stayed open
+/// (`docs/PERFORMANCE.md`, pass 14). A paused player's position does not
+/// move, so it sends nothing.
+fn report_if_changed(last: &mut Option<PlayerState>, now: PlayerState) -> bool {
+    if *last == Some(now) {
+        return false;
+    }
+    *last = Some(now);
+    true
+}
+
 /// `1×`, `1.25×`, `0.5×`.
 pub(crate) fn rate_label(rate: f64) -> String {
     format!("{rate}×")
@@ -456,7 +481,7 @@ mod platform {
     //! The Media Foundation engine. `unsafe` is confined to this module: none
     //! of these interfaces has a safe binding.
 
-    use super::{AudioStream, Command, MAX_FRAME, PEAK_BLOCKS_PER_SECOND, Update};
+    use super::{AudioStream, Command, MAX_FRAME, PEAK_BLOCKS_PER_SECOND, PlayerState, Update, report_if_changed};
     use std::sync::mpsc;
     use std::time::{Duration, Instant};
     use windows::Win32::Foundation::RECT;
@@ -643,6 +668,7 @@ mod platform {
         let mut target: Option<(IWICBitmap, u32, u32)> = None;
         let mut last_frame = i64::MIN;
         let mut last_state = Instant::now() - Duration::from_secs(1);
+        let mut reported: Option<PlayerState> = None;
         // The file's audio streams (the engine's indices), once it has read them.
         let mut streams: Option<Vec<u32>> = None;
         let mut extras: Vec<Extra> = Vec::new();
@@ -762,16 +788,19 @@ mod platform {
             }
             if last_state.elapsed() >= Duration::from_millis(100) {
                 last_state = Instant::now();
-                let state = unsafe {
-                    Update::State {
+                let now = unsafe {
+                    PlayerState {
                         position: engine.GetCurrentTime(),
                         duration: engine.GetDuration().max(0.0),
                         playing: !engine.IsPaused().as_bool() && !engine.IsEnded().as_bool(),
                         has_video,
                     }
                 };
-                if updates.send_blocking(state).is_err() {
-                    break Ok(());
+                if report_if_changed(&mut reported, now) {
+                    let PlayerState { position, duration, playing, has_video } = now;
+                    if updates.send_blocking(Update::State { position, duration, playing, has_video }).is_err() {
+                        break Ok(());
+                    }
                 }
             }
             // About one vsync: frames are not missed and the thread idles.
@@ -1099,7 +1128,25 @@ pub(crate) fn shared_volume() -> f64 {
 
 #[cfg(test)]
 mod tests {
-    use super::{PEAK_BLOCKS_PER_SECOND, clock, effective_volume, is_audio, is_media, waveform_bars};
+    use super::{
+        PEAK_BLOCKS_PER_SECOND, PlayerState, clock, effective_volume, is_audio, is_media, report_if_changed,
+        waveform_bars,
+    };
+
+    // A report redraws the whole pane: a paused player, saying the same
+    // thing every 100 ms, kept it redrawing ten times a second.
+    #[test]
+    fn the_player_reports_only_what_changed() {
+        let paused = PlayerState { position: 0.0, duration: 1352.0, playing: false, has_video: true };
+        let mut last = None;
+        assert!(report_if_changed(&mut last, paused), "the first report goes");
+        for _ in 0..10 {
+            assert!(!report_if_changed(&mut last, paused), "a paused player has nothing new");
+        }
+        let moved = PlayerState { position: 0.1, playing: true, ..paused };
+        assert!(report_if_changed(&mut last, moved), "playing moves the position");
+        assert!(report_if_changed(&mut last, PlayerState { playing: false, ..moved }), "pausing is news");
+    }
 
     #[test]
     fn bars_take_the_loudest_peak_of_their_stretch_scaled_to_the_file() {

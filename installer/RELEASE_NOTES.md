@@ -1,3 +1,27 @@
+## Prime Files 0.3.11
+
+Explorador de arquivos para Windows, rápido, escrito em Rust.
+
+### Novidades da 0.3.11
+
+- **Celular e câmera por USB**: aparelhos ligados ao computador aparecem em Este Computador e abrem dentro do Prime Files. Dá para copiar, colar, excluir, renomear e criar pastas neles. No aparelho, Recortar copia: apague o original depois de colar.
+- **Alt+duplo clique** abre as Propriedades do item.
+- O visualizador lembra se estava aberto ou fechado.
+
+### Correções da 0.3.11
+
+- Depois de clicar, algumas ações demoravam a acontecer, principalmente com uma unidade de rede que não responde. A janela não espera mais pelo disco.
+- Com um vídeo parado na prévia, o Prime Files continuava gastando CPU. Agora fica perto de zero.
+- Durante uma cópia feita pelo próprio app, a pasta era relida várias vezes por segundo; e com a janela atrás de outra, ela continuava conferindo as pastas no mesmo ritmo.
+- Menos memória em pastas com muitos arquivos no modo ícones (em uma pasta de 23 mil itens, de 76 MB para 20 MB).
+- A atualização automática reinstalava o 7-Zip pedindo permissão de administrador para quem tinha recusado; o instalador também acha o 7-Zip de 32 bits.
+- Sem abas para reabrir, a primeira aba abre em Este Computador.
+- Arquivos arrastados do WinRAR ou do 7-Zip às vezes chegavam vazios.
+- "Fixar no Iniciar" não funcionava.
+- No estilo Explorador, a árvore não segue mais a pasta aberta, como no Windows 11.
+- Capas de pasta com a aba e a moldura amarelas de uma pasta de verdade.
+- Botão direito com um menu já aberto agora abre o menu novo.
+
 ## Prime Files 0.3.10
 
 Explorador de arquivos para Windows, rápido, escrito em Rust.

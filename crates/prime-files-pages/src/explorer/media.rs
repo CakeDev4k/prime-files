@@ -28,6 +28,24 @@ pub(crate) const RATES: [f64; 6] = [0.5, 0.75, 1.0, 1.25, 1.5, 2.0];
 /// engine to fit, so a 4K video costs what a 1080p one does.
 const MAX_FRAME: (u32, u32) = (1280, 720);
 
+/// Puts `window` in full screen for a video, unless it already is: whether
+/// it did, so leaving undoes only what this did.
+pub(crate) fn enter_window_fullscreen(window: &gpui::Window) -> bool {
+    if window.is_fullscreen() {
+        return false;
+    }
+    window.toggle_fullscreen();
+    true
+}
+
+/// Takes `window` out of the full screen [`enter_window_fullscreen`] put it
+/// in (`took`), and leaves it alone otherwise.
+pub(crate) fn leave_window_fullscreen(window: &gpui::Window, took: bool) {
+    if took && window.is_fullscreen() {
+        window.toggle_fullscreen();
+    }
+}
+
 /// The room the frame is drawn in, in device pixels, packed as
 /// `width << 32 | height`; 0 until the view has laid it out. Written by the
 /// view as it paints, read by the player at each frame.
@@ -220,10 +238,40 @@ fn effective_volume(volume: f64, muted: bool) -> f64 {
 }
 
 impl MediaPreview {
+    /// Whether it shows a picture, and so can go full screen: a sound has
+    /// none, and a video that failed shows only why.
+    pub(crate) fn is_video(&self) -> bool {
+        self.error.is_none() && (self.has_video || self.frame.is_some())
+    }
+
     /// Sends `command` to the player.
     pub(crate) fn send(&self, command: Command) {
         // The player thread only ends when this preview is dropped.
         self.commands.send(command).ok();
+    }
+
+    /// A player with no thread behind it, a video (`video`) or a sound, for
+    /// the views' tests.
+    #[cfg(test)]
+    pub(crate) fn for_test(video: bool) -> Self {
+        let (commands, _) = mpsc::channel();
+        MediaPreview {
+            commands,
+            frame: None,
+            position: 0.0,
+            duration: 60.0,
+            playing: false,
+            has_video: video,
+            error: None,
+            preparing: None,
+            peaks: Arc::default(),
+            peak_max: 0.0,
+            rate: 1.0,
+            audio_streams: Vec::new(),
+            menu: None,
+            room: FrameRoom::default(),
+            _task: Task::ready(()),
+        }
     }
 }
 
@@ -396,6 +444,44 @@ impl ExplorerPane {
     pub(crate) fn toggle_media(&mut self, cx: &mut Context<Self>) {
         if let Some(media) = self.preview_media.as_mut() {
             media.toggle();
+            cx.notify();
+        }
+    }
+
+    /// Puts the preview's video in full screen, or takes it out: the pane
+    /// draws only the player and the page only the pane, and the window
+    /// goes full screen too unless it already was.
+    pub(crate) fn toggle_media_fullscreen(&mut self, window: &mut gpui::Window, cx: &mut Context<Self>) {
+        if self.media_fullscreen {
+            self.leave_media_fullscreen(window, cx);
+            return;
+        }
+        if !self.preview_media.as_ref().is_some_and(MediaPreview::is_video) {
+            return;
+        }
+        self.media_fullscreen = true;
+        self.media_fullscreen_window = enter_window_fullscreen(window);
+        // The keys (Esc, Space, the arrows) are the pane's.
+        window.focus(&self.focus_handle);
+        cx.notify();
+    }
+
+    /// Leaves full screen, putting the window back as it was.
+    pub(crate) fn leave_media_fullscreen(&mut self, window: &mut gpui::Window, cx: &mut Context<Self>) {
+        if !self.media_fullscreen {
+            return;
+        }
+        self.media_fullscreen = false;
+        leave_window_fullscreen(window, std::mem::take(&mut self.media_fullscreen_window));
+        cx.notify();
+    }
+
+    /// Moves the previewed media by `seconds`.
+    pub(crate) fn nudge_media(&mut self, seconds: f64, cx: &mut Context<Self>) {
+        if let Some(media) = self.preview_media.as_mut()
+            && media.duration > 0.0
+        {
+            media.seek(((media.position + seconds) / media.duration).clamp(0.0, 1.0));
             cx.notify();
         }
     }

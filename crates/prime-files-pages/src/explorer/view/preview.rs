@@ -1277,7 +1277,15 @@ fn render_media(page: &ExplorerPane, cx: &mut Context<ExplorerPane>) -> AnyEleme
         .gap_3()
         .bg(rgb(theme::preview_backdrop()))
         .cursor_pointer()
-        .on_click(cx.listener(|this, _event, _window, cx| this.toggle_media(cx)))
+        // A click plays or pauses; a double click goes full screen (or comes
+        // back), as in a video player. Its first click already toggled
+        // playing, so the second puts that back.
+        .on_click(cx.listener(|this, event: &ClickEvent, window, cx| {
+            this.toggle_media(cx);
+            if event.click_count() == 2 {
+                this.toggle_media_fullscreen(window, cx);
+            }
+        }))
         .map(|screen| match (&media.error, &media.frame) {
             (Some(error), _) => screen.child(
                 div().px(px(16.0)).text_sm().text_color(rgb(theme::muted())).child(error.clone()),
@@ -1478,7 +1486,33 @@ fn render_media(page: &ExplorerPane, cx: &mut Context<ExplorerPane>) -> AnyEleme
         )
         .child(render_speed(media, cx))
         .when(media.audio_streams.len() > 1, |bar| bar.child(render_audio_streams(media, glyph, cx)))
-        .child(render_volume(page, glyph, cx));
+        .child(render_volume(page, glyph, cx))
+        .when(media.is_video(), |bar| {
+            let full = page.media_fullscreen;
+            bar.child(
+                div()
+                    .id("preview-media-fullscreen")
+                    .size(px(28.0))
+                    .flex_shrink_0()
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .rounded(px(4.0))
+                    .cursor_pointer()
+                    .hover(|style| style.bg(rgb(theme::bg_hover())))
+                    .tooltip(move |window, cx| {
+                        gpui_component::tooltip::Tooltip::new(if full {
+                            t!("Sair da tela cheia (Esc)")
+                        } else {
+                            t!("Tela cheia (duplo clique no vídeo)")
+                        })
+                        .build(window, cx)
+                    })
+                    .on_click(cx.listener(|this, _event, window, cx| this.toggle_media_fullscreen(window, cx)))
+                    // Segoe's "full screen" and "back to window".
+                    .child(glyph(if full { "\u{e73f}" } else { "\u{e740}" })),
+            )
+        });
     div()
         .flex_1()
         .min_h(px(0.0))
@@ -1488,6 +1522,40 @@ fn render_media(page: &ExplorerPane, cx: &mut Context<ExplorerPane>) -> AnyEleme
         .child(screen)
         .child(controls)
         .into_any_element()
+}
+
+/// The preview's video filling the pane, which then fills the window
+/// (`ExplorerPane::toggle_media_fullscreen`): the picture and the player's
+/// bar, nothing else. `None` when the preview holds no video to show.
+pub(crate) fn render_media_fullscreen(page: &ExplorerPane, cx: &mut Context<ExplorerPane>) -> Option<AnyElement> {
+    if !page.preview_media.as_ref().is_some_and(crate::explorer::media::MediaPreview::is_video) {
+        return None;
+    }
+    Some(
+        div()
+            .id("preview-media-fullscreen-root")
+            .size_full()
+            .flex()
+            .flex_col()
+            .bg(rgb(theme::preview_backdrop()))
+            .track_focus(&page.focus_handle)
+            .on_key_down(cx.listener(|this, event: &gpui::KeyDownEvent, window, cx| {
+                let keys = &event.keystroke;
+                if keys.modifiers.control || keys.modifiers.alt || keys.modifiers.platform {
+                    return;
+                }
+                match keys.key.as_str() {
+                    "escape" | "f11" => this.leave_media_fullscreen(window, cx),
+                    "space" | " " => this.toggle_media(cx),
+                    "left" => this.nudge_media(-5.0, cx),
+                    "right" => this.nudge_media(5.0, cx),
+                    _ => return,
+                }
+                cx.stop_propagation();
+            }))
+            .child(render_media(page, cx))
+            .into_any_element(),
+    )
 }
 
 // A menu over the player bar, opened from one of its buttons. It shuts

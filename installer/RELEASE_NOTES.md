@@ -7,6 +7,7 @@ Explorador de arquivos para Windows, rápido, escrito em Rust.
 - **Celular e câmera por USB**: aparelhos ligados ao computador aparecem em Este Computador e abrem dentro do Prime Files. Dá para copiar, colar, excluir, renomear e criar pastas neles. No aparelho, Recortar copia: apague o original depois de colar.
 - **Alt+duplo clique** abre as Propriedades do item.
 - O visualizador lembra se estava aberto ou fechado.
+- **Vídeo em tela cheia**: na prévia, na visualização rápida e na busca rápida, um botão no player (ou duplo clique no vídeo) leva o vídeo para a tela inteira. Espaço pausa, as setas andam 5 segundos e Esc volta.
 - **Extração com porcentagem**: ao arrastar algo de dentro de um .zip, .7z ou .rar, a linha mostra quanto já foi extraído.
 
 ### Correções da 0.3.11

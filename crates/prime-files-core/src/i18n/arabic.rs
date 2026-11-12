@@ -829,4 +829,6 @@ pub(super) static ARABIC: &[(&str, &str)] = &[
     ("mono", "أحادي"),
     ("estéreo", "ستيريو"),
     ("{n} canais", "{n} قنوات"),
+    ("Tela cheia (duplo clique no vídeo)", "ملء الشاشة (انقر نقرًا مزدوجًا على الفيديو)"),
+    ("Sair da tela cheia (Esc)", "الخروج من ملء الشاشة (Esc)"),
 ];

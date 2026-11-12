@@ -1232,4 +1232,6 @@ pub(super) static STRINGS: &[(&str, &str, &str)] = &[
     ("mono", "mono", "mono"),
     ("estéreo", "stereo", "estéreo"),
     ("{n} canais", "{n} channels", "{n} canales"),
+    ("Tela cheia (duplo clique no vídeo)", "Full screen (double-click the video)", "Pantalla completa (doble clic en el video)"),
+    ("Sair da tela cheia (Esc)", "Exit full screen (Esc)", "Salir de pantalla completa (Esc)"),
 ];

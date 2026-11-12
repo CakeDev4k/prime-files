@@ -154,6 +154,10 @@ pub(crate) struct HitPreview {
     media: Option<MediaPreview>,
     // The timeline's bounds as last painted, for a click on it to seek.
     track: Rc<Cell<Bounds<Pixels>>>,
+    // The video fills the window (`toggle_hit_fullscreen`), and whether
+    // that put the window itself in full screen, to undo only that.
+    fullscreen: bool,
+    took_window: bool,
 }
 
 impl HitPreview {
@@ -379,6 +383,7 @@ pub(crate) trait PaletteBox: PaletteHost {
         if let Some(mut palette) = self.palette_slot().take() {
             palette.cancel.store(true, Ordering::Relaxed);
             if let Some(preview) = palette.preview.take() {
+                player::leave_window_fullscreen(window, preview.fullscreen && preview.took_window);
                 preview.close(cx);
             }
             self.palette_closed(window, cx);
@@ -628,6 +633,8 @@ pub(crate) trait PaletteBox: PaletteHost {
             path,
             media,
             track: Rc::default(),
+            fullscreen: false,
+            took_window: false,
         };
         let Some(palette) = self.palette_slot().as_mut() else {
             return;
@@ -661,6 +668,24 @@ pub(crate) trait PaletteBox: PaletteHost {
             media.toggle();
             cx.notify();
         }
+    }
+
+    // Puts the preview's video over the whole window, in full screen, or
+    // takes it back into the box.
+    fn toggle_hit_fullscreen(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(preview) = self.palette_slot().as_mut().and_then(|palette| palette.preview.as_mut()) else {
+            return;
+        };
+        if preview.fullscreen {
+            preview.fullscreen = false;
+            player::leave_window_fullscreen(window, std::mem::take(&mut preview.took_window));
+        } else if preview.media.as_ref().is_some_and(MediaPreview::is_video) {
+            preview.fullscreen = true;
+            preview.took_window = player::enter_window_fullscreen(window);
+        } else {
+            return;
+        }
+        cx.notify();
     }
 
     // Moves the preview's media by `seconds`.
@@ -886,6 +911,121 @@ pub(crate) trait PaletteBox: PaletteHost {
         image.map_or(Media::None, Media::Image)
     }
 
+    // The preview's video over the whole window (`toggle_hit_fullscreen`),
+    // `width` by `height`: the picture and a bar to play, seek and come
+    // back. Laid over everything; the box stays under it, holding the keys.
+    fn render_hit_fullscreen(&mut self, width: f32, height: f32, scale: f32, cx: &mut Context<Self>) -> Option<AnyElement> {
+        const BAR: f32 = 52.0;
+        let preview = self.palette_ref()?.preview.as_ref().filter(|preview| preview.fullscreen)?;
+        let media = preview.media.as_ref().filter(|media| media.is_video())?;
+        let (frame, room, track) = (media.frame.clone(), media.room.clone(), preview.track.clone());
+        let (position, duration, playing) = (media.position, media.duration, media.playing);
+        let fraction = if duration > 0.0 { (position / duration).clamp(0.0, 1.0) as f32 } else { 0.0 };
+        let screen_height = (height - BAR).max(1.0);
+        let glyph = |text: &'static str| {
+            div().font_family(theme::icon_font()).text_size(px(14.0)).text_color(rgb(theme::fg())).child(text)
+        };
+        let round_button = |id: &'static str| {
+            div()
+                .id(id)
+                .size(px(32.0))
+                .flex_shrink_0()
+                .flex()
+                .items_center()
+                .justify_center()
+                .rounded(px(16.0))
+                .cursor_pointer()
+                .hover(|style| style.bg(rgb(theme::bg_hover())))
+        };
+        let screen = div()
+            .id("palette-fullscreen-screen")
+            .w(px(width))
+            .h(px(screen_height))
+            .flex()
+            .items_center()
+            .justify_center()
+            .cursor_pointer()
+            // A click plays or pauses; a double click comes back to the box.
+            .on_click(cx.listener(|page, event: &ClickEvent, window, cx| {
+                page.toggle_hit_preview(cx);
+                if event.click_count() == 2 {
+                    page.toggle_hit_fullscreen(window, cx);
+                }
+            }))
+            .when_some(frame, |screen, frame| {
+                screen.child(img(ImageSource::Render(frame)).size_full().object_fit(ObjectFit::Contain))
+            })
+            // The player copies frames at the size they are shown.
+            .child(
+                canvas(
+                    move |_, _, _| player::set_frame_room(&room, width * scale, screen_height * scale),
+                    |_, _, _, _| {},
+                )
+                .absolute()
+                .size_0(),
+            );
+        let bar_width = (width - 260.0).max(40.0);
+        let bar = div()
+            .h(px(BAR))
+            .px(px(16.0))
+            .flex()
+            .items_center()
+            .gap(px(12.0))
+            .bg(rgb(theme::bg_secondary()))
+            .child(
+                round_button("palette-fullscreen-play")
+                    .on_click(cx.listener(|page, _: &ClickEvent, _, cx| page.toggle_hit_preview(cx)))
+                    .child(glyph(if playing { "\u{e769}" } else { "\u{e768}" })),
+            )
+            .child(
+                div()
+                    .flex_shrink_0()
+                    .text_xs()
+                    .text_color(rgb(theme::muted()))
+                    .child(format!("{} / {}", player::clock(position), player::clock(duration))),
+            )
+            .child(
+                div()
+                    .id("palette-fullscreen-track")
+                    .w(px(bar_width))
+                    .h(px(16.0))
+                    .flex()
+                    .items_center()
+                    .cursor_pointer()
+                    .on_mouse_down(
+                        MouseButton::Left,
+                        cx.listener(|page, event: &MouseDownEvent, _, cx| page.seek_hit_preview(event.position.x, cx)),
+                    )
+                    .child(timeline(fraction, bar_width, track)),
+            )
+            .child(div().flex_1())
+            .child(
+                round_button("palette-fullscreen-leave")
+                    .tooltip(|window, cx| {
+                        gpui_component::tooltip::Tooltip::new(t!("Sair da tela cheia (Esc)")).build(window, cx)
+                    })
+                    .on_click(cx.listener(|page, _: &ClickEvent, window, cx| page.toggle_hit_fullscreen(window, cx)))
+                    .child(glyph("\u{e73f}")),
+            );
+        Some(
+            div()
+                .id("palette-fullscreen")
+                .absolute()
+                .top_0()
+                .left_0()
+                .w(px(width))
+                .h(px(height))
+                .flex()
+                .flex_col()
+                .bg(rgb(theme::preview_backdrop()))
+                .occlude()
+                .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+                .child(screen)
+                .child(bar)
+                .into_any_element(),
+        )
+    }
+
     // The preview in place of the list, `width` by `height`.
     fn render_hit_preview(&mut self, width: f32, height: f32, cx: &mut Context<Self>) -> Option<AnyElement> {
         let preview = self.palette_ref()?.preview.as_ref()?;
@@ -921,7 +1061,14 @@ pub(crate) trait PaletteBox: PaletteHost {
                     // (`media::frame_size`).
                     let room = media.room.clone();
                     screen
-                        .on_click(cx.listener(|page, _: &ClickEvent, _, cx| page.toggle_hit_preview(cx)))
+                        // A double click goes full screen; its first click
+                        // already played or paused, the second puts it back.
+                        .on_click(cx.listener(|page, event: &ClickEvent, window, cx| {
+                            page.toggle_hit_preview(cx);
+                            if event.click_count() == 2 {
+                                page.toggle_hit_fullscreen(window, cx);
+                            }
+                        }))
                         .child(img(ImageSource::Render(frame.clone())).w(px(inner)).h(px(screen_height)).object_fit(ObjectFit::Contain))
                         .child(
                             canvas(
@@ -1009,6 +1156,31 @@ pub(crate) trait PaletteBox: PaletteHost {
                             cx.listener(|page, event: &MouseDownEvent, _, cx| page.seek_hit_preview(event.position.x, cx)),
                         )
                         .child(timeline(fraction, bar_width, track)),
+                )
+            })
+            .when(media.is_some_and(MediaPreview::is_video), |this| {
+                this.child(div().flex_1()).child(
+                    div()
+                        .id("palette-preview-fullscreen")
+                        .size(px(28.0))
+                        .flex_shrink_0()
+                        .flex()
+                        .items_center()
+                        .justify_center()
+                        .rounded(px(14.0))
+                        .cursor_pointer()
+                        .hover(|style| style.bg(rgb(theme::bg_hover())))
+                        .tooltip(|window, cx| {
+                            gpui_component::tooltip::Tooltip::new(t!("Tela cheia (duplo clique no vídeo)")).build(window, cx)
+                        })
+                        .on_click(cx.listener(|page, _: &ClickEvent, window, cx| page.toggle_hit_fullscreen(window, cx)))
+                        .child(
+                            div()
+                                .font_family(theme::icon_font())
+                                .text_size(px(12.0))
+                                .text_color(rgb(theme::fg()))
+                                .child("\u{e740}"),
+                        ),
                 )
             });
 
@@ -1281,6 +1453,7 @@ pub(crate) trait PaletteBox: PaletteHost {
             if previewing { preview_height } else { (height + 12.0).min(list_max) }
         };
         let preview_element = if previewing { self.render_hit_preview(width - 2.0, preview_height, cx) } else { None };
+        let fullscreen = if previewing { self.render_hit_fullscreen(vw, vh, scale, cx) } else { None };
 
         let palette = self.palette_slot().as_mut()?;
         let relaid = palette.line_of.is_empty() && !line_of.is_empty();
@@ -1325,6 +1498,11 @@ pub(crate) trait PaletteBox: PaletteHost {
             .occlude()
             .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
             .capture_key_down(cx.listener(|page, event: &KeyDownEvent, window, cx| {
+                // A video in full screen takes every key (the handler after
+                // this one): Esc there comes back to the box, not out of it.
+                if page.palette_ref().and_then(|palette| palette.preview.as_ref()).is_some_and(|preview| preview.fullscreen) {
+                    return;
+                }
                 let keys = &event.keystroke;
                 let ctrl = keys.modifiers.control || keys.modifiers.platform;
                 let choosing = page.palette_ref().is_some_and(|palette| palette.chose && palette.columns > 1);
@@ -1348,11 +1526,28 @@ pub(crate) trait PaletteBox: PaletteHost {
             // list, Enter opens the file, Space plays or pauses, the arrows
             // move through it.
             .capture_key_down(cx.listener(|page, event: &KeyDownEvent, window, cx| {
-                let Some(path) = page.palette_ref().and_then(|palette| palette.preview.as_ref()).map(|preview| preview.path.clone())
+                let Some((path, fullscreen)) = page
+                    .palette_ref()
+                    .and_then(|palette| palette.preview.as_ref())
+                    .map(|preview| (preview.path.clone(), preview.fullscreen))
                 else {
                     return;
                 };
                 let keys = &event.keystroke;
+                // In full screen the field is out of sight: no key types
+                // into it (a letter would start a new search under the
+                // video), and Esc comes back to the box.
+                if fullscreen {
+                    match keys.key.as_str() {
+                        "escape" | "f11" => page.toggle_hit_fullscreen(window, cx),
+                        "space" | " " => page.toggle_hit_preview(cx),
+                        "left" => page.nudge_hit_preview(-5.0, cx),
+                        "right" => page.nudge_hit_preview(5.0, cx),
+                        _ => {}
+                    }
+                    cx.stop_propagation();
+                    return;
+                }
                 if keys.modifiers.control || keys.modifiers.alt || keys.modifiers.platform {
                     return;
                 }
@@ -1471,8 +1666,15 @@ pub(crate) trait PaletteBox: PaletteHost {
                     }),
             );
 
+        // The full-screen video lies over the card, which stays under it
+        // holding the field's focus and so the keys. It is the card's
+        // sibling, not its child: the card is a deferred element's, and
+        // gpui allows no deferred one inside another.
         if fills {
-            return Some(card.into_any_element());
+            return Some(match fullscreen {
+                Some(fullscreen) => div().absolute().inset_0().child(card).child(fullscreen).into_any_element(),
+                None => card.into_any_element(),
+            });
         }
         Some(
             deferred(
@@ -1484,7 +1686,8 @@ pub(crate) trait PaletteBox: PaletteHost {
                         .bg(rgba(0x0000_0059))
                         .occlude()
                         .on_mouse_down(MouseButton::Left, cx.listener(|page, _, window, cx| page.close_palette(window, cx)))
-                        .child(card),
+                        .child(card)
+                        .children(fullscreen),
                 ),
             )
             .with_priority(20)
@@ -2124,6 +2327,74 @@ mod tests {
         type_in(format!("{folder}\\nao-existe"), cx);
         cx.run_until_parked();
         assert_eq!(shown(cx), None);
+    }
+
+    // The box's video goes full screen over the whole window: the keys are
+    // the player's (a letter does not type into the hidden field), Esc comes
+    // back to the box with the video still in it, and closing the box puts
+    // the window back.
+    #[gpui::test]
+    async fn the_box_video_goes_full_screen_and_back(cx: &mut gpui::TestAppContext) {
+        use gpui::AppContext as _;
+
+        use super::super::ExplorerPage;
+        use super::super::media::MediaPreview;
+        use super::{HitPreview, PaletteBox as _};
+
+        cx.update(gpui_component::init);
+        let mut made = None;
+        let window = cx.add_window(|window, cx| {
+            let resizable = cx.new(|_| gpui_component::resizable::ResizableState::default());
+            let page = cx.new(|cx| {
+                ExplorerPage::new(
+                    resizable,
+                    None,
+                    None,
+                    prime_files_services::fs::trash::Ledger::KeptByOs,
+                    false,
+                    window,
+                    cx,
+                )
+            });
+            made = Some(page.clone());
+            gpui_component::Root::new(page, window, cx)
+        });
+        let page = made.unwrap();
+        let mut cx = gpui::VisualTestContext::from_window(window.into(), cx);
+        page.update_in(&mut cx, |page, window, cx| {
+            page.toggle_palette(window, cx);
+            let palette = page.palette.as_mut().unwrap();
+            palette.preview = Some(HitPreview {
+                path: r"C:\a\clip.mp4".into(),
+                name: "clip.mp4".into(),
+                folder: r"C:\a".into(),
+                media: Some(MediaPreview::for_test(true)),
+                track: Default::default(),
+                fullscreen: false,
+                took_window: false,
+            });
+            page.toggle_hit_fullscreen(window, cx);
+        });
+        let state = |cx: &mut gpui::VisualTestContext| {
+            page.update_in(cx, |page, window, _| {
+                let preview = page.palette.as_ref().and_then(|palette| palette.preview.as_ref());
+                (preview.map(|preview| preview.fullscreen), window.is_fullscreen())
+            })
+        };
+        assert_eq!(state(&mut cx), (Some(true), true));
+        cx.update(|window, cx| window.draw(cx).clear());
+        let query = |cx: &mut gpui::VisualTestContext| {
+            page.update_in(cx, |page, _, cx| page.palette.as_ref().unwrap().input.read(cx).value().to_string())
+        };
+        cx.simulate_keystrokes("a");
+        assert_eq!(query(&mut cx), "", "a key typed into the hidden field");
+        cx.simulate_keystrokes("escape");
+        assert_eq!(state(&mut cx), (Some(false), false), "Esc did not come back to the box with the video");
+
+        page.update_in(&mut cx, |page, window, cx| page.toggle_hit_fullscreen(window, cx));
+        assert_eq!(state(&mut cx), (Some(true), true));
+        page.update_in(&mut cx, |page, window, cx| page.close_palette(window, cx));
+        assert_eq!(state(&mut cx), (None, false), "closing the box left the window full screen");
     }
 
     #[test]

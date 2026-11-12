@@ -8526,4 +8526,26 @@ pub(super) static EXTRA: &[(&str, [&str; 6])] = &[
     ("mono", ["mono", "Mono", "mono", "моно", "モノラル", "单声道"]),
     ("estéreo", ["stéréo", "Stereo", "stereo", "стерео", "ステレオ", "立体声"]),
     ("{n} canais", ["{n} canaux", "{n} Kanäle", "{n} canali", "{n} каналов", "{n} チャンネル", "{n} 声道"]),
+    (
+        "Tela cheia (duplo clique no vídeo)",
+        [
+            "Plein écran (double-clic sur la vidéo)",
+            "Vollbild (Doppelklick auf das Video)",
+            "Schermo intero (doppio clic sul video)",
+            "Во весь экран (двойной щелчок по видео)",
+            "全画面表示（動画をダブルクリック）",
+            "全屏（双击视频）",
+        ],
+    ),
+    (
+        "Sair da tela cheia (Esc)",
+        [
+            "Quitter le plein écran (Échap)",
+            "Vollbild beenden (Esc)",
+            "Esci da schermo intero (Esc)",
+            "Выйти из полноэкранного режима (Esc)",
+            "全画面表示を終了（Esc）",
+            "退出全屏（Esc）",
+        ],
+    ),
 ];

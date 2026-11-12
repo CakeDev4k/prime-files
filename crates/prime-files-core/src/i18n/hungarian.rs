@@ -832,4 +832,6 @@ pub(super) static HUNGARIAN: &[(&str, &str)] = &[
     ("mono", "monó"),
     ("estéreo", "sztereó"),
     ("{n} canais", "{n} csatorna"),
+    ("Tela cheia (duplo clique no vídeo)", "Teljes képernyő (dupla kattintás a videón)"),
+    ("Sair da tela cheia (Esc)", "Kilépés a teljes képernyőből (Esc)"),
 ];

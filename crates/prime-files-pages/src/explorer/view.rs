@@ -34,8 +34,16 @@ pub fn render(
     page: &mut ExplorerPane,
     window: &mut Window,
     cx: &mut Context<ExplorerPane>,
-) -> impl IntoElement + use<> {
+) -> AnyElement {
     page.ensure_loaded(cx);
+    // A video in full screen is all the pane draws (and all the page draws,
+    // `ExplorerPage::render`); with no video left in the preview it ends.
+    if page.media_fullscreen {
+        match preview::render_media_fullscreen(page, cx) {
+            Some(screen) => return screen,
+            None => page.leave_media_fullscreen(window, cx),
+        }
+    }
     page.tick_zoom(window, cx);
     page.tick_scroll(window, cx);
     page.tick_marquee(window, cx);
@@ -371,6 +379,7 @@ pub fn render(
         .map(|this| render_body(this, page, window, cx))
         .children(preview::render_quick_look(page, window, cx))
         .children(menu::render(page, window, cx))
+        .into_any_element()
 }
 
 // Address bar, filter bar, the three columns and the bar under them, in that

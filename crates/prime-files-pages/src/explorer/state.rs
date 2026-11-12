@@ -234,6 +234,11 @@ pub struct ExplorerPane {
     pub(crate) preview_pdf: Option<super::pdf::PdfPreview>,
     /// The video or audio file playing in the preview.
     pub(crate) preview_media: Option<super::media::MediaPreview>,
+    /// The preview's video fills the window (`media::toggle_media_fullscreen`).
+    pub(crate) media_fullscreen: bool,
+    /// Whether going full screen put the window itself in full screen, so
+    /// leaving takes it back out (and only then).
+    pub(crate) media_fullscreen_window: bool,
     /// The selection was set without the preview following it (`reveal`);
     /// the next render opens it.
     pub(crate) preview_selection_pending: bool,
@@ -662,6 +667,8 @@ impl ExplorerPane {
             preview_listing: None,
             preview_pdf: None,
             preview_media: None,
+            media_fullscreen: false,
+            media_fullscreen_window: false,
             preview_selection_pending: false,
             preview_follow: None,
             preview_follow_delay: super::preview::PREVIEW_FOLLOW_DELAY,

@@ -3549,3 +3549,54 @@ async fn the_middle_click_on_a_place_opens_folders_and_skips_files(cx: &mut Test
     cx.run_until_parked();
     assert_eq!(*opened.lock().unwrap(), vec![dir.path().to_string_lossy().into_owned()]);
 }
+
+// A video in the preview goes full screen and comes back: the pane draws
+// the player alone, the window goes full screen with it, and Esc, the
+// button again, or the video leaving the preview put everything back.
+#[gpui::test]
+async fn a_video_in_the_preview_goes_full_screen_and_back(cx: &mut TestAppContext) {
+    use crate::explorer::media::MediaPreview;
+    let window = new_explorer_page(cx);
+    let pane = window.update(cx, |page, _, _| page.group.active_pane().clone()).unwrap();
+    let mut cx = gpui::VisualTestContext::from_window(window.into(), cx);
+    let state = |cx: &mut gpui::VisualTestContext| {
+        pane.update_in(cx, |pane, window, _| (pane.media_fullscreen, window.is_fullscreen()))
+    };
+
+    // A sound has no picture to fill the screen with.
+    pane.update_in(&mut cx, |pane, window, cx| {
+        pane.preview_media = Some(MediaPreview::for_test(false));
+        pane.toggle_media_fullscreen(window, cx);
+    });
+    assert_eq!(state(&mut cx), (false, false), "a sound went full screen");
+
+    pane.update_in(&mut cx, |pane, window, cx| {
+        pane.preview_media = Some(MediaPreview::for_test(true));
+        pane.toggle_media_fullscreen(window, cx);
+    });
+    cx.run_until_parked();
+    assert_eq!(state(&mut cx), (true, true));
+    // The page draws the pane alone, and the pane its player.
+    cx.update(|window, cx| window.draw(cx).clear());
+    cx.simulate_keystrokes("escape");
+    assert_eq!(state(&mut cx), (false, false), "Esc did not leave full screen");
+
+    // The video leaving the preview (another file selected) ends it.
+    pane.update_in(&mut cx, |pane, window, cx| pane.toggle_media_fullscreen(window, cx));
+    assert_eq!(state(&mut cx), (true, true));
+    pane.update_in(&mut cx, |pane, _, cx| {
+        pane.preview_media = None;
+        cx.notify();
+    });
+    cx.update(|window, cx| window.draw(cx).clear());
+    assert_eq!(state(&mut cx), (false, false), "full screen outlived its video");
+
+    // A window already full screen stays so after the video leaves it.
+    cx.update(|window, _| window.toggle_fullscreen());
+    pane.update_in(&mut cx, |pane, window, cx| {
+        pane.preview_media = Some(MediaPreview::for_test(true));
+        pane.toggle_media_fullscreen(window, cx);
+        pane.toggle_media_fullscreen(window, cx);
+    });
+    assert_eq!(state(&mut cx), (false, true), "the window's own full screen was undone");
+}

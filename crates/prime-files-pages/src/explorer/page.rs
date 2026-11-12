@@ -1674,6 +1674,12 @@ fn is_disk_folder_address(address: &str) -> bool {
 
 impl Render for ExplorerPage {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        // A video in full screen covers the window: the tab bar, the other
+        // panes and the terminal stay out of the way until it leaves.
+        let active = self.group.active_pane().clone();
+        if active.read(cx).media_fullscreen {
+            return div().size_full().bg(rgb(theme::preview_backdrop())).child(active).into_any_element();
+        }
         let callbacks = Self::pane_callbacks();
         self.group.set_title_bar_allowed(!self.terminal_beside());
         // The listing's edges offer the terminal while it is closed.
@@ -1805,6 +1811,7 @@ impl Render for ExplorerPage {
             }))
             .child(arranged)
             .children(self.render_palette(window, cx))
+            .into_any_element()
     }
 }
 

@@ -1203,3 +1203,61 @@ contra 4 atrás.
   um mutante que trocasse o custo por zero passaria (pastas de teste leem em
   ~1 ms, o piso de qualquer jeito).
 - Não visto no app: só testes.
+
+### 18. Memória por item: a grade guardava 3,4 KB por nome (12/11/2026)
+
+**Origem.** Item 5 da comparação com o Open Salamander. Em 11/11, abrir a
+WinSxS (23,5 mil itens) somava ~40 MB ao app, ~1,7 KB por item; a suspeita
+era o `FileEntryDto` (3 `String`) e `filtered_entries` ser cópia inteira de
+`entries`.
+
+**Medido** com um alocador que conta os bytes vivos (só nos testes,
+`heap_count` em `prime_files_pages.rs`), listando `C:\Windows\WinSxS`
+(23.518 itens) num painel de verdade e soltando cada parte:
+
+| Parte | MB | B/item |
+|---|---:|---:|
+| `entries` | 7,7 | 343 |
+| `filtered_entries` (cópia) | 7,7 | 343 |
+| o resto da listagem | 0,2 | 7 |
+| `name_layouts` da grade, antes | **76,3** | **3.401** |
+| `name_layouts` da grade, depois | 20,5 | 913 |
+
+(Bytes pedidos; o heap do Windows soma ~16 B por alocação. O sistema de
+texto dos testes faz um glifo por caractere, como o DirectWrite com nomes
+latinos.)
+
+O maior custo não era a listagem: era a grade. Para saber a altura de cada
+linha antes de desenhar, ela quebra **todos** os nomes, e guardava para
+cada um o `LineLayout` inteiro do gpui — id, posição, índice e marca de
+emoji de cada glifo (24 B), num vetor que cresce dobrando (um nome de 70
+glifos reserva 128). Só na visão em grade; lista e detalhes não guardam.
+
+**Mudança.** `NameWidths` guarda de cada glifo só o que a quebra lê — o byte
+no nome e o x —, 8 B, numa fatia do tamanho exato, sem `Arc`;
+`index_for_x`/`x_for_index` dão a mesma resposta do gpui. 76,3 → 20,5 MB na
+WinSxS em grade (−73%).
+
+**Cobertura.** `name_widths_answer_as_the_shaped_line_does` (duas corridas,
+caracteres de 1 a 4 bytes, avanços desiguais, linha vazia; mutantes `<=`→`<`
+e `>=`→`>` reprovam), `a_name_keeps_eight_bytes_a_glyph`, e as medidas
+ignoradas `measure_grid_name_memory` e `measure_listing_memory`.
+
+**Ficou de fora.**
+- A cópia em `filtered_entries` (7,7 MB na WinSxS) continua. Tirar exige
+  trocar `name`/`path` para algo de clone barato (`Arc<str>`): 31 lugares
+  constroem `FileEntryDto` e 86 clonam esses campos, vários em arquivos com
+  trabalho de outra sessão sem commit (inclusive `device.rs`, ainda fora do
+  git).
+- `kind` é `String` ("file"/"dir"): uma alocação por item que poderia ser
+  `&'static str`; mesma troca de tipo.
+- A grade ainda guarda o nome duas vezes (chave do mapa e a entrada) e o
+  índice do glifo, que na maioria dos nomes é só o de cada caractere
+  (guardar só o x daria ~4 B por glifo).
+- Os ~1,7 KB/item de 11/11 vinham do app aberto, com o heap do Windows e o
+  gpui; esta passada não mediu no app.
+
+**De quebra.** `the_watch_keeps_up_with_another_program_writing` (passada 17)
+reprovou uma vez em ~13 com a máquina ocupada: dava só 3 s para o último
+refresh. Agora espera até 4,5 s, parando quando os 120 aparecem; com o
+código antigo continua reprovando (56 e 39 de 120).

@@ -356,7 +356,7 @@ pub struct ExplorerPane {
     /// Each entry name laid out on one line, kept across frames: a tile
     /// label is wrapped from it at any width without shaping the text again,
     /// which is what lets every row's height follow the zoom as it glides.
-    pub(crate) name_layouts: std::collections::HashMap<String, std::sync::Arc<gpui::LineLayout>>,
+    pub(crate) name_layouts: std::collections::HashMap<String, super::view::listing::grid::NameWidths>,
     /// Bumped by `update_item_sizes`, which every change to the rows on
     /// screen goes through. The row layouts below are kept while it, and the
     /// sizes they were built for, stay the same.

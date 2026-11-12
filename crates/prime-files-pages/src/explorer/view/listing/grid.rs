@@ -213,7 +213,7 @@ fn build_layout(
                 .map(|entry| {
                     let layout = name_layout(&mut page.name_layouts, &entry.name, window);
                     let mut lines = 0;
-                    wrap_layout(&layout, &entry.name, name_width, |_| lines += 1);
+                    wrap_layout(layout, &entry.name, name_width, |_| lines += 1);
                     limit_lines(lines.max(1), page.name_lines)
                 })
                 .max()
@@ -474,7 +474,7 @@ fn render_grid_item(
 /// cut, unless `ui.name_lines` caps the lines (`max_lines`, 0 = no cap):
 /// then the last one shown ends in "…".
 fn wrap_name(
-    layouts: &mut std::collections::HashMap<String, std::sync::Arc<LineLayout>>,
+    layouts: &mut std::collections::HashMap<String, NameWidths>,
     name: &str,
     width: f32,
     max_lines: u32,
@@ -482,7 +482,7 @@ fn wrap_name(
 ) -> Vec<String> {
     let layout = name_layout(layouts, name, window);
     let mut lines = Vec::new();
-    wrap_layout(&layout, name, width, |line| lines.push(line.to_string()));
+    wrap_layout(layout, name, width, |line| lines.push(line.to_string()));
     if lines.is_empty() {
         lines.push(String::new());
     }
@@ -532,30 +532,64 @@ fn typed_width(text: &str, window: &Window) -> f32 {
     f32::from(layout.width)
 }
 
+/// What wrapping a name needs of its shaped line: where each glyph starts,
+/// and which byte of the name it is. Until 12/11/2026 the grid kept gpui's
+/// whole `LineLayout` for every name of the folder — each glyph's id, emoji
+/// flag and position, in a vector grown by doubling: 76 MB, 3.4 KB a name,
+/// for WinSxS's 23,518 (`docs/PERFORMANCE.md`, pass 18). This keeps 8 bytes
+/// a glyph, in a slice of the exact size.
+pub(crate) struct NameWidths {
+    width: f32,
+    glyphs: Box<[(u32, f32)]>,
+}
+
+impl NameWidths {
+    fn of(layout: &LineLayout) -> Self {
+        let glyphs = layout
+            .runs
+            .iter()
+            .flat_map(|run| run.glyphs.iter())
+            .map(|glyph| (glyph.index as u32, f32::from(glyph.position.x)))
+            .collect();
+        Self { width: f32::from(layout.width), glyphs }
+    }
+
+    /// The same answer as `LineLayout::index_for_x`.
+    fn index_for_x(&self, x: f32) -> Option<usize> {
+        if x >= self.width {
+            return None;
+        }
+        Some(self.glyphs.iter().rev().find(|(_, at)| *at <= x).map_or(0, |(index, _)| *index as usize))
+    }
+
+    /// The same answer as `LineLayout::x_for_index`.
+    fn x_for_index(&self, index: usize) -> f32 {
+        self.glyphs.iter().find(|(at, _)| *at as usize >= index).map_or(self.width, |(_, x)| *x)
+    }
+}
+
 /// `name` shaped in the label's font, once per name.
-fn name_layout(
-    layouts: &mut std::collections::HashMap<String, std::sync::Arc<LineLayout>>,
+fn name_layout<'a>(
+    layouts: &'a mut std::collections::HashMap<String, NameWidths>,
     name: &str,
     window: &Window,
-) -> std::sync::Arc<LineLayout> {
-    if let Some(layout) = layouts.get(name) {
-        return layout.clone();
+) -> &'a NameWidths {
+    if !layouts.contains_key(name) {
+        let style = window.text_style();
+        // `text_xs`, which the label is drawn in.
+        let font_size = rems(0.75).to_pixels(window.rem_size());
+        let layout = window
+            .text_system()
+            .layout_line(name, font_size, &[style.to_run(name.len())], None);
+        layouts.insert(name.to_string(), NameWidths::of(&layout));
     }
-    let style = window.text_style();
-    // `text_xs`, which the label is drawn in.
-    let font_size = rems(0.75).to_pixels(window.rem_size());
-    let layout = window
-        .text_system()
-        .layout_line(name, font_size, &[style.to_run(name.len())], None);
-    layouts.insert(name.to_string(), layout.clone());
-    layout
+    &layouts[name]
 }
 
 /// Calls `line` with each line of `name` wrapped at `width`. The grid counts
 /// the lines of every name and draws those of a few, so the wrap itself
 /// allocates nothing.
-fn wrap_layout(layout: &LineLayout, name: &str, width: f32, mut line: impl FnMut(&str)) {
-    let width = px(width);
+fn wrap_layout(layout: &NameWidths, name: &str, width: f32, mut line: impl FnMut(&str)) {
     let mut start = 0;
     while start < name.len() {
         // The first character that does not fit after `start`; none when the
@@ -596,5 +630,137 @@ mod tests {
         assert_eq!(lines, ["a", "b"]);
         cap_lines(&mut lines, 5);
         assert_eq!(lines, ["a", "b"]);
+    }
+
+    // A shaped line with the glyphs at `runs` (byte index, x), built from
+    // one the test text system shaped: `GlyphId` cannot be made outside gpui.
+    fn shaped(cx: &mut gpui::VisualTestContext, text: &str, runs: &[&[(usize, f32)]], width: f32) -> gpui::LineLayout {
+        let source = cx.update(|window, _| {
+            let style = window.text_style();
+            window.text_system().layout_line("a", gpui::px(12.0), &[style.to_run(1)], None)
+        });
+        let glyph = source.runs[0].glyphs[0].clone();
+        let font_id = source.runs[0].font_id;
+        let runs = runs
+            .iter()
+            .map(|glyphs| gpui::ShapedRun {
+                font_id,
+                glyphs: glyphs
+                    .iter()
+                    .map(|&(index, x)| gpui::ShapedGlyph {
+                        position: gpui::point(gpui::px(x), gpui::px(0.0)),
+                        index,
+                        ..glyph.clone()
+                    })
+                    .collect(),
+            })
+            .collect();
+        gpui::LineLayout {
+            font_size: source.font_size,
+            width: gpui::px(width),
+            ascent: source.ascent,
+            descent: source.descent,
+            runs,
+            len: text.len(),
+        }
+    }
+
+    // The wrap reads only these two answers, so the slim copy must give
+    // gpui's own, everywhere: two runs, characters of 1 to 4 bytes, uneven
+    // advances, and a line with no glyphs.
+    #[gpui::test]
+    fn name_widths_answer_as_the_shaped_line_does(cx: &mut gpui::TestAppContext) {
+        use super::NameWidths;
+        let cx = cx.add_empty_window();
+        let text = "aé日😀 b-c";
+        let mut glyphs: Vec<(usize, f32)> = Vec::new();
+        let mut x = 0.0;
+        for (index, character) in text.char_indices() {
+            glyphs.push((index, x));
+            x += 3.0 + character.len_utf8() as f32 * 1.75;
+        }
+        let (first, second) = glyphs.split_at(4);
+        let layouts = [shaped(cx, text, &[first, second], x), shaped(cx, "", &[], 0.0)];
+        for layout in layouts {
+            let slim = NameWidths::of(&layout);
+            let mut probe = -1.0;
+            while probe <= f32::from(layout.width) + 1.0 {
+                assert_eq!(slim.index_for_x(probe), layout.index_for_x(gpui::px(probe)), "index_for_x({probe})");
+                probe += 0.25;
+            }
+            for index in 0..=layout.len + 1 {
+                assert_eq!(slim.x_for_index(index), f32::from(layout.x_for_index(index)), "x_for_index({index})");
+            }
+        }
+    }
+
+    // A name of 70 glyphs costs its 8 bytes a glyph and nothing grown in
+    // advance (the shaped line cost ~3.4 KB).
+    #[gpui::test]
+    fn a_name_keeps_eight_bytes_a_glyph(cx: &mut gpui::TestAppContext) {
+        let glyphs: Vec<(usize, f32)> = (0..70).map(|index| (index, index as f32 * 6.0)).collect();
+        let cx = cx.add_empty_window();
+        let layout = shaped(cx, &"a".repeat(70), &[&glyphs], 420.0);
+        let slim = super::NameWidths::of(&layout);
+        assert_eq!(std::mem::size_of_val(&*slim.glyphs), 70 * 8);
+    }
+
+    // What the grid keeps to wrap every name of a big folder. Run alone; the
+    // test text system makes one glyph per character, as DirectWrite does for
+    // Latin names:
+    // PRIME_FILES_MEMORY_FOLDER=C:\Windows\WinSxS cargo test -p prime-files-pages
+    //   --lib -- --ignored --nocapture --test-threads=1 measure_grid_name_memory
+    #[gpui::test]
+    #[ignore = "a measurement, not a check; reads a big folder"]
+    async fn measure_grid_name_memory(cx: &mut gpui::TestAppContext) {
+        use crate::heap_count::live;
+        use gpui::AppContext as _;
+        let folder = std::env::var("PRIME_FILES_MEMORY_FOLDER").unwrap_or_else(|_| r"C:\Windows\WinSxS".to_string());
+        cx.update(gpui_component::init);
+        let window = cx.add_window(|window, cx| {
+            let resizable = cx.new(|_| gpui_component::resizable::ResizableState::default());
+            let search_input = cx.new(|cx| gpui_component::input::InputState::new(window, cx));
+            crate::explorer::ExplorerPane::new(
+                resizable,
+                search_input,
+                None,
+                prime_files_services::fs::trash::Ledger::KeptByOs,
+                cx.focus_handle(),
+            )
+        });
+        cx.run_until_parked();
+        let (count, layouts) = window
+            .update(cx, |pane, window, cx| {
+                pane.cwd = folder.clone();
+                pane.reload(cx);
+                let key = super::GridKey {
+                    generation: pane.rows_generation,
+                    entries: pane.filtered_entries.len(),
+                    columns: 8,
+                    name_width: 90f32.to_bits(),
+                    width: 900f32.to_bits(),
+                    rem: f32::from(window.rem_size()).to_bits(),
+                };
+                drop(super::build_layout(pane, key, 90.0, |lines| 60.0 + 16.0 * lines as f32, window));
+                (pane.filtered_entries.len(), std::mem::take(&mut pane.name_layouts))
+            })
+            .unwrap();
+        // gpui's own cache holds each layout until two frames go by, as it
+        // does in the app; after that the grid's map is their only owner.
+        for _ in 0..2 {
+            cx.update_window(window.into(), |_, window, cx| {
+                window.refresh();
+                window.draw(cx).clear();
+            })
+            .unwrap();
+        }
+        let mark = live();
+        drop(layouts);
+        let kept = mark - live();
+        eprintln!(
+            "{folder}: {count} names, the grid keeps {:.1} MB to wrap them ({:.0} B/name)",
+            kept as f64 / 1_048_576.0,
+            kept as f64 / count.max(1) as f64
+        );
     }
 }

@@ -418,4 +418,51 @@ mod tests {
         });
         println!("35,000 names: before {before:.1} ms, now {now:.1} ms, already sorted {again:.1} ms");
     }
+
+    // What a listed folder keeps on the heap, per item and by part. Run alone:
+    // PRIME_FILES_MEMORY_FOLDER=C:\Windows\WinSxS cargo test -p prime-files-pages
+    //   --lib -- --ignored --nocapture --test-threads=1 measure_listing_memory
+    #[gpui::test]
+    #[ignore = "a measurement, not a check; reads a big folder"]
+    async fn measure_listing_memory(cx: &mut gpui::TestAppContext) {
+        use crate::heap_count::live;
+        use gpui::AppContext as _;
+        let folder = std::env::var("PRIME_FILES_MEMORY_FOLDER").unwrap_or_else(|_| r"C:\Windows\WinSxS".to_string());
+        cx.update(gpui_component::init);
+        let window = cx.add_window(|window, cx| {
+            let resizable = cx.new(|_| gpui_component::resizable::ResizableState::default());
+            let search_input = cx.new(|cx| gpui_component::input::InputState::new(window, cx));
+            crate::explorer::ExplorerPane::new(
+                resizable,
+                search_input,
+                None,
+                prime_files_services::fs::trash::Ledger::KeptByOs,
+                cx.focus_handle(),
+            )
+        });
+        cx.run_until_parked();
+        let mb = |bytes: isize| bytes as f64 / 1_048_576.0;
+        let (count, total, filtered, entries) = window
+            .update(cx, |pane, _, cx| {
+                let before = live();
+                pane.cwd = folder.clone();
+                pane.reload(cx);
+                let total = live() - before;
+                let count = pane.entries.len();
+                let mark = live();
+                drop(std::mem::take(&mut pane.filtered_entries));
+                let filtered = mark - live();
+                let mark = live();
+                drop(std::mem::take(&mut pane.entries));
+                let entries = mark - live();
+                (count, total, filtered, entries)
+            })
+            .unwrap();
+        let per = |bytes: isize| bytes as f64 / count.max(1) as f64;
+        eprintln!("{folder}: {count} items, {:.1} MB kept ({:.0} B/item)", mb(total), per(total));
+        eprintln!("  entries          {:.1} MB ({:.0} B/item)", mb(entries), per(entries));
+        eprintln!("  filtered_entries {:.1} MB ({:.0} B/item)", mb(filtered), per(filtered));
+        let rest = total - entries - filtered;
+        eprintln!("  everything else  {:.1} MB ({:.0} B/item)", mb(rest), per(rest));
+    }
 }

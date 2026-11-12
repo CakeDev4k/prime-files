@@ -91,13 +91,48 @@ struct Quiet {
 /// (`snooper.cpp`, `BeginSuspendMode`; OTIMIZACAO.md §6.9). Until 11/11/2026
 /// a copy of 60 files over 3 s into the open folder read it 6 times; a copy
 /// of ten minutes, some 750 (`docs/PERFORMANCE.md`, pass 15).
-pub(crate) struct OwnOperation(std::rc::Rc<Quiet>);
+pub(crate) struct OwnOperation {
+    quiet: std::rc::Rc<Quiet>,
+    /// The folders it holds quiet for every pane, not only the one that
+    /// started it (`BUSY`).
+    folders: Vec<String>,
+}
 
 impl Drop for OwnOperation {
     fn drop(&mut self) {
-        self.0.running.set(self.0.running.get().saturating_sub(1));
-        self.0.ended.set(Some(Instant::now()));
+        self.quiet.running.set(self.quiet.running.get().saturating_sub(1));
+        self.quiet.ended.set(Some(Instant::now()));
+        BUSY.with_borrow_mut(|busy| {
+            for folder in &self.folders {
+                if let Some(count) = busy.get_mut(folder) {
+                    *count = count.saturating_sub(1);
+                    if *count == 0 {
+                        busy.remove(folder);
+                    }
+                }
+            }
+        });
     }
+}
+
+thread_local! {
+    /// Folders an operation of ours is writing in, and how many, for every
+    /// pane of the window's thread. Until 12/11/2026 the quiet was the
+    /// starting pane's alone: another tab on the same folder read it every
+    /// 800 ms through a whole copy (`docs/PERFORMANCE.md`, pass 21).
+    static BUSY: std::cell::RefCell<std::collections::HashMap<String, usize>> =
+        std::cell::RefCell::new(std::collections::HashMap::new());
+}
+
+/// A folder as `BUSY` keys it: either separator, any case, no trailing one.
+fn busy_key(folder: &str) -> String {
+    folder.trim_end_matches(['\\', '/']).replace('/', "\\").to_lowercase()
+}
+
+/// Whether an operation of ours, from any pane, writes in one of `folders`
+/// (already `busy_key`s).
+fn any_busy(folders: &[String]) -> bool {
+    BUSY.with_borrow(|busy| folders.iter().any(|folder| busy.contains_key(folder)))
 }
 
 /// The watch on a pane's folders; dropping it stops it.
@@ -158,6 +193,7 @@ impl ExplorerPane {
         let sender_for_poll = sender.clone();
         let quiet = std::rc::Rc::new(Quiet::default());
         let quiet_for_task = quiet.clone();
+        let busy_keys: Vec<String> = folders.iter().map(|folder| busy_key(folder)).collect();
         let in_front = self.in_front.clone();
         let setup = cx.background_spawn({
             let folders = folders.clone();
@@ -199,7 +235,10 @@ impl ExplorerPane {
                     }
                     cx.background_executor().timer((spacing - since).min(QUIET_CHECK)).await;
                 }
-                while quiet.running.get() > 0 {
+                // Ours, or another pane's on one of these folders: that
+                // pane reloads itself at the end; this one reads once then,
+                // below, for what it heard meanwhile.
+                while quiet.running.get() > 0 || any_busy(&busy_keys) {
                     cx.background_executor().timer(QUIET_CHECK).await;
                 }
                 while let Ok(also) = receiver.try_recv() {
@@ -245,7 +284,13 @@ impl ExplorerPane {
     pub(crate) fn begin_own_operation(&self) -> Option<OwnOperation> {
         let watch = self.folder_watch.as_ref()?;
         watch.quiet.running.set(watch.quiet.running.get() + 1);
-        Some(OwnOperation(watch.quiet.clone()))
+        let folders: Vec<String> = watch.folders.iter().map(|folder| busy_key(folder)).collect();
+        BUSY.with_borrow_mut(|busy| {
+            for folder in &folders {
+                *busy.entry(folder.clone()).or_insert(0) += 1;
+            }
+        });
+        Some(OwnOperation { quiet: watch.quiet.clone(), folders })
     }
 
     /// Reads the folder again because the disk changed. Put off (false)
@@ -648,6 +693,50 @@ mod tests {
         assert_eq!(running(cx), 1, "the batch did not hold the watch");
         pump(cx, std::time::Duration::from_millis(500));
         assert_eq!(running(cx), 0, "the batch never let the watch go");
+    }
+
+    // Another tab on the folder an operation of ours writes in waits it out
+    // too, and reads once at the end; a tab on another folder is not held.
+    #[gpui::test]
+    async fn another_tab_on_the_folder_waits_for_our_copy(cx: &mut TestAppContext) {
+        cx.executor().allow_parking();
+        let dir = tempfile::tempdir().unwrap();
+        let elsewhere = tempfile::tempdir().unwrap();
+        let ours = watched_pane(cx, dir.path());
+        let other = watched_pane(cx, dir.path());
+        let apart = watched_pane(cx, elsewhere.path());
+        let generation = |window: &WindowHandle<ExplorerPane>, cx: &mut TestAppContext| {
+            window.read_with(cx, |pane, _| pane.listing_generation).unwrap()
+        };
+        let other_before = generation(&other, cx);
+        let apart_before = generation(&apart, cx);
+        let guard = ours.update(cx, |pane, _, _| pane.begin_own_operation()).unwrap();
+        assert!(guard.is_some());
+        let (folder, other_folder) = (dir.path().to_path_buf(), elsewhere.path().to_path_buf());
+        let writer = std::thread::spawn(move || {
+            for index in 0..40 {
+                std::fs::write(folder.join(format!("copiado-{index:03}.txt")), "x").unwrap();
+                if index == 0 {
+                    std::fs::write(other_folder.join("de-outro-programa.txt"), "x").unwrap();
+                }
+                std::thread::sleep(std::time::Duration::from_millis(50));
+            }
+        });
+        while !writer.is_finished() {
+            pump(cx, std::time::Duration::from_millis(50));
+        }
+        writer.join().unwrap();
+        assert_eq!(generation(&other, cx), other_before, "the other tab read the folder during our copy");
+        assert!(generation(&apart, cx) > apart_before, "a tab on another folder was held too");
+        drop(guard);
+        ours.update(cx, |pane, _, cx| pane.reload(cx)).unwrap();
+        let until = Instant::now() + std::time::Duration::from_secs(3);
+        while Instant::now() < until && other.read_with(cx, |pane, _| pane.filtered_entries.len()).unwrap() < 40 {
+            pump(cx, std::time::Duration::from_millis(50));
+        }
+        pump(cx, std::time::Duration::from_secs(1));
+        assert_eq!(generation(&other, cx) - other_before, 1, "the other tab reads once, at the end");
+        assert_eq!(other.read_with(cx, |pane, _| pane.filtered_entries.len()).unwrap(), 40);
     }
 
     // A phone's operations run on a thread of their own, not through

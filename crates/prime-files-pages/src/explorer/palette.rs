@@ -272,6 +272,22 @@ pub(crate) trait PaletteHost: Sized + 'static {
     }
 }
 
+// Whether a key goes to the box's preview rather than to the box: in full
+// screen every key; otherwise the ones its handler answers, with no Ctrl,
+// Alt or Win (Ctrl+Enter, the size keys stay the box's).
+fn preview_takes(keys: &Keystroke, fullscreen: bool) -> bool {
+    if fullscreen {
+        return true;
+    }
+    if keys.modifiers.control || keys.modifiers.alt || keys.modifiers.platform {
+        return false;
+    }
+    matches!(
+        keys.key.as_str(),
+        "escape" | "enter" | "space" | " " | "left" | "right" | "up" | "down" | "pageup" | "pagedown"
+    )
+}
+
 // Icon size in pixels for a zoom: 20 px at 0, 220 at 1.
 fn icon_size(zoom: f32) -> f32 {
     20.0 + zoom.clamp(0.0, 1.0) * 200.0
@@ -1498,12 +1514,16 @@ pub(crate) trait PaletteBox: PaletteHost {
             .occlude()
             .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
             .capture_key_down(cx.listener(|page, event: &KeyDownEvent, window, cx| {
-                // A video in full screen takes every key (the handler after
-                // this one): Esc there comes back to the box, not out of it.
-                if page.palette_ref().and_then(|palette| palette.preview.as_ref()).is_some_and(|preview| preview.fullscreen) {
+                let keys = &event.keystroke;
+                // With a preview open, its keys are the next handler's: both
+                // sit on the card and this one runs first, so until
+                // 12/11/2026 Esc closed the whole box instead of going back
+                // to the list. In full screen the preview takes every key.
+                if let Some(preview) = page.palette_ref().and_then(|palette| palette.preview.as_ref())
+                    && preview_takes(&event.keystroke, preview.fullscreen)
+                {
                     return;
                 }
-                let keys = &event.keystroke;
                 let ctrl = keys.modifiers.control || keys.modifiers.platform;
                 let choosing = page.palette_ref().is_some_and(|palette| palette.chose && palette.columns > 1);
                 match keys.key.as_str() {
@@ -2395,6 +2415,31 @@ mod tests {
         assert_eq!(state(&mut cx), (Some(true), true));
         page.update_in(&mut cx, |page, window, cx| page.close_palette(window, cx));
         assert_eq!(state(&mut cx), (None, false), "closing the box left the window full screen");
+
+        // Out of full screen, Esc with a preview open goes back to the list:
+        // the box stays, the preview goes. Until 12/11/2026 the box's own
+        // Esc ran first and closed it all.
+        page.update_in(&mut cx, |page, window, cx| {
+            page.toggle_palette(window, cx);
+            page.palette.as_mut().unwrap().preview = Some(HitPreview {
+                path: r"C:\a\clip.mp4".into(),
+                name: "clip.mp4".into(),
+                folder: r"C:\a".into(),
+                media: Some(MediaPreview::for_test(true)),
+                track: Default::default(),
+                fullscreen: false,
+                took_window: false,
+            });
+        });
+        cx.update(|window, cx| window.draw(cx).clear());
+        cx.simulate_keystrokes("escape");
+        let (open, previewing) = page.update_in(&mut cx, |page, _, _| {
+            (page.palette.is_some(), page.palette.as_ref().is_some_and(|palette| palette.preview.is_some()))
+        });
+        assert!(open, "Esc with a preview closed the whole box");
+        assert!(!previewing, "Esc left the preview open");
+        cx.simulate_keystrokes("escape");
+        assert!(page.update_in(&mut cx, |page, _, _| page.palette.is_none()), "a second Esc did not close the box");
     }
 
     #[test]

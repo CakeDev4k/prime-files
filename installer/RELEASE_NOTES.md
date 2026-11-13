@@ -13,6 +13,7 @@ Explorador de arquivos para Windows, rápido, escrito em Rust.
 ### Correções da 0.3.11
 
 - Arrastar um item de dentro de um arquivo compactado para uma pasta travava a janela até a extração terminar. Agora a janela continua respondendo, e Esc cancela.
+- Na busca rápida, Esc com um vídeo ou som aberto fechava a busca inteira; agora volta para a lista.
 - A busca rápida às vezes não achava um arquivo recém-criado (um vídeo que acabou de ser renderizado, por exemplo) enquanto o disco estava ocupado.
 - Depois de clicar, algumas ações demoravam a acontecer, principalmente com uma unidade de rede que não responde. A janela não espera mais pelo disco, inclusive com o terminal aberto, no campo de caminho e nos menus da prévia.
 - Pastas com muitos arquivos ficam mais leves: a lista era copiada inteira a cada quadro desenhado (em uma pasta de 27 mil itens, cerca de 10 ms por quadro).

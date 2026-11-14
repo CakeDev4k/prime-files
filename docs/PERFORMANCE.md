@@ -1449,3 +1449,97 @@ de uma vez e um "Render final.mp4", com 3 ms para olhar cada um; todos os
   removível (só os fixos são vigiados), Google Drive (fora de propósito) e o
   `unwatch()` acima. Um sinal de estouro só existe lendo o
   `ReadDirectoryChangesW` por conta própria, com buffer maior.
+
+### 26. O vigia da busca lê o `ReadDirectoryChangesW` direto (13/11/2026)
+
+**Origem.** O "Ficou de fora" da passada 25: o `notify` 8.2 tinha buffer de
+16 KB, estouro calado (sucesso sem registro nenhum) e, em
+`ERROR_NOTIFY_ENUM_DIR`, `unwatch()` do disco inteiro até o app reabrir.
+
+**Mudança.** `drive_watch.rs`: uma thread por disco com
+`ReadDirectoryChangesW` sobreposto, 64 KB de buffer, parada por evento.
+Estouro nas duas formas (0 bytes, ou `ERROR_NOTIFY_ENUM_DIR`) vira
+`Change::Lost`, que marca `Fresh::lost`; qualquer outro erro reabre o disco
+em 5 s em vez de desistir. `ensure` varre de novo quando houve perda depois
+da última varredura e o índice tem mais de 10 min (2 min com a MFT): uma
+enxurrada de milhares de arquivos estoura várias vezes, e cada varredura sem
+a MFT custa minutos de disco. O `notify` continua no vigia da pasta aberta
+(`folder_watch.rs`), que não é recursivo.
+
+**Cobertura.** `a_flood_past_the_buffer_is_reported_as_lost` (buffer de 1 KB
+e leitura lenta; o mutante que cala o estouro reprova),
+`lost_names_call_for_a_walk_only_after_the_index_has_aged`; o teste da
+passada 25 continua verde.
+
+**Não conferido.** Visto só em testes; o `ERROR_NOTIFY_ENUM_DIR` não foi
+reproduzido, só o estouro de 0 bytes.
+
+### 27. Releitura idêntica não refaz nem redesenha (13/11/2026)
+
+**Origem.** "Ficou de fora" das passadas 15 e 21: o aviso que chega depois
+do fim da nossa operação gerava mais uma releitura completa.
+
+**Mudança.** `apply_listing` compara a leitura com o que está na tela
+(linhas, pastas abertas da árvore, prévia). Igual byte a byte: nada é
+filtrado, ordenado nem desenhado (`listing_unchanged`); o vigia não pede
+quadro. Qualquer diferença segue o caminho de sempre, então nenhuma mudança
+de outro programa é engolida. `FileEntryDto` ganhou `PartialEq`.
+
+**Cobertura.** `a_refresh_that_reads_the_same_rows_changes_nothing`.
+
+### 28. Janela minimizada não relê a pasta (13/11/2026)
+
+**Origem.** "Ficou de fora" da passada 16.
+
+**Mudança.** O vigia e o polling esperam enquanto `IsIconic` diz que a
+janela está minimizada e releem uma vez ao voltar. O HWND vem da view
+(`window_hwnd`); janelas de teste não têm, e o vigia segue como antes.
+
+**Não conferido.** Sem teste: exigiria uma janela de verdade minimizada.
+
+### 29. Teto de 30 perguntas presas ao disco (13/11/2026)
+
+**Origem.** "Ficou de fora" das passadas 13 e 19: cada pergunta presa num
+compartilhamento morto segurava uma thread do executor do gpui por 21 s,
+sem teto, e o clique num lugar morto não mostrava nada.
+
+**Mudança.** `ask_disk.rs`: thread própria e descartável por pergunta, no
+máximo 30 presas ao mesmo tempo (o número do Salamander); passou disso, a
+resposta é "desconhecida" e quem perguntou segue o caminho seguro. Usado em
+lugares da barra lateral, nova aba, Ctrl+T, campo de caminho e "Abrir em nova
+aba". Clique num lugar que não responde em 400 ms mostra "Abrindo…".
+
+**Cobertura.** `stuck_questions_stop_at_the_ceiling`. O "Abrindo…" não tem
+teste.
+
+### 30. As duas listas compartilham as linhas (13/11/2026)
+
+**Origem.** "Ficou de fora" das passadas 18 e 23.
+
+**Mudança.** `entries` e `filtered_entries` guardam `Arc<FileEntryDto>`;
+filtrar, buscar e reler copiam ponteiros. Ordenar e agrupar ficaram
+genéricos (`AsRef<FileEntryDto>`), e as listas de pastas da árvore e da
+busca continuam como eram.
+
+**Medido** (`measure_listing_memory`, WinSxS, 27.384 itens, debug):
+
+| | Antes (passada 23) | Depois |
+|---|---:|---:|
+| `entries` | 8,5 MB | 11,4 MB |
+| `filtered_entries` | 8,5 MB | 0,2 MB |
+
+`entries` cresceu porque cada linha virou uma alocação própria com o
+cabeçalho do `Arc`; no total, cerca de 5 MB a menos e nenhum clone dos nomes
+a cada filtro.
+
+**Ficou de fora** (nesta rodada, 13/11/2026):
+- **O player redesenhando o painel inteiro.** Exige lista e barra lateral
+  como views `.cached()` e o player como entidade própria. É uma
+  reestruturação do desenho do painel que não dá para conferir sem ver a
+  tela.
+- **Memória do índice** (`Entry` de 40 bytes, índice velho e novo juntos
+  durante a atualização) e **a grade guardando o nome duas vezes**:
+  estruturais, ganho de ~20 MB num C: de 2,5 milhões de nomes.
+- **Soltar do celular dentro do app**: o gpui só entende `HDROP`; precisaria
+  de remendo no `IDropTarget` dele para entregar o `IDataObject` e copiar
+  por `IFileOperation`.

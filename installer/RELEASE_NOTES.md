@@ -9,6 +9,7 @@ Explorador de arquivos para Windows, rápido, escrito em Rust.
 - O visualizador lembra se estava aberto ou fechado.
 - **Vídeo em tela cheia**: na prévia, na visualização rápida e na busca rápida, um botão no player (ou duplo clique no vídeo) leva o vídeo para a tela inteira. Espaço pausa, as setas andam 5 segundos e Esc volta.
 - **Extração com porcentagem**: ao arrastar algo de dentro de um .zip, .7z ou .rar, a linha mostra quanto já foi extraído.
+- **Converter com Filee**: com o [Filee](https://filee.sh) instalado, o botão direito num arquivo (ou Alt+C) manda a seleção para ele converter. Ideia de @byKoro (PR #54).
 
 ### Correções da 0.3.11
 
@@ -27,6 +28,10 @@ Explorador de arquivos para Windows, rápido, escrito em Rust.
 - No estilo Explorador, a árvore não segue mais a pasta aberta, como no Windows 11.
 - Capas de pasta com a aba e a moldura amarelas de uma pasta de verdade.
 - Botão direito com um menu já aberto agora abre o menu novo.
+- Com o Prime Files como explorador padrão, uma pasta fixada na Jump List do ícone do Explorador abria no Explorador do Windows quando o Prime Files estava fechado (#60). Agora abre no Prime Files.
+- A busca rápida podia deixar de ver arquivos novos depois de uma cópia ou extração muito grande, até reabrir o app. Agora ela percebe quando perdeu nomes e lê o disco de novo.
+- Clicar numa pasta de rede que não responde mostra "Abrindo…" em vez de não mostrar nada.
+- Com a janela minimizada, o Prime Files não confere mais as pastas abertas.
 
 ## Prime Files 0.3.10
 

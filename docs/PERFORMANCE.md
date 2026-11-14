@@ -1533,13 +1533,6 @@ cabeçalho do `Arc`; no total, cerca de 5 MB a menos e nenhum clone dos nomes
 a cada filtro.
 
 **Ficou de fora** (nesta rodada, 13/11/2026):
-- **Memória do índice** (`Entry` de 40 bytes, índice velho e novo juntos
-  durante a atualização) e **a grade guardando o nome duas vezes**:
-  estruturais, ganho de ~20 MB num C: de 2,5 milhões de nomes.
-- **Soltar do celular dentro do app**: o gpui só entende `HDROP`; precisaria
-  de remendo no `IDropTarget` dele para entregar o `IDataObject` e copiar
-  por `IFileOperation`.
-
 ### 31. O vídeo tocando redesenha só o player (14/11/2026)
 
 **Origem.** "Ficou de fora" das passadas 14, 20 e 30: cada quadro de um vídeo
@@ -1575,3 +1568,40 @@ volta ainda redesenham a lista e a barra.
 **Não conferido.** A CPU tocando não foi medida no app, e o layout da lista
 dentro da view cacheada não foi visto na tela. Os testes que desenham o
 painel passam, mas não substituem olhar.
+
+### 32. O índice da busca: 32 bytes por nome e um disco velho de cada vez (14/11/2026)
+
+**Origem.** "Ficou de fora" da passada 11.
+
+**Mudança.**
+- `Entry` caiu de 40 para 32 bytes. O tamanho vai em duas metades de
+  32 bits (a entrada passa a alinhar em 4), a máscara de letras tem 32 bits
+  e as 3 flags vão nos bits altos do comprimento do nome (13 bits, até
+  8.191 bytes; um nome do Windows tem no máximo 765). Na máscara, dígitos e
+  outros caracteres dividem os 6 últimos bits: isso só deixa mais nomes
+  chegarem ao teste de verdade, nunca tira um acerto. São 20 MB a menos num
+  C: de 2,5 milhões de nomes. O arquivo salvo não muda.
+- `build` segurava o índice anterior inteiro até o último disco terminar:
+  um disco lido da MFT em segundos ficava em dobro durante os minutos da
+  varredura de outro. Agora cada disco anterior é solto quando o novo
+  daquele disco fica pronto.
+
+**Cobertura.** `an_entry_is_32_bytes_and_keeps_what_it_was_given`. Os testes
+da passada 9, que comparam os resultados da busca, continuam verdes. A
+liberação por disco não tem teste: `build` lê os discos de verdade.
+
+### 33. A grade guarda o nome uma vez e 4 bytes por glifo (14/11/2026)
+
+**Origem.** "Ficou de fora" da passada 18.
+
+**Mudança.** A chave de `name_layouts` virou o hash do nome (`name_key`),
+não uma cópia dele. Com um glifo por caractere, que é quase todo nome,
+`NameWidths` guarda só o x e tira o byte de cada glifo do próprio nome.
+Ligaduras e emojis compostos guardam os dois, como antes.
+
+**Medido** (`measure_grid_name_memory`, WinSxS, 27.384 nomes): 23,6 →
+**11,1 MB** (905 → 425 B por nome).
+
+**Cobertura.** `name_widths_answer_as_the_shaped_line_does`,
+`a_name_keeps_four_bytes_a_glyph` e `a_ligature_keeps_each_glyphs_byte`
+(respostas iguais às da linha do gpui).

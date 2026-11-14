@@ -31,7 +31,7 @@ fn old_search(this: &Segment, query: &Query, fuzzy: bool, cancel: &AtomicBool) -
                             }
                             let index = (part * chunk + offset) as u32;
                             if let Some(rank) = old_rank(query, this, index, entry, fuzzy) {
-                                found.push((rank, entry.name_len, index));
+                                found.push((rank, entry.name_len(), index));
                             }
                         }
                         found
@@ -46,12 +46,12 @@ fn old_rank(this: &Query, segment: &Segment, position: u32, entry: &Entry, fuzzy
         if entry.mask & this.mask != this.mask {
             return None;
         }
-        let dir = entry.flags & DIR != 0;
+        let dir = entry.flags() & DIR != 0;
         if this.kind.is_some_and(|want| want != dir) {
             return None;
         }
         if let Some((low, high)) = this.size
-            && (dir || entry.size == UNKNOWN_SIZE || entry.size < low || entry.size > high)
+            && (dir || entry.size() == UNKNOWN_SIZE || entry.size() < low || entry.size() > high)
         {
             return None;
         }
@@ -117,7 +117,7 @@ fn old_rank(this: &Query, segment: &Segment, position: u32, entry: &Entry, fuzzy
         } else {
             3
         };
-        let noise = u32::from(entry.flags & NOISE != 0);
+        let noise = u32::from(entry.flags() & NOISE != 0);
         Some(class << 8 | noise << 4 | recency(entry.modified, this.now))
 }
 
@@ -190,7 +190,7 @@ pub(super) fn old_gather(
             let path = segment.path(position);
             shown
                 .insert(path.to_lowercase())
-                .then(|| (segment.name(entry).to_string(), path, entry.flags & DIR != 0))
+                .then(|| (segment.name(entry).to_string(), path, entry.flags() & DIR != 0))
         })
         .take(MAX_RESULTS)
         .collect()
@@ -465,6 +465,6 @@ fn a_folder_path_is_built_once_for_all_its_children() {
     for position in 0..segment.entries.len() as u32 {
         assert_eq!(paths.of(segment, position), segment.path(position).to_lowercase());
     }
-    let folders = segment.entries.iter().filter(|entry| entry.flags & DIR != 0).count();
+    let folders = segment.entries.iter().filter(|entry| entry.flags() & DIR != 0).count();
     assert!(paths.built <= folders * 2, "{} parents built for {folders} folders", paths.built);
 }

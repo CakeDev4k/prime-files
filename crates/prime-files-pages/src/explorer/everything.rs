@@ -84,20 +84,63 @@ const NOISE: u8 = 2;
 // already: 111 MB of names on this machine's C: were held twice.
 const SAME: u8 = 4;
 
+/// The longest name a table keeps, in bytes: 13 bits, with the flags in the
+/// other 3 of `name_len_flags`. A Windows name is 255 UTF-16 units at most,
+/// 765 bytes of UTF-8.
+const NAME_LEN_MAX: usize = (1 << 13) - 1;
+
+// 32 bytes, 4-aligned. Until 14/11/2026 it was 40 (a 64-bit size and mask
+// made it 8-aligned, and the flags byte padded it out): 20 MB more for the
+// 2.5 million names of this machine's C: (`docs/PERFORMANCE.md`, pass 32).
 #[derive(Clone, Copy)]
 struct Entry {
-    /// Bytes; `UNKNOWN_SIZE` from an old table. Folders 0.
-    size: u64,
+    /// Bytes, as two halves so the entry is 4-aligned; `UNKNOWN_SIZE` from
+    /// an old table. Folders 0.
+    size_low: u32,
+    size_high: u32,
     /// `letter_mask` of the lowered name; worked out, never saved.
-    mask: u64,
+    mask: u32,
     parent: u32,
     name: u32,
     lower: u32,
     /// Last write, whole seconds since 1970; 0 when unknown.
     modified: u32,
-    name_len: u16,
+    /// The name's length in bytes (low 13 bits) and the flags (high 3).
+    name_len_flags: u16,
     lower_len: u16,
-    flags: u8,
+}
+
+impl Entry {
+    #[allow(clippy::too_many_arguments)]
+    fn new(size: u64, mask: u32, parent: u32, name: u32, lower: u32, modified: u32, name_len: usize, lower_len: u16, flags: u8) -> Self {
+        Self {
+            size_low: size as u32,
+            size_high: (size >> 32) as u32,
+            mask,
+            parent,
+            name,
+            lower,
+            modified,
+            name_len_flags: name_len.min(NAME_LEN_MAX) as u16 | u16::from(flags) << 13,
+            lower_len,
+        }
+    }
+
+    fn size(&self) -> u64 {
+        u64::from(self.size_high) << 32 | u64::from(self.size_low)
+    }
+
+    fn flags(&self) -> u8 {
+        (self.name_len_flags >> 13) as u8
+    }
+
+    fn set_flag(&mut self, flag: u8) {
+        self.name_len_flags |= u16::from(flag) << 13;
+    }
+
+    fn name_len(&self) -> u16 {
+        self.name_len_flags & NAME_LEN_MAX as u16
+    }
 }
 
 /// Every name on the indexed drives, a segment per drive.
@@ -146,12 +189,12 @@ impl Segment {
 
     fn name(&self, entry: &Entry) -> &str {
         let start = entry.name as usize;
-        self.names.get(start..start + entry.name_len as usize).unwrap_or("")
+        self.names.get(start..start + entry.name_len() as usize).unwrap_or("")
     }
 
     fn lower(&self, entry: &Entry) -> &str {
         let start = entry.lower as usize;
-        let text = if entry.flags & SAME != 0 { &self.names } else { &self.lower };
+        let text = if entry.flags() & SAME != 0 { &self.names } else { &self.lower };
         text.get(start..start + entry.lower_len as usize).unwrap_or("")
     }
 
@@ -205,7 +248,7 @@ impl Segment {
                             }
                             let index = (part * chunk + offset) as u32;
                             if let Some(rank) = query.rank(self, index, entry, fuzzy, &mut paths) {
-                                found.push((rank, entry.name_len, index));
+                                found.push((rank, entry.name_len(), index));
                             }
                         }
                         found
@@ -316,7 +359,7 @@ struct Query {
     // The first name term, to rank a match at the start of a word.
     first: Option<String>,
     // The letters every name term needs (`letter_mask`).
-    mask: u64,
+    mask: u32,
     needs_path: bool,
     now: u32,
     // The one plain name term a search with too few hits tries again with,
@@ -640,12 +683,16 @@ fn scope(value: &str, cwd: &str) -> Option<Filter> {
 /// share the high bits). A name lacking a letter of the query cannot match,
 /// and one AND says so before the name's text is read: Kensaku's
 /// "char bloom", which turns most of a scan into reading 8 bytes an entry.
-fn letter_mask(lower: &str) -> u64 {
-    lower.chars().fold(0u64, |mask, character| {
+fn letter_mask(lower: &str) -> u32 {
+    // 26 bits for the letters; the digits and everything else share the
+    // last 6 (until 14/11/2026 a 64-bit mask gave each digit its own). A
+    // shared bit only lets a few more names through to the real test, and
+    // never keeps a match out: a character in the name always sets its bit.
+    lower.chars().fold(0u32, |mask, character| {
         let bit = match character {
             'a'..='z' => character as u32 - 'a' as u32,
-            '0'..='9' => 26 + (character as u32 - '0' as u32),
-            other => 36 + other as u32 % 28,
+            '0'..='9' => 26 + (character as u32 - '0' as u32) % 3,
+            other => 29 + other as u32 % 3,
         };
         mask | 1 << bit
     })
@@ -805,12 +852,12 @@ impl Query {
         if entry.mask & self.mask != self.mask {
             return None;
         }
-        let dir = entry.flags & DIR != 0;
+        let dir = entry.flags() & DIR != 0;
         if self.kind.is_some_and(|want| want != dir) {
             return None;
         }
         if let Some((low, high)) = self.size
-            && (dir || entry.size == UNKNOWN_SIZE || entry.size < low || entry.size > high)
+            && (dir || entry.size() == UNKNOWN_SIZE || entry.size() < low || entry.size() > high)
         {
             return None;
         }
@@ -876,7 +923,7 @@ impl Query {
         } else {
             3
         };
-        let noise = u32::from(entry.flags & NOISE != 0);
+        let noise = u32::from(entry.flags() & NOISE != 0);
         Some(class << 8 | noise << 4 | recency(entry.modified, self.now))
     }
 }
@@ -937,13 +984,13 @@ impl Segment {
     fn share_lower(&mut self) {
         let mut kept = String::new();
         for entry in &mut self.entries {
-            if entry.flags & SAME != 0 {
+            if entry.flags() & SAME != 0 {
                 continue;
             }
             let (name, lower) = (entry.name as usize, entry.lower as usize);
             let lowered = self.lower.get(lower..lower + entry.lower_len as usize).unwrap_or("");
-            if self.names.get(name..name + entry.name_len as usize) == Some(lowered) {
-                entry.flags |= SAME;
+            if self.names.get(name..name + entry.name_len() as usize) == Some(lowered) {
+                entry.set_flag(SAME);
                 entry.lower = entry.name;
             } else {
                 entry.lower = kept.len() as u32;
@@ -973,26 +1020,26 @@ impl Segment {
 
     // `add` with the lowering and the mask done beforehand: the walk does
     // them outside the lock its 32 readers share.
-    fn add_lowered(&mut self, parent: u32, name: &str, lowered: &str, mask: u64, found: Found) -> u32 {
+    fn add_lowered(&mut self, parent: u32, name: &str, lowered: &str, mask: u32, found: Found) -> u32 {
         // A name longer than this is not a real Windows name (255 UTF-16
         // units at most); clipping keeps the table's lengths in 16 bits.
-        let name = clip(name, u16::MAX as usize);
+        let name = clip(name, NAME_LEN_MAX);
         let lowered = clip(lowered, u16::MAX as usize);
         let parent_entry = self.entries.get(parent as usize).copied();
         let at_root = parent_entry.is_some_and(|entry| entry.parent == NO_PARENT);
-        let noise = parent_entry.is_some_and(|entry| entry.flags & NOISE != 0) || noisy(lowered, at_root);
+        let noise = parent_entry.is_some_and(|entry| entry.flags() & NOISE != 0) || noisy(lowered, at_root);
         let same = name == lowered;
-        let entry = Entry {
-            size: if found.dir { 0 } else { found.size },
+        let entry = Entry::new(
+            if found.dir { 0 } else { found.size },
             mask,
             parent,
-            name: self.names.len() as u32,
-            lower: if same { self.names.len() } else { self.lower.len() } as u32,
-            modified: found.modified,
-            name_len: name.len() as u16,
-            lower_len: lowered.len() as u16,
-            flags: if found.dir { DIR } else { 0 } | if noise { NOISE } else { 0 } | if same { SAME } else { 0 },
-        };
+            self.names.len() as u32,
+            if same { self.names.len() } else { self.lower.len() } as u32,
+            found.modified,
+            name.len(),
+            lowered.len() as u16,
+            if found.dir { DIR } else { 0 } | if noise { NOISE } else { 0 } | if same { SAME } else { 0 },
+        );
         self.names.push_str(name);
         if !same {
             self.lower.push_str(lowered);
@@ -1008,7 +1055,7 @@ impl Segment {
         if path_is_noise(&path.to_lowercase())
             && let Some(entry) = self.entries.get_mut(index as usize)
         {
-            entry.flags |= NOISE;
+            entry.set_flag(NOISE);
         }
         self.paths.push(path);
     }
@@ -1420,7 +1467,7 @@ fn worker(walk: &Walk) {
         // Read outside every lock: this is the slow part.
         let mut listed = Vec::new();
         (walk.list)(&folder, &mut listed);
-        let lowered: Vec<(String, u64)> = listed
+        let lowered: Vec<(String, u32)> = listed
             .iter()
             .map(|entry| {
                 let lower = entry.name.to_lowercase();
@@ -1548,13 +1595,13 @@ fn save_segments(built: SystemTime, segments: &[&Segment], path: &Path) -> std::
             file.write_all(&entry.parent.to_le_bytes())?;
             file.write_all(&entry.name.to_le_bytes())?;
             file.write_all(&entry.lower.to_le_bytes())?;
-            file.write_all(&entry.name_len.to_le_bytes())?;
+            file.write_all(&entry.name_len().to_le_bytes())?;
             file.write_all(&entry.lower_len.to_le_bytes())?;
-            file.write_all(&entry.size.to_le_bytes())?;
+            file.write_all(&entry.size().to_le_bytes())?;
             file.write_all(&entry.modified.to_le_bytes())?;
             // Only what a listing said: the noise flag and the mask are
             // worked out again on reading.
-            file.write_all(&[entry.flags & (DIR | SAME)])?;
+            file.write_all(&[entry.flags() & (DIR | SAME)])?;
         }
         file.write_all(segment.names.as_bytes())?;
         file.write_all(segment.lower.as_bytes())?;
@@ -1628,21 +1675,26 @@ fn load_segment(file: &mut impl std::io::Read, version: u8, left: &mut u64) -> O
         } else {
             (UNKNOWN_SIZE, 0, if raw[16] != 0 { DIR } else { 0 })
         };
-        let entry = Entry {
-            size: if flags & DIR != 0 { 0 } else { size },
-            mask: 0,
-            parent: word(0),
-            name: word(4),
-            lower: word(8),
+        // A name past what an entry holds is no real one: the table is
+        // refused and walked again.
+        if usize::from(half(12)) > NAME_LEN_MAX {
+            return None;
+        }
+        let entry = Entry::new(
+            if flags & DIR != 0 { 0 } else { size },
+            0,
+            word(0),
+            word(4),
+            word(8),
             modified,
-            name_len: half(12),
-            lower_len: half(14),
+            usize::from(half(12)),
+            half(14),
             flags,
-        };
+        );
         // Every slice the table hands out must land inside its strings, and
         // a parent comes before its children (the noise flag below is
         // passed down in one sweep).
-        if entry.name as usize + entry.name_len as usize > names_len
+        if entry.name as usize + entry.name_len() as usize > names_len
             || entry.lower as usize + entry.lower_len as usize > if flags & SAME != 0 { names_len } else { lower_len }
             || (entry.parent != NO_PARENT && entry.parent as usize >= position)
         {
@@ -1661,7 +1713,7 @@ fn load_segment(file: &mut impl std::io::Read, version: u8, left: &mut u64) -> O
     // A slice cut inside a character would come back empty; one such entry
     // means the file is not what this version wrote.
     let consistent = segment.entries.iter().all(|entry| {
-        let lowered = if entry.flags & SAME != 0 { &segment.names } else { &segment.lower };
+        let lowered = if entry.flags() & SAME != 0 { &segment.names } else { &segment.lower };
         segment.names.is_char_boundary(entry.name as usize) && lowered.is_char_boundary(entry.lower as usize)
     });
     if !consistent {
@@ -1676,11 +1728,11 @@ fn load_segment(file: &mut impl std::io::Read, version: u8, left: &mut u64) -> O
         let lowered = segment.lower(&entry);
         let mask = letter_mask(lowered);
         let at_root = parent.is_some_and(|parent| parent.parent == NO_PARENT);
-        let noise = parent.is_some_and(|parent| parent.flags & NOISE != 0) || noisy(lowered, at_root);
+        let noise = parent.is_some_and(|parent| parent.flags() & NOISE != 0) || noisy(lowered, at_root);
         if let Some(entry) = segment.entries.get_mut(position) {
             entry.mask = mask;
             if noise {
-                entry.flags |= NOISE;
+                entry.set_flag(NOISE);
             }
         }
     }
@@ -1829,7 +1881,7 @@ impl Fresh {
                 continue;
             };
             if keep(path, *seen) {
-                let found = Found { dir: entry.flags & DIR != 0, size: entry.size, modified: entry.modified };
+                let found = Found { dir: entry.flags() & DIR != 0, size: entry.size(), modified: entry.modified };
                 self.table.add_loose(path.clone(), found);
                 self.seen.push(*seen);
             }
@@ -2447,7 +2499,7 @@ fn gather(
         };
         let path = segment.path(position);
         if shown.insert(path.to_lowercase()) {
-            out.push((segment.name(entry).to_string(), path, entry.flags & DIR != 0));
+            out.push((segment.name(entry).to_string(), path, entry.flags() & DIR != 0));
         }
         out.len() < MAX_RESULTS
     });
@@ -2875,9 +2927,9 @@ mod tests {
             old.extend_from_slice(&entry.name.to_le_bytes());
             old.extend_from_slice(&at.to_le_bytes());
             at += u32::from(entry.lower_len);
-            old.extend_from_slice(&entry.name_len.to_le_bytes());
+            old.extend_from_slice(&entry.name_len().to_le_bytes());
             old.extend_from_slice(&entry.lower_len.to_le_bytes());
-            old.push(entry.flags & DIR);
+            old.push(entry.flags() & DIR);
         }
         old.extend_from_slice(segment.names.as_bytes());
         old.extend_from_slice(lowered.as_bytes());
@@ -2952,6 +3004,22 @@ mod tests {
         }
         drop(watch);
         assert!(lost.load(Ordering::SeqCst), "the overflow went unreported");
+    }
+
+    // 32 bytes a name (pass 32): 40 cost 20 MB more on a C: of 2.5 million.
+    // Size and flags still read back what was put in.
+    #[test]
+    fn an_entry_is_32_bytes_and_keeps_what_it_was_given() {
+        assert_eq!(std::mem::size_of::<Entry>(), 32);
+        let big = 5 * 1024 * 1024 * 1024 + 7;
+        let mut entry = Entry::new(big, 0, NO_PARENT, 0, 0, 0, 765, 765, DIR | SAME);
+        assert_eq!(entry.size(), big);
+        assert_eq!(entry.name_len(), 765);
+        assert_eq!(entry.flags(), DIR | SAME);
+        entry.set_flag(NOISE);
+        assert_eq!(entry.flags(), DIR | SAME | NOISE);
+        assert_eq!(entry.name_len(), 765);
+        assert_eq!(Entry::new(UNKNOWN_SIZE, 0, 0, 0, 0, 0, 1, 1, 0).size(), UNKNOWN_SIZE);
     }
 
     #[test]

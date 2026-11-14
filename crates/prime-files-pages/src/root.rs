@@ -81,6 +81,11 @@ pub struct RootView {
     // The Name box, file types and Open/Cancel while a browser's Open dialog
     // waits on Prime Files (`picking_bar`).
     pub(crate) picking_bar: Option<crate::picking_bar::PickingBar>,
+    // This window among the Shell's folder windows, so a "show in folder"
+    // aimed at the folder it shows selects the file here (issue #56), and
+    // the folder it was last placed on.
+    shell_window: Option<crate::shell_window::ShellWindow>,
+    shell_folder: String,
 }
 
 impl RootView {
@@ -138,8 +143,11 @@ impl RootView {
             config_status: None,
             _config_watcher: None,
             picking_bar: None,
+            shell_window: None,
+            shell_folder: String::new(),
         };
         view.start_progress_loop(window, cx);
+        view.start_shell_window(window, cx);
         view.apply_config(config, config_error, window, cx);
         view.start_config_watch(window, cx);
         // Once per run, in the main window; each answers through the window
@@ -168,6 +176,53 @@ impl RootView {
         })
         .detach();
         view
+    }
+
+    // Lists this window among the Shell's folder windows (issue #56). The
+    // folder is given on the first frame (`follow_shell_folder`): the tabs
+    // are still loading here. What the Shell asks to select arrives on a
+    // thread of its own and is shown in this window.
+    fn start_shell_window(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(hwnd) = crate::ipc::window_hwnd(window) else {
+            return;
+        };
+        let (sink, selected) = async_channel::unbounded::<crate::shell_window::Selected>();
+        let folder = self.explorer.read(cx).current_path(cx);
+        self.shell_window = Some(crate::shell_window::ShellWindow::register(hwnd, &folder, sink));
+        self.shell_folder = folder;
+        cx.spawn_in(window, async move |this, cx| {
+            while let Ok(selected) = selected.recv().await {
+                let Some(item) = selected.items.first() else {
+                    continue;
+                };
+                let folder = selected.folder.to_string_lossy().into_owned();
+                let item = item.to_string_lossy().into_owned();
+                let shown = this.update_in(cx, |root, window, cx| {
+                    root.show_explorer(cx);
+                    root.explorer_entity().update(cx, |page, cx| page.open_path(folder, Some(item), window, cx));
+                    window.activate_window();
+                });
+                if shown.is_err() {
+                    break;
+                }
+            }
+        })
+        .detach();
+    }
+
+    // Tells the Shell when the folder on screen changes, so it finds this
+    // window there. Compared each frame: one string, against the cost of
+    // missing a tab switch, a pane switch or a navigation.
+    fn follow_shell_folder(&mut self, cx: &mut Context<Self>) {
+        let Some(shell_window) = &self.shell_window else {
+            return;
+        };
+        let cwd = self.explorer.read(cx).current_path(cx);
+        if cwd == self.shell_folder {
+            return;
+        }
+        shell_window.navigate(&cwd);
+        self.shell_folder = cwd;
     }
 
     // Looks for an update a few seconds after the window is up (so it never
@@ -545,6 +600,7 @@ impl Focusable for RootView {
 impl Render for RootView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         crate::startup::first_render(window);
+        self.follow_shell_folder(cx);
         self.sync_picking_bar(window, cx);
         let picking_bar = self.render_picking_bar(cx);
         // On the explorer with one pane the tab row is the title bar, as in

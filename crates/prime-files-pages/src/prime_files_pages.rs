@@ -30,6 +30,7 @@ pub mod pane_group;
 pub mod updater;
 /// Other programs' "show in folder", answered by Prime Files.
 pub mod reveal;
+pub mod shell_window;
 mod jump_list;
 /// The application root view that hosts the sidebar and active page.
 pub mod root;

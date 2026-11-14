@@ -9,7 +9,7 @@ Explorador de arquivos para Windows, rápido, escrito em Rust.
 - O visualizador lembra se estava aberto ou fechado.
 - **Vídeo em tela cheia**: na prévia, na visualização rápida e na busca rápida, um botão no player (ou duplo clique no vídeo) leva o vídeo para a tela inteira. Espaço pausa, as setas andam 5 segundos e Esc volta.
 - **Extração com porcentagem**: ao arrastar algo de dentro de um .zip, .7z ou .rar, a linha mostra quanto já foi extraído.
-- **Converter com Filee**: com o [Filee](https://filee.sh) instalado, o botão direito num arquivo (ou Alt+C) manda a seleção para ele converter. Ideia de @byKoro (PR #54).
+- **Converter com Filee**: com o [Filee](https://filee.sh) instalado, o botão direito num arquivo (ou Alt+C) manda a seleção para ele converter. Ideia de byKoro (PR #54).
 
 ### Correções da 0.3.11
 

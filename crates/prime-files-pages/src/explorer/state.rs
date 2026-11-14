@@ -62,6 +62,10 @@ pub struct ExplorerPane {
     pub(crate) in_front: std::sync::Arc<std::sync::atomic::AtomicBool>,
     /// How long the last read of the folder took on its own thread.
     pub(crate) last_read_cost: std::time::Duration,
+    /// The last read of the folder on screen found exactly what was
+    /// listed, so nothing was rebuilt and nothing needs drawing
+    /// (`apply_listing`).
+    pub(crate) listing_unchanged: bool,
     /// The folder the rows on screen were read from. A read of the same folder
     /// is a refresh and keeps what the user had open (`navigation::reload`).
     pub(crate) listed_cwd: Option<String>,
@@ -588,6 +592,7 @@ impl ExplorerPane {
             activation_watch: None,
             in_front: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(true)),
             last_read_cost: std::time::Duration::ZERO,
+            listing_unchanged: false,
             listed_cwd: None,
             default_sort_key: SortKey::Name,
             default_sort_asc: true,

@@ -301,7 +301,11 @@ impl ExplorerPane {
             return false;
         }
         self.reload(cx);
-        cx.notify();
+        // A read answered at once and identical to what is shown needs no
+        // frame; one still under way notifies when it lands.
+        if self.listing_pending || !self.listing_unchanged {
+            cx.notify();
+        }
         true
     }
 }
@@ -635,6 +639,33 @@ mod tests {
     #[gpui::test]
     async fn the_watch_keeps_up_with_another_program_writing(cx: &mut TestAppContext) {
         assert_eq!(another_program_writes(cx, true).1, 120);
+    }
+
+    // A refresh that reads exactly what is shown rebuilds and draws nothing;
+    // the first difference, even one byte of size, takes the full path
+    // (`docs/PERFORMANCE.md`, pass 27).
+    #[gpui::test]
+    async fn a_refresh_that_reads_the_same_rows_changes_nothing(cx: &mut TestAppContext) {
+        let dir = tempfile::tempdir().unwrap();
+        for index in 0..20 {
+            std::fs::write(dir.path().join(format!("arquivo-{index:02}.txt")), "x").unwrap();
+        }
+        let window = pane(cx);
+        let reload = |cx: &mut TestAppContext| {
+            window.update(cx, |pane, _, cx| pane.reload(cx)).unwrap();
+            cx.run_until_parked();
+            window.read_with(cx, |pane, _| (pane.listing_unchanged, pane.filtered_entries.len())).unwrap()
+        };
+        window
+            .update(cx, |pane, _, _| pane.cwd = dir.path().to_string_lossy().into_owned())
+            .unwrap();
+        assert_eq!(reload(cx), (false, 20), "a visit is never unchanged");
+        assert_eq!(reload(cx), (true, 20));
+        std::fs::write(dir.path().join("arquivo-03.txt"), "xy").unwrap();
+        assert_eq!(reload(cx), (false, 20), "a size changed");
+        std::fs::write(dir.path().join("novo.txt"), "x").unwrap();
+        assert_eq!(reload(cx), (false, 21), "a name appeared");
+        assert_eq!(reload(cx), (true, 21));
     }
 
     // The cost is what the read took on its thread, not how long the UI

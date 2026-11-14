@@ -5,7 +5,7 @@ use serde::Serialize;
 /// Field types are intentionally primitive (`String`, `u64`) so this type stays
 /// free of any toolkit or service dependency and can live at the bottom of the
 /// dependency graph in `prime-files-models`.
-#[derive(Debug, Serialize, Clone)]
+#[derive(Debug, Serialize, Clone, PartialEq, Eq)]
 pub struct FileEntryDto {
     /// File or directory name (final path component).
     pub name: String,

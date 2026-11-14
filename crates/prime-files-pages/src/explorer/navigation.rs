@@ -288,9 +288,12 @@ impl ExplorerPane {
                 if pane.listing_generation == generation {
                     pane.listing_pending = false;
                     pane.listing_tasks.clear();
+                    let showing_status = pane.status_message.is_some();
                     pane.apply_listing(read, refresh, cx);
                     pane.watch_listed_folders(cx);
-                    cx.notify();
+                    if !pane.listing_unchanged || showing_status {
+                        cx.notify();
+                    }
                 }
             })
             .ok();
@@ -300,7 +303,25 @@ impl ExplorerPane {
 
     fn apply_listing(&mut self, read: FolderRead, refresh: bool, cx: &mut Context<Self>) {
         self.last_read_cost = read.took;
+        self.listing_unchanged = false;
         match read.listing {
+            Ok(entries) if refresh && self.read_changes_nothing(&entries, &read.open_folders, read.preview_gone) => {
+                // The disk's notice was of our own change, already on
+                // screen, or arrived after the operation that caused it
+                // (Open Salamander calls such a refresh "probably useless"
+                // and compares the listings too). The same rows exactly:
+                // nothing is rebuilt, sorted or drawn (`docs/PERFORMANCE.md`,
+                // pass 27). Any difference at all takes the full path below.
+                self.listing_unchanged = true;
+                self.clear_status();
+                // A row asked to be selected once listed (a paste that
+                // replaced a file with its twin) still is.
+                if let Some(path) = self.reveal_after_listing.take() {
+                    self.reveal(&path);
+                    self.take_select_after_listing();
+                    self.listing_unchanged = false;
+                }
+            }
             Ok(entries) => {
                 crate::startup::mark_once("first-listing");
                 if refresh {
@@ -399,6 +420,23 @@ impl ExplorerPane {
                 );
             }
         }
+    }
+
+    // Whether a refresh read exactly the rows, open Tree folders and
+    // preview already shown.
+    fn read_changes_nothing(
+        &self,
+        entries: &[FileEntryDto],
+        open_folders: &[(String, Option<Vec<FileEntryDto>>)],
+        preview_gone: bool,
+    ) -> bool {
+        !preview_gone
+            && self.listed_cwd.as_deref() == Some(self.cwd.as_str())
+            && self.entries.as_slice() == entries
+            && open_folders.len() == self.tree.children.len()
+            && open_folders.iter().all(|(folder, contents)| {
+                contents.as_ref().is_some_and(|contents| self.tree.children.get(folder) == Some(contents))
+            })
     }
 
     pub(crate) fn change_dir(&mut self, path: String, window: &mut Window, cx: &mut Context<Self>) {

@@ -87,6 +87,7 @@ expression: parsed
                 "new_tab",
                 "windows",
                 "copy_path",
+                "filee",
                 "tags",
                 "more_options",
                 "customize",

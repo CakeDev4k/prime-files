@@ -4,6 +4,9 @@
 //! that every key has a row here and that placeholders survive.
 
 pub(super) static EXTRA: &[(&str, [&str; 6])] = &[
+    ("Converter com Filee", ["Convertir avec Filee", "Mit Filee konvertieren", "Converti con Filee", "Конвертировать в Filee", "Filee で変換", "使用 Filee 转换"]),
+    ("Selecione ao menos um arquivo para converter", ["Sélectionnez au moins un fichier à convertir", "Wählen Sie mindestens eine Datei zum Konvertieren aus", "Seleziona almeno un file da convertire", "Выберите хотя бы один файл для конвертации", "変換するファイルを 1 つ以上選択してください", "请至少选择一个要转换的文件"]),
+    ("O Filee não está instalado", ["Filee n’est pas installé", "Filee ist nicht installiert", "Filee non è installato", "Filee не установлен", "Filee がインストールされていません", "未安装 Filee"]),
     (
         "Fixadas",
         [

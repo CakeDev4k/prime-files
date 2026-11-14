@@ -49,6 +49,7 @@ impl ExplorerPane {
         match action {
             Action::Copy => self.copy_selection(cx),
             Action::CopyPath => self.copy_paths_as_text(cx),
+            Action::ConvertWithFilee => self.convert_selection_with_filee(cx),
             Action::Cut => self.cut_selection(cx),
             Action::Paste => self.paste_into_cwd(window, cx),
             Action::Rename => {

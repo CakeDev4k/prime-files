@@ -3,6 +3,9 @@
 //! survive.
 
 pub(super) static HUNGARIAN: &[(&str, &str)] = &[
+    ("Converter com Filee", "Konvertálás a Filee-vel"),
+    ("Selecione ao menos um arquivo para converter", "Jelöljön ki legalább egy konvertálandó fájlt"),
+    ("O Filee não está instalado", "A Filee nincs telepítve"),
     ("Fixadas", "Rögzítve"),
     ("Pastas com a primeira imagem", "Mappák az első képükkel"),
     ("No modo Ícones, cada pasta aparece como a primeira foto ou vídeo dentro dela, em tamanho cheio.", "Ikonok nézetben minden mappa a benne lévő első fotóként vagy videóként jelenik meg, teljes méretben."),

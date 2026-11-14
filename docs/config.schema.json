@@ -350,6 +350,7 @@
             "new_tab",
             "windows",
             "copy_path",
+            "filee",
             "tags",
             "more_options",
             "customize"
@@ -971,6 +972,7 @@
           "new_tab",
           "windows",
           "copy_path",
+          "filee",
           "tags",
           "more_options",
           "customize"

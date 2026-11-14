@@ -575,6 +575,8 @@ impl ExplorerPane {
         trash_ledger: TrashLedger,
         focus_handle: FocusHandle,
     ) -> Self {
+        // So the first file menu already knows whether Filee is there.
+        super::filee::look_soon();
         Self {
             cwd: std::env::current_dir()
                 .map(|p| p.to_string_lossy().to_string())

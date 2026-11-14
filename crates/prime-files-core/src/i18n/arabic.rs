@@ -3,6 +3,9 @@
 //! survive.
 
 pub(super) static ARABIC: &[(&str, &str)] = &[
+    ("Converter com Filee", "تحويل باستخدام Filee"),
+    ("Selecione ao menos um arquivo para converter", "حدد ملفًا واحدًا على الأقل لتحويله"),
+    ("O Filee não está instalado", "Filee غير مثبّت"),
     ("Fixadas", "المثبتة"),
     ("Pastas com a primeira imagem", "المجلدات بأول صورة فيها"),
     ("No modo Ícones, cada pasta aparece como a primeira foto ou vídeo dentro dela, em tamanho cheio.", "في عرض الأيقونات، يظهر كل مجلد كأول صورة أو فيديو بداخله بالحجم الكامل."),

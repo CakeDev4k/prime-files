@@ -4,6 +4,9 @@
 //! has a row here. Sorted by key to keep duplicates easy to spot.
 
 pub(super) static STRINGS: &[(&str, &str, &str)] = &[
+    ("Converter com Filee", "Convert with Filee", "Convertir con Filee"),
+    ("Selecione ao menos um arquivo para converter", "Select at least one file to convert", "Selecciona al menos un archivo para convertir"),
+    ("O Filee não está instalado", "Filee is not installed", "Filee no está instalado"),
     ("Fixadas", "Pinned", "Ancladas"),
     ("Pastas com a primeira imagem", "Folders as their first picture", "Carpetas con la primera imagen"),
     ("No modo Ícones, cada pasta aparece como a primeira foto ou vídeo dentro dela, em tamanho cheio.", "In the icons view, each folder shows as the first photo or video inside it, full size.", "En la vista de iconos, cada carpeta aparece como la primera foto o vídeo que contiene, a tamaño completo."),

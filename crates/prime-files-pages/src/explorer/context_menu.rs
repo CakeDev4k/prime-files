@@ -76,10 +76,11 @@ enum Command {
     ClearRecent,
     HideSection,
     NewGroupWithPlace,
+    ConvertWithFilee,
 }
 
 impl Command {
-    const ALL: [Command; 59] = [
+    const ALL: [Command; 60] = [
         Command::ViewList,
         Command::ViewGrid,
         Command::ViewTree,
@@ -139,6 +140,7 @@ impl Command {
         Command::ClearRecent,
         Command::HideSection,
         Command::NewGroupWithPlace,
+        Command::ConvertWithFilee,
     ];
 
     fn from_id(id: u32) -> Option<Self> {
@@ -189,6 +191,7 @@ pub(crate) fn menu_entry_info(id: &str) -> Option<(&'static str, &'static str)> 
         "properties" => (t!("Propriedades"), "icons/info.svg"),
         "tags" => (t!("Tags"), "icons/tag.svg"),
         "windows" => (t!("Itens do Windows"), "icons/app-window.svg"),
+        "filee" => (t!("Converter com Filee"), "icons/refresh-cw.svg"),
         "more_options" => (t!("Mostrar mais opções"), "icons/ellipsis.svg"),
         "customize" => (t!("Personalizar este menu…"), "icons/settings.svg"),
         _ => return None,
@@ -545,6 +548,12 @@ impl ExplorerPane {
                         "copy_path" => Entry::command(Command::CopyPath as u32, t!("Copiar como caminho"))
                             .with_icon("icons/link.svg")
                             .with_shortcut(keys_of(Action::CopyPath)),
+                        // Only with Filee installed (PR #54).
+                        "filee" if super::filee::installed().is_some() => {
+                            Entry::command(Command::ConvertWithFilee as u32, t!("Converter com Filee"))
+                                .with_icon("icons/refresh-cw.svg")
+                                .with_shortcut(keys_of(Action::ConvertWithFilee))
+                        }
                         "properties" => Entry::command(Command::Properties as u32, t!("Propriedades"))
                             .with_icon("icons/info.svg"),
                         "tags" => {
@@ -1563,6 +1572,7 @@ impl ExplorerPane {
             | Command::NewGroupWithPlace
             | Command::MoreOptions => {}
             Command::CopyPath => self.copy_paths_as_text(cx),
+            Command::ConvertWithFilee => self.convert_selection_with_filee(cx),
             Command::UndoTrash => self.undo_trash(cx),
             Command::Redo => self.redo(cx),
             Command::RestoreFromBin => self.restore_from_recycle_bin(cx),

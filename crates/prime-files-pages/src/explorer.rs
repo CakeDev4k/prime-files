@@ -12,6 +12,7 @@ mod entries;
 pub(crate) mod everything;
 pub(crate) mod folder_watch;
 pub(crate) mod file_ops;
+mod filee;
 mod filter;
 pub(crate) mod bookmarks;
 mod folder_views;

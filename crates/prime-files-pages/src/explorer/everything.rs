@@ -1707,7 +1707,7 @@ pub(crate) struct Everything {
     pub mft_busy: bool,
     /// Why the last install or removal failed.
     pub mft_error: Option<String>,
-    _watcher: Option<notify::RecommendedWatcher>,
+    _watcher: Option<drive_watch::DriveWatch>,
     _task: Option<Task<()>>,
     // Cloned into each pane in the mode and each open Ctrl+T box
     // (`InUse`): more than this one means somebody may search.
@@ -1800,11 +1800,14 @@ fn release_when_idle(cx: &mut App) {
 struct Fresh {
     table: Segment,
     seen: Vec<SystemTime>,
+    /// When Windows last dropped changes it had no room for: names created
+    /// then are missing until the next walk (`drive_watch`).
+    lost: Option<SystemTime>,
 }
 
 impl Default for Fresh {
     fn default() -> Self {
-        Self { table: Segment::empty(), seen: Vec::new() }
+        Self { table: Segment::empty(), seen: Vec::new(), lost: None }
     }
 }
 
@@ -1820,6 +1823,7 @@ impl Fresh {
 
     fn retain(&mut self, mut keep: impl FnMut(&str, SystemTime) -> bool) {
         let old = std::mem::take(self);
+        self.lost = old.lost;
         for (position, (entry, seen)) in old.table.entries.iter().zip(&old.seen).enumerate() {
             let Some(path) = old.table.paths.get(position) else {
                 continue;
@@ -1848,51 +1852,50 @@ fn churn(lowered: &str) -> bool {
 
 // Watches every fixed drive, without administrator rights (Everything's
 // USN journal needs them), for names that appear.
-fn watch_drives(fresh: Arc<Mutex<Fresh>>) -> Option<notify::RecommendedWatcher> {
+fn watch_drives(fresh: Arc<Mutex<Fresh>>) -> Option<drive_watch::DriveWatch> {
     let drives: Vec<PathBuf> = platform::fixed_drives().into_iter().map(PathBuf::from).collect();
     watch_roots(&drives, fresh, |path| std::fs::symlink_metadata(path).ok().map(|metadata| Found::of(&metadata)))
 }
 
 /// Watches `roots` and everything under them, recording in `fresh` each name
-/// that appears, as `inspect` finds it on disk.
+/// that appears, as `inspect` finds it on disk, and when names were lost.
 ///
-/// The watcher's callback only queues the paths; `inspect`, the filter and
-/// the lock run on a thread of their own. Until 12/11/2026 they ran inside
-/// the callback, which Windows' change buffer (16 KB in `notify`) waits on:
-/// while it ran, the buffer filled and overflowed, and the overflow is
-/// silent — measured, a handler of 3 ms got 3,585 events out of 20,000 new
-/// files, with no error and no rescan flag. A video rendered while the disk
-/// was busy was among the names lost, and stayed out of the search until the
-/// next walk, hours later (the owner's complaint; `docs/PERFORMANCE.md`,
-/// pass 25).
+/// The watcher only queues the paths; `inspect`, the filter and the lock
+/// run on a thread of their own. Until 12/11/2026 they ran inside the
+/// watcher's callback, which Windows' change buffer waits on: while it ran,
+/// the buffer filled and overflowed, and the overflow was silent — measured,
+/// a handler of 3 ms got 3,585 events out of 20,000 new files. A video
+/// rendered while the disk was busy was among the names lost (the owner's
+/// complaint; `docs/PERFORMANCE.md`, pass 25). An overflow now marks the
+/// index for a walk (`Fresh::lost`, pass 26).
 fn watch_roots(
     roots: &[PathBuf],
     fresh: Arc<Mutex<Fresh>>,
     inspect: impl Fn(&Path) -> Option<Found> + Send + 'static,
-) -> Option<notify::RecommendedWatcher> {
-    use notify::event::{ModifyKind, RenameMode};
-    use notify::{EventKind, RecursiveMode, Watcher as _};
+) -> Option<drive_watch::DriveWatch> {
+    watch_roots_with(roots, drive_watch::BUFFER, fresh, inspect)
+}
+
+fn watch_roots_with(
+    roots: &[PathBuf],
+    buffer: usize,
+    fresh: Arc<Mutex<Fresh>>,
+    inspect: impl Fn(&Path) -> Option<Found> + Send + 'static,
+) -> Option<drive_watch::DriveWatch> {
     let (sender, receiver) = std::sync::mpsc::channel::<PathBuf>();
-    let mut watcher = notify::recommended_watcher(move |result: notify::Result<notify::Event>| {
-        let Ok(event) = result else {
-            return;
-        };
-        let paths: Vec<PathBuf> = match event.kind {
-            EventKind::Create(_) | EventKind::Modify(ModifyKind::Name(RenameMode::To | RenameMode::Any)) => event.paths,
-            // From and to: only the new name is new.
-            EventKind::Modify(ModifyKind::Name(RenameMode::Both)) => event.paths.into_iter().last().into_iter().collect(),
-            _ => return,
-        };
-        for path in paths {
-            // Fails only once the recorder is gone, with the watcher.
-            if sender.send(path).is_err() {
-                return;
-            }
+    let sender = Mutex::new(sender);
+    let lost_in = fresh.clone();
+    let watch = drive_watch::DriveWatch::start(roots, buffer, move |change| match change {
+        drive_watch::Change::Appeared(path) => {
+            lock(&sender).send(path).ok();
         }
-    })
-    .log_err()?;
+        drive_watch::Change::Lost(root) => {
+            tracing::debug!("changes under {} dropped by Windows; the index will be walked again", root.display());
+            lock(&lost_in).lost = Some(SystemTime::now());
+        }
+    })?;
     let spawned = std::thread::Builder::new().name("prime-files-everything-fresh".into()).spawn(move || {
-        // Ends when the watcher, and the sender in its callback, are dropped.
+        // Ends when the watch, and the sender in its report, are dropped.
         while let Ok(path) = receiver.recv() {
             let text = path.to_string_lossy().into_owned();
             if churn(&text.to_lowercase()) {
@@ -1907,12 +1910,20 @@ fn watch_roots(
         tracing::error!("could not start recording new names for the everything index: {error}");
         return None;
     }
-    for root in roots {
-        if let Err(error) = watcher.watch(root, RecursiveMode::Recursive) {
-            tracing::warn!("cannot watch {} for the everything index: {error}", root.display());
-        }
-    }
-    Some(watcher)
+    Some(watch)
+}
+
+/// How old the index must be before names lost by the watcher call for a
+/// walk: a flood of thousands of new files (a render's cache, an unzip)
+/// overflows again and again, and each walk costs the disk minutes.
+const LOST_WALK_AFTER: Duration = Duration::from_secs(10 * 60);
+/// The same with the indexer service, whose read takes seconds.
+const LOST_WALK_WITH_MFT: Duration = Duration::from_secs(2 * 60);
+
+// Whether names lost after the index was built call for a walk now.
+fn lost_since(lost: Option<SystemTime>, built: SystemTime, mft: bool) -> bool {
+    let after = if mft { LOST_WALK_WITH_MFT } else { LOST_WALK_AFTER };
+    lost.is_some_and(|lost| lost > built) && built.elapsed().is_ok_and(|age| age > after)
 }
 
 impl Everything {
@@ -1989,7 +2000,11 @@ pub(crate) fn ensure(cx: &mut App) {
         state._watcher = watch_drives(state.fresh.clone());
     }
     if state.index.is_some() {
-        let stale = state.index.as_ref().is_some_and(|index| index.stale());
+        let lost = lock(&state.fresh).lost;
+        let stale = state
+            .index
+            .as_ref()
+            .is_some_and(|index| index.stale() || lost_since(lost, index.built, mft::running()));
         if stale && state.building.is_none() {
             rebuild(cx);
         }
@@ -2106,7 +2121,14 @@ pub(crate) fn rebuild(cx: &mut App) {
                     }
                 }
                 Ok(Walked::All(index)) => {
-                    lock(&fresh).retain(|_, seen| seen >= walk_started);
+                    {
+                        let mut fresh = lock(&fresh);
+                        fresh.retain(|_, seen| seen >= walk_started);
+                        // Lost before the walk: the walk found them.
+                        if fresh.lost.is_some_and(|lost| lost < walk_started) {
+                            fresh.lost = None;
+                        }
+                    }
                     cx.update(|cx| {
                         let state = cx.global_mut::<Everything>();
                         state.index = Some(Arc::new(index));
@@ -2577,6 +2599,9 @@ mod platform {
     }
 }
 
+#[path = "drive_watch.rs"]
+mod drive_watch;
+
 #[cfg(test)]
 #[path = "everything_pass9.rs"]
 mod pass9;
@@ -2898,6 +2923,48 @@ mod tests {
         let paths = lock(&fresh).table.paths.clone();
         assert!(paths.iter().any(|path| path.ends_with("Render final.mp4")), "the render was lost");
         assert_eq!(paths.len(), FILES + 1, "names lost in the flood");
+    }
+
+    // More new names than the change buffer holds between two reads: the
+    // watch says names were lost, so the index is walked again, instead of
+    // the silence `notify` gave (pass 26). The report is slowed so the
+    // writes outrun the reads, the way a busy disk does.
+    #[test]
+    fn a_flood_past_the_buffer_is_reported_as_lost() {
+        let base = Path::new(env!("CARGO_MANIFEST_DIR")).join("..").join("..").join("target");
+        let dir = tempfile::Builder::new().prefix("everything-overflow").tempdir_in(&base).unwrap();
+        let lost = Arc::new(AtomicBool::new(false));
+        let watch = drive_watch::DriveWatch::start(&[dir.path().to_path_buf()], 1024, {
+            let lost = lost.clone();
+            move |change| match change {
+                drive_watch::Change::Appeared(_) => std::thread::sleep(Duration::from_millis(5)),
+                drive_watch::Change::Lost(_) => lost.store(true, Ordering::SeqCst),
+            }
+        })
+        .unwrap();
+        std::thread::sleep(Duration::from_millis(200));
+        for index in 0..2_000 {
+            std::fs::write(dir.path().join(format!("flood-{index:05}-um-nome-comprido.bin")), b"x").unwrap();
+        }
+        let until = Instant::now() + Duration::from_secs(20);
+        while !lost.load(Ordering::SeqCst) && Instant::now() < until {
+            std::thread::sleep(Duration::from_millis(50));
+        }
+        drop(watch);
+        assert!(lost.load(Ordering::SeqCst), "the overflow went unreported");
+    }
+
+    #[test]
+    fn lost_names_call_for_a_walk_only_after_the_index_has_aged() {
+        let now = SystemTime::now();
+        let old = now - Duration::from_secs(60 * 60);
+        let young = now - Duration::from_secs(30);
+        assert!(lost_since(Some(now), old, false));
+        assert!(!lost_since(Some(now), young, false), "a fresh index waits");
+        assert!(!lost_since(None, old, false));
+        assert!(!lost_since(Some(old - Duration::from_secs(1)), old, false), "lost before the walk");
+        assert!(lost_since(Some(now), now - Duration::from_secs(3 * 60), true));
+        assert!(!lost_since(Some(now), now - Duration::from_secs(3 * 60), false));
     }
 
     #[test]

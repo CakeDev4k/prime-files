@@ -95,6 +95,7 @@ fn file(name: &str, kind: &str, size: u64) -> FileEntryDto {
         kind: kind.to_string(),
         size,
         modified: 0,
+        created: 0,
         attributes: 0,
     }
 }
@@ -618,6 +619,7 @@ async fn activate_entry_routes_by_kind(cx: &mut TestAppContext) {
         kind: "dir".into(),
         size: 0,
         modified: 0,
+        created: 0,
         attributes: 0,
     };
     let doc = FileEntryDto {
@@ -626,6 +628,7 @@ async fn activate_entry_routes_by_kind(cx: &mut TestAppContext) {
         kind: "file".into(),
         size: 2,
         modified: 0,
+        created: 0,
         attributes: 0,
     };
 

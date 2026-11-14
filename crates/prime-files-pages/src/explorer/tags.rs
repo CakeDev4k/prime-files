@@ -130,6 +130,7 @@ pub(crate) fn read_items(id: u32) -> Vec<FileEntryDto> {
                 size: if metadata.is_dir() { 0 } else { metadata.len() },
                 modified,
                 path,
+                created: 0,
                 attributes: 0,
             })
         })

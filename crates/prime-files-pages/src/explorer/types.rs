@@ -8,6 +8,8 @@ pub enum SortKey {
     Size,
     Modified,
     Type,
+    /// Date created (issue #67).
+    Created,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]

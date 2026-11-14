@@ -72,6 +72,7 @@ mod legacy {
                 kind,
                 size,
                 modified,
+                created: 0,
                 attributes: 0,
             });
         }

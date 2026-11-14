@@ -54,9 +54,17 @@ fn list_dir_impl(path: &str, limit: usize, cursor: Option<&str>) -> Result<ListR
         let entry = entry?;
         let name = os_str_to_string(entry.file_name());
         let mut attributes = 0;
+        let mut created = 0;
         let (kind, size, modified) = match entry.metadata() {
             Ok(md) => {
                 attributes = file_attributes(&md);
+                // In the same find data as the rest (issue #67): no extra read.
+                created = md
+                    .created()
+                    .ok()
+                    .and_then(|t| t.duration_since(UNIX_EPOCH).ok())
+                    .map(|d| d.as_secs())
+                    .unwrap_or(0);
                 let modified = md
                     .modified()
                     .ok()
@@ -91,6 +99,7 @@ fn list_dir_impl(path: &str, limit: usize, cursor: Option<&str>) -> Result<ListR
             kind: kind.to_string(),
             size,
             modified,
+            created,
             attributes: cloud_attributes(attributes, kind, &entry.path()),
         });
     }

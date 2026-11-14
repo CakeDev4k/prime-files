@@ -52,9 +52,10 @@ pub fn sort_entries_with<E: AsRef<FileEntryDto>>(
     let direction = |order: Ordering| if asc { order } else { order.reverse() };
 
     match key {
-        SortKey::Size | SortKey::Modified => {
+        SortKey::Size | SortKey::Modified | SortKey::Created => {
             let value = |entry: &FileEntryDto| match key {
                 SortKey::Size => entry.size,
+                SortKey::Created => entry.created,
                 _ => entry.modified,
             };
             let compare = |a: &E, b: &E| {
@@ -190,6 +191,7 @@ mod tests {
             kind: kind.to_string(),
             size,
             modified: 0,
+            created: 0,
             attributes: 0,
         }
     }
@@ -262,6 +264,7 @@ mod tests {
                 kind: "file".into(),
                 size: 0,
                 modified: 100,
+                created: 0,
                 attributes: 0,
             },
             FileEntryDto {
@@ -270,6 +273,7 @@ mod tests {
                 kind: "file".into(),
                 size: 0,
                 modified: 900,
+                created: 0,
                 attributes: 0,
             },
         ];
@@ -277,6 +281,22 @@ mod tests {
         assert_eq!(entries[0].name, "old");
         sort_entries(&mut entries, SortKey::Modified, false);
         assert_eq!(entries[0].name, "new");
+    }
+
+    // Issue #67: the date created, not the date modified, decides. A file
+    // made long ago and edited today goes first among the oldest.
+    #[test]
+    fn sort_by_created_ignores_the_date_modified() {
+        let made = |name: &str, created: u64, modified: u64| FileEntryDto {
+            created,
+            modified,
+            ..entry(name, "file", 0)
+        };
+        let mut entries = vec![made("recent", 900, 900), made("old-but-edited", 100, 1_000)];
+        sort_entries(&mut entries, SortKey::Created, true);
+        assert_eq!(entries[0].name, "old-but-edited");
+        sort_entries(&mut entries, SortKey::Created, false);
+        assert_eq!(entries[0].name, "recent");
     }
 
     #[test]

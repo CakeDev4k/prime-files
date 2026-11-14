@@ -45,6 +45,7 @@ pub(crate) enum SavedSort {
     Size,
     Modified,
     Type,
+    Created,
 }
 
 impl From<SortKey> for SavedSort {
@@ -54,6 +55,7 @@ impl From<SortKey> for SavedSort {
             SortKey::Size => Self::Size,
             SortKey::Modified => Self::Modified,
             SortKey::Type => Self::Type,
+            SortKey::Created => Self::Created,
         }
     }
 }
@@ -65,6 +67,7 @@ impl From<SavedSort> for SortKey {
             SavedSort::Size => Self::Size,
             SavedSort::Modified => Self::Modified,
             SavedSort::Type => Self::Type,
+            SavedSort::Created => Self::Created,
         }
     }
 }

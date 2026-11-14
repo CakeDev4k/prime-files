@@ -207,6 +207,7 @@ pub(super) static STRINGS: &[(&str, &str, &str)] = &[
         "Short plays as you move along the list; long only plays the file you stopped on.",
         "Corto suena mientras recorres la lista; largo solo suena el archivo en el que te detuviste.",
     ),
+    ("Data de criação", "Date created", "Fecha de creación"),
     ("Data de modificação", "Date modified", "Fecha de modificación"),
     ("Decrescente", "Descending", "Descendente"),
     (

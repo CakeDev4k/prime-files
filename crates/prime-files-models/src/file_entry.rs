@@ -18,6 +18,9 @@ pub struct FileEntryDto {
     pub size: u64,
     /// Last modification time as a Unix timestamp in seconds.
     pub modified: u64,
+    /// Creation time as a Unix timestamp in seconds (0 where it is not
+    /// known: rows that are not files on disk, or a search result).
+    pub created: u64,
     /// The Windows file attributes the listing read with the name (0 where
     /// there are none, or for rows that are not files on disk). They say
     /// whether a OneDrive-style file is only online or kept on the device.

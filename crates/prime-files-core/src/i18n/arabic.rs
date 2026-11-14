@@ -118,6 +118,7 @@ pub(super) static ARABIC: &[(&str, &str)] = &[
     ("Ctrl+roda do mouse", "Ctrl+عجلة الفأرة"),
     ("Curta", "قصير"),
     ("Curto toca enquanto você passa pela lista; longo só toca o arquivo em que você parou.", "\"قصير\" يشغّل أثناء التنقل في القائمة؛ \"طويل\" يشغّل فقط الملف الذي توقفت عنده."),
+    ("Data de criação", "تاريخ الإنشاء"),
     ("Data de modificação", "تاريخ التعديل"),
     ("Decrescente", "تنازلي"),
     ("Deixe o mouse parado sobre um arquivo de som na lista para ouvi-lo; tirar o mouse para. Um som por vez, no volume do visualizador.", "أرِح الفأرة على ملف صوتي في القائمة لتسمعه؛ يتوقف عند الابتعاد. صوت واحد في كل مرة، بمستوى صوت المعاينة."),

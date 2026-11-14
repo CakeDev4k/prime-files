@@ -49,6 +49,7 @@ pub(super) fn read_entries() -> Result<Vec<FileEntryDto>, String> {
                 kind: if item.is_dir { "dir" } else { "file" }.to_string(),
                 size,
                 modified: u64::try_from(item.deleted_at_unix).unwrap_or(0),
+                created: 0,
                 attributes: 0,
             }
         })

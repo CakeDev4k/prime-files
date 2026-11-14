@@ -210,6 +210,7 @@ pub fn results_to_entries(results: &[SearchFileResult]) -> Vec<FileEntryDto> {
                 },
                 size,
                 modified,
+                created: 0,
                 attributes: 0,
             }
         })

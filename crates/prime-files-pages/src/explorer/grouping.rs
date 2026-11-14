@@ -219,6 +219,7 @@ mod tests {
             kind: kind.into(),
             size,
             modified,
+            created: 0,
             attributes: 0,
         }
     }

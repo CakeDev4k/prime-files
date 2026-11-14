@@ -118,6 +118,7 @@ pub(super) static HUNGARIAN: &[(&str, &str)] = &[
     ("Ctrl+roda do mouse", "Ctrl+egérgörgő"),
     ("Curta", "Rövid"),
     ("Curto toca enquanto você passa pela lista; longo só toca o arquivo em que você parou.", "A rövid lejátszik, ahogy végighaladsz a listán; a hosszú csak annál a fájlnál szól, amelyiken megálltál."),
+    ("Data de criação", "Létrehozás dátuma"),
     ("Data de modificação", "Módosítás dátuma"),
     ("Decrescente", "Csökkenő"),
     ("Deixe o mouse parado sobre um arquivo de som na lista para ouvi-lo; tirar o mouse para. Um som por vez, no volume do visualizador.", "Vidd az egeret egy hangfájl fölé a listában a meghallgatáshoz; ha elviszed, leáll. Egyszerre egy hang szól, az előnézet hangerején."),

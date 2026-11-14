@@ -10,6 +10,7 @@ Explorador de arquivos para Windows, rápido, escrito em Rust.
 - **Vídeo em tela cheia**: na prévia, na visualização rápida e na busca rápida, um botão no player (ou duplo clique no vídeo) leva o vídeo para a tela inteira. Espaço pausa, as setas andam 5 segundos e Esc volta.
 - **Extração com porcentagem**: ao arrastar algo de dentro de um .zip, .7z ou .rar, a linha mostra quanto já foi extraído.
 - **Converter com Filee**: com o [Filee](https://filee.sh) instalado, o botão direito num arquivo (ou Alt+C) manda a seleção para ele converter. Ideia de byKoro (PR #54).
+- **Classificar por data de criação**, no botão direito › Classificar por (#67).
 
 ### Correções da 0.3.11
 
@@ -36,6 +37,7 @@ Explorador de arquivos para Windows, rápido, escrito em Rust.
 - A busca de todo o computador usa menos memória (cerca de 20 MB a menos num disco de 2,5 milhões de arquivos), e o modo ícones ocupa metade do que ocupava em pastas grandes.
 - Arquivos de um celular arrastados do Explorador do Windows agora podem ser soltos numa pasta do Prime Files.
 - Quando o celular recusava uma operação, o aviso não aparecia.
+- "Abrir local do arquivo" do menu Iniciar, "Mostrar na pasta" do navegador e comandos parecidos agora selecionam o arquivo quando a pasta já está aberta no Prime Files (#56).
 
 ## Prime Files 0.3.10
 

@@ -193,6 +193,7 @@ pub fn this_pc_entries() -> Vec<prime_files_services::fs::listing::FileEntryDto>
                 kind: "dir".to_string(),
                 size: 0,
                 modified: 0,
+                created: 0,
                 attributes: 0,
             })
         })

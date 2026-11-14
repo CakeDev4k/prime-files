@@ -352,6 +352,7 @@ mod platform {
                     kind: if is_dir { "dir" } else { "file" }.to_string(),
                     size,
                     modified,
+                    created: 0,
                     attributes: 0,
                 });
             }

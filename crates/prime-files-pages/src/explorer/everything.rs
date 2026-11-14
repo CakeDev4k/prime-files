@@ -2329,6 +2329,7 @@ impl ExplorerPane {
                         .ok()
                         .and_then(|time| time.duration_since(SystemTime::UNIX_EPOCH).ok())
                         .map_or(0, |since| since.as_secs()),
+                    created: 0,
                     attributes: 0,
                 });
                 if batch.len() >= limit {

@@ -77,10 +77,11 @@ enum Command {
     HideSection,
     NewGroupWithPlace,
     ConvertWithFilee,
+    SortCreated,
 }
 
 impl Command {
-    const ALL: [Command; 60] = [
+    const ALL: [Command; 61] = [
         Command::ViewList,
         Command::ViewGrid,
         Command::ViewTree,
@@ -141,6 +142,7 @@ impl Command {
         Command::HideSection,
         Command::NewGroupWithPlace,
         Command::ConvertWithFilee,
+        Command::SortCreated,
     ];
 
     fn from_id(id: u32) -> Option<Self> {
@@ -1314,6 +1316,7 @@ impl ExplorerPane {
                     sort(Command::SortType, t!("Tipo"), SortKey::Type),
                     sort(Command::SortSize, t!("Tamanho"), SortKey::Size),
                     sort(Command::SortModified, t!("Data de modificação"), SortKey::Modified),
+                    sort(Command::SortCreated, t!("Data de criação"), SortKey::Created),
                     Entry::Separator,
                     Entry::radio(Command::SortAscending as u32, t!("Crescente"), self.sort_asc),
                     Entry::radio(Command::SortDescending as u32, t!("Decrescente"), !self.sort_asc),
@@ -1513,6 +1516,7 @@ impl ExplorerPane {
             Command::SortType => self.set_sort(SortKey::Type, self.sort_asc, cx),
             Command::SortSize => self.set_sort(SortKey::Size, self.sort_asc, cx),
             Command::SortModified => self.set_sort(SortKey::Modified, self.sort_asc, cx),
+            Command::SortCreated => self.set_sort(SortKey::Created, self.sort_asc, cx),
             Command::SortAscending => self.set_sort(self.sort_key, true, cx),
             Command::SortDescending => self.set_sort(self.sort_key, false, cx),
             Command::Refresh => self.reload(cx),

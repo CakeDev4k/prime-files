@@ -28,6 +28,8 @@ pub mod quick_bar;
 pub mod menu;
 /// Sidebar, listing and preview side by side, with draggable dividers.
 pub(crate) mod panels;
+/// The listing, sidebar and player as views of their own.
+pub(crate) mod parts;
 
 /// Renders the explorer page: header, sidebar, listing, and preview panes.
 pub fn render(
@@ -36,9 +38,19 @@ pub fn render(
     cx: &mut Context<ExplorerPane>,
 ) -> AnyElement {
     page.ensure_loaded(cx);
+    if page.parts.is_none() {
+        page.parts = Some(parts::Parts::new(&cx.entity(), cx));
+    }
+    if let Some(parts) = page.parts.as_ref() {
+        parts::register(parts, window);
+    }
     // A video in full screen is all the pane draws (and all the page draws,
     // `ExplorerPage::render`); with no video left in the preview it ends.
     if page.media_fullscreen {
+        // Drawn here, not by the player's view: its frames tell the pane.
+        if let Some(media) = page.preview_media.as_mut() {
+            media.redraw = None;
+        }
         match preview::render_media_fullscreen(page, cx) {
             Some(screen) => return screen,
             None => page.leave_media_fullscreen(window, cx),
@@ -507,12 +519,16 @@ fn render_body(
         body
     };
 
-    let sidebar = if page.sidebar_visible {
-        Some(sidebar::render(page, window, cx).into_any_element())
-    } else {
-        None
+    let sidebar = match page.parts.as_ref() {
+        Some(parts) if page.sidebar_visible => Some(parts::sidebar_view(parts)),
+        Some(_) => None,
+        None if page.sidebar_visible => Some(sidebar::render(page, window, cx).into_any_element()),
+        None => None,
     };
-    let listing = listing::render(page, window, cx);
+    let listing = match page.parts.as_ref() {
+        Some(parts) => parts::listing_view(parts),
+        None => listing::render(page, window, cx),
+    };
     // While Space's quick look shows the preview over everything, the side
     // panel keeps its room, empty, so the listing behind does not reflow
     // twice; in compact mode it stays in its edge.

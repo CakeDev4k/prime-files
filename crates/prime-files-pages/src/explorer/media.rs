@@ -138,7 +138,23 @@ pub(crate) struct MediaPreview {
     pub menu: Option<MediaMenu>,
     /// Where the view shows the frame, so the player copies it at that size.
     pub room: FrameRoom,
+    /// The view that draws the player, told of each frame instead of the
+    /// one that keeps it (`redraw`); `None` tells the keeper.
+    pub redraw: Option<gpui::EntityId>,
     _task: Task<()>,
+}
+
+/// Asks for the player to be drawn again: only `surface`, the view that
+/// draws it, when there is one. Telling the pane redrew the listing and the
+/// sidebar with every frame of a video (`docs/PERFORMANCE.md`, pass 31).
+pub(crate) fn redraw<V: 'static>(surface: Option<gpui::EntityId>, cx: &mut Context<V>) {
+    match surface {
+        Some(surface) => {
+            let app: &mut gpui::App = cx;
+            app.notify(surface);
+        }
+        None => cx.notify(),
+    }
 }
 
 /// Resolution of the waveform: a peak per 10 ms, fine enough for a bar per
@@ -270,6 +286,7 @@ impl MediaPreview {
             audio_streams: Vec::new(),
             menu: None,
             room: FrameRoom::default(),
+            redraw: None,
             _task: Task::ready(()),
         }
     }
@@ -325,6 +342,9 @@ impl MediaPreview {
                     let Some(media) = slot(view) else {
                         return false;
                     };
+                    // A frame and the position come many times a second.
+                    let frequent = matches!(update, Update::Frame(_) | Update::State { .. });
+                    let surface = media.redraw;
                     match update {
                         Update::Frame(frame) => {
                             // The atlas keeps a copy of every image drawn;
@@ -350,7 +370,11 @@ impl MediaPreview {
                             media.error = Some(error);
                         }
                     }
-                    cx.notify();
+                    if frequent {
+                        redraw(surface, cx);
+                    } else {
+                        cx.notify();
+                    }
                     true
                 });
                 if !matches!(alive, Ok(true)) {
@@ -373,6 +397,7 @@ impl MediaPreview {
             audio_streams: Vec::new(),
             menu: None,
             room,
+            redraw: None,
             _task: task,
         };
         // The engine takes Play before the file is open and starts once it

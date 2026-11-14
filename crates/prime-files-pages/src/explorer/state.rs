@@ -63,6 +63,9 @@ pub struct ExplorerPane {
     /// The window's native handle (0 until it is drawn), for the folder
     /// watch to tell a minimized window from one only behind another.
     pub(crate) window_hwnd: std::sync::Arc<std::sync::atomic::AtomicI64>,
+    /// The listing, sidebar and player as views of their own
+    /// (`view::parts`), made on the first render.
+    pub(crate) parts: Option<super::view::parts::Parts>,
     /// How long the last read of the folder took on its own thread.
     pub(crate) last_read_cost: std::time::Duration,
     /// The last read of the folder on screen found exactly what was
@@ -597,6 +600,7 @@ impl ExplorerPane {
             activation_watch: None,
             in_front: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(true)),
             window_hwnd: std::sync::Arc::default(),
+            parts: None,
             last_read_cost: std::time::Duration::ZERO,
             listing_unchanged: false,
             listed_cwd: None,

@@ -95,6 +95,9 @@ struct WindowInvalidatorInner {
     pub dirty: bool,
     pub draw_phase: DrawPhase,
     pub dirty_views: FxHashSet<EntityId>,
+    // PRIME FILES: the dirty views told of a change outside of drawing,
+    // which alone draw the followers again (`redraw_with_every_change`).
+    pub changed_views: FxHashSet<EntityId>,
 }
 
 #[derive(Clone)]
@@ -109,6 +112,7 @@ impl WindowInvalidator {
                 dirty: true,
                 draw_phase: DrawPhase::None,
                 dirty_views: FxHashSet::default(),
+                changed_views: FxHashSet::default(),
             })),
         }
     }
@@ -117,6 +121,7 @@ impl WindowInvalidator {
         let mut inner = self.inner.borrow_mut();
         inner.dirty_views.insert(entity);
         if inner.draw_phase == DrawPhase::None {
+            inner.changed_views.insert(entity);
             inner.dirty = true;
             cx.push_effect(Effect::Notify { emitter: entity });
             true
@@ -143,6 +148,11 @@ impl WindowInvalidator {
 
     pub fn replace_views(&self, views: FxHashSet<EntityId>) {
         self.inner.borrow_mut().dirty_views = views;
+    }
+
+    // PRIME FILES: see `changed_views`.
+    fn take_changed_views(&self) -> FxHashSet<EntityId> {
+        mem::take(&mut self.inner.borrow_mut().changed_views)
     }
 
     pub fn not_drawing(&self) -> bool {
@@ -848,6 +858,11 @@ pub struct Window {
     pub(crate) tooltip_bounds: Option<TooltipBounds>,
     next_frame_callbacks: Rc<RefCell<Vec<FrameCallback>>>,
     pub(crate) dirty_views: FxHashSet<EntityId>,
+    // PRIME FILES: views drawn again with any other view's change, though
+    // cached (`redraw_with_every_change`), and views whose own change draws
+    // no one else again (`redraw_alone`). See PRIME-FILES.md.
+    follower_views: FxHashSet<EntityId>,
+    alone_views: FxHashSet<EntityId>,
     focus_listeners: SubscriberSet<(), AnyWindowFocusListener>,
     pub(crate) focus_lost_listeners: SubscriberSet<(), AnyObserver>,
     default_prevented: bool,
@@ -1231,6 +1246,8 @@ impl Window {
             next_tooltip_id: TooltipId::default(),
             tooltip_bounds: None,
             dirty_views: FxHashSet::default(),
+            follower_views: FxHashSet::default(),
+            alone_views: FxHashSet::default(),
             focus_listeners: SubscriberSet::new(),
             focus_lost_listeners: SubscriberSet::new(),
             default_prevented: true,
@@ -1301,7 +1318,41 @@ impl ContentMask<Pixels> {
 }
 
 impl Window {
-    fn mark_view_dirty(&mut self, view_id: EntityId) {
+    /// PRIME FILES: `view`, though cached, is drawn again whenever any view
+    /// of the window other than one drawn alone (`redraw_alone`) says it
+    /// changed, as an uncached view would be: a cached view otherwise only
+    /// follows its own changes. For a part split out of a bigger view to be
+    /// cached, so the change of a view drawn alone beside it leaves it be.
+    pub fn redraw_with_every_change(&mut self, view: EntityId) {
+        self.follower_views.insert(view);
+    }
+
+    /// PRIME FILES: a change of `view` draws it and its ancestors again, but
+    /// not the views that follow every change (`redraw_with_every_change`).
+    /// For a view that changes many times a second (a video's frames).
+    pub fn redraw_alone(&mut self, view: EntityId) {
+        self.alone_views.insert(view);
+    }
+
+    fn mark_view_dirty(&mut self, view_id: EntityId, changed: bool) {
+        self.mark_view_and_ancestors_dirty(view_id);
+        // PRIME FILES: see `redraw_with_every_change`. A view that told of
+        // a change while being drawn (an input keeping its scroll offset,
+        // a placeholder set in render) is the frame's own upkeep, not a
+        // change the followers must show.
+        if changed
+            && !self.follower_views.is_empty()
+            && !self.alone_views.contains(&view_id)
+            && !self.follower_views.contains(&view_id)
+        {
+            let followers: Vec<EntityId> = self.follower_views.iter().copied().collect();
+            for follower in followers {
+                self.mark_view_and_ancestors_dirty(follower);
+            }
+        }
+    }
+
+    fn mark_view_and_ancestors_dirty(&mut self, view_id: EntityId) {
         // Mark ancestor views as dirty. If already in the `dirty_views` set, then all its ancestors
         // should already be dirty.
         for view_id in self
@@ -2008,8 +2059,9 @@ impl Window {
 
     fn invalidate_entities(&mut self) {
         let mut views = self.invalidator.take_views();
+        let changed = self.invalidator.take_changed_views();
         for entity in views.drain() {
-            self.mark_view_dirty(entity);
+            self.mark_view_dirty(entity, changed.contains(&entity));
         }
         self.invalidator.replace_views(views);
     }

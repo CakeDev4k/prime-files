@@ -81,6 +81,12 @@ fn drive_name(place: &Place, label: DriveLabel) -> String {
     }
 }
 
+// Times the sidebar was built, for the tests that hold it to what changed.
+#[cfg(test)]
+thread_local! {
+    pub(crate) static RENDERS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
 /// Renders the sidebar by `[sidebar]`: the groups its style lists, in its
 /// order, each as Explorer, File Pilot, One Commander or Finder draws it.
 /// Names and icons come from the Shell, so they match Explorer's.
@@ -89,6 +95,8 @@ pub fn render(
     window: &mut Window,
     cx: &mut Context<ExplorerPane>,
 ) -> AnyElement {
+    #[cfg(test)]
+    RENDERS.set(RENDERS.get() + 1);
     page.ensure_places(cx);
     let look = crate::explorer::places::look();
     let draw = Draw::of(&look);

@@ -3550,6 +3550,63 @@ async fn the_middle_click_on_a_place_opens_folders_and_skips_files(cx: &mut Test
     assert_eq!(*opened.lock().unwrap(), vec![dir.path().to_string_lossy().into_owned()]);
 }
 
+// A playing video sends a frame many times a second. Each used to redraw
+// the whole pane, the listing and the sidebar with it; only the player
+// draws again now (`docs/PERFORMANCE.md`, pass 31). A change to the pane
+// itself still redraws the listing.
+#[gpui::test]
+async fn a_video_frame_redraws_the_player_alone(cx: &mut TestAppContext) {
+    use crate::explorer::media::MediaPreview;
+    use crate::explorer::view::{listing, sidebar};
+    let dir = tempfile::tempdir().unwrap();
+    for index in 0..200 {
+        std::fs::write(dir.path().join(format!("clipe-{index:03}.txt")), "x").unwrap();
+    }
+    let window = new_explorer_page(cx);
+    let pane = window.update(cx, |page, _, _| page.group.active_pane().clone()).unwrap();
+    let mut cx = gpui::VisualTestContext::from_window(window.into(), cx);
+    pane.update_in(&mut cx, |pane, _, cx| {
+        pane.cwd = dir.path().to_string_lossy().into_owned();
+        pane.reload(cx);
+        pane.sidebar_visible = true;
+        pane.preview_visible = true;
+        pane.preview_media = Some(MediaPreview::for_test(true));
+        cx.notify();
+    });
+    cx.run_until_parked();
+    cx.update(|window, cx| window.draw(cx).clear());
+    let counts = || (listing::RENDERS.get(), sidebar::RENDERS.get());
+    let before = counts();
+    for _ in 0..30 {
+        // What the player's task does with each frame.
+        pane.update_in(&mut cx, |pane, _, cx| {
+            let surface = pane.preview_media.as_ref().and_then(|media| media.redraw);
+            crate::explorer::media::redraw(surface, cx);
+        });
+        cx.update(|window, cx| window.draw(cx).clear());
+    }
+    let after = counts();
+    eprintln!("30 frames: listing built {} times, sidebar {}", after.0 - before.0, after.1 - before.1);
+    assert_eq!(after.0 - before.0, 0, "a video frame rebuilt the listing");
+    assert_eq!(after.1 - before.1, 0, "a video frame rebuilt the sidebar");
+
+    pane.update_in(&mut cx, |pane, _, cx| {
+        pane.show_hidden = !pane.show_hidden;
+        pane.apply_filter();
+        cx.notify();
+    });
+    cx.update(|window, cx| window.draw(cx).clear());
+    let changed = counts();
+    assert!(changed.0 > after.0, "a change to the pane did not rebuild the listing");
+
+    // A change elsewhere in the window (the page around the pane) draws the
+    // listing and the sidebar again too, as when they were not cached.
+    window.update(&mut cx, |_, _, cx| cx.notify()).unwrap();
+    cx.update(|window, cx| window.draw(cx).clear());
+    let elsewhere = counts();
+    assert!(elsewhere.0 > changed.0 && elsewhere.1 > changed.1, "a change elsewhere left them stale");
+}
+
 // A video in the preview goes full screen and comes back: the pane draws
 // the player alone, the window goes full screen with it, and Esc, the
 // button again, or the video leaving the preview put everything back.

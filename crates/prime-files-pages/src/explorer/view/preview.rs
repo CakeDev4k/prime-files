@@ -570,7 +570,19 @@ pub fn render(
     } else if page.preview_model.is_some() {
         render_model(page, window, cx)
     } else if page.preview_media.is_some() {
-        render_media(page, cx)
+        // A view of its own, which the player tells of each frame instead
+        // of the pane (`view::parts`).
+        match page.parts.as_ref() {
+            Some(parts) => {
+                let player = super::parts::player_view(parts);
+                let surface = parts.player.entity_id();
+                if let Some(media) = page.preview_media.as_mut() {
+                    media.redraw = Some(surface);
+                }
+                player
+            }
+            None => render_media(page, cx),
+        }
     } else if page.preview_pdf.is_some() {
         render_pdf(page)
     } else if let Some(listing) = page.preview_listing.clone() {
@@ -1250,7 +1262,7 @@ fn render_pdf(page: &ExplorerPane) -> AnyElement {
 }
 
 // The player: the video (or a note for audio) and a bar of controls under it.
-fn render_media(page: &ExplorerPane, cx: &mut Context<ExplorerPane>) -> AnyElement {
+pub(crate) fn render_media(page: &ExplorerPane, cx: &mut Context<ExplorerPane>) -> AnyElement {
     let Some(media) = page.preview_media.as_ref() else {
         return div().into_any_element();
     };

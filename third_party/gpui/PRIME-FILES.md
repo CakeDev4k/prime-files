@@ -103,3 +103,29 @@ calls in a fresh process, 5 rounds alternated, on the owner's machine
 When gpui is upgraded: check whether `get_adapter` still makes a throwaway
 device and the first `GetSystemFontCollection` still checks for updates (the
 lines are marked `PRIME FILES`).
+
+## A video's frames redraw the player alone (14/11/2026)
+
+`src/window.rs`: `Window::redraw_with_every_change` and
+`Window::redraw_alone`, used by `mark_view_dirty`. Upstream marks a view and
+all its ancestors dirty when it changes, and only a cached view escapes being
+drawn again with its parent. Prime Files' pane drew the listing, the sidebar
+and the video player in one render, so each frame of a playing video rebuilt
+the whole pane (~23% of a core). The listing and the sidebar are now cached
+views of their own, and the player a view of its own; but the listing and
+the sidebar read state from many places (the pane, globals, the config), and
+until then any change anywhere in the window drew them again. A *follower*
+keeps that: it is marked dirty with any other view's change. A view drawn
+*alone* (the player) is the exception: its change draws it and its
+ancestors, not the followers. So is a view told of a change while the frame
+is being drawn (`WindowInvalidator::changed_views` keeps the others): gpui
+components do that as upkeep (an input keeps its scroll offset when painted,
+and the quick bar sets its placeholder in render), and with each of them
+the next frame of the video drew the listing again.
+
+Ids of views that are gone stay in the two sets (a few per closed tab);
+marking them dirty finds no path and costs nothing.
+
+When gpui is upgraded: carry the two sets and the branch in
+`mark_view_dirty` (marked `PRIME FILES`), or drop them with the
+`view::parts` of the explorer.

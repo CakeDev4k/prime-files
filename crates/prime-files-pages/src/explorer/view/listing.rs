@@ -13,6 +13,12 @@ pub mod row;
 /// The full-text search bar shown above the listing.
 pub mod search_bar;
 
+// Times the listing was built, for the tests that hold it to what changed.
+#[cfg(test)]
+thread_local! {
+    pub(crate) static RENDERS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
 /// Renders the file listing in the active view mode, with the search bar when
 /// search is visible.
 pub fn render(
@@ -20,6 +26,8 @@ pub fn render(
     window: &mut Window,
     cx: &mut Context<ExplorerPane>,
 ) -> AnyElement {
+    #[cfg(test)]
+    RENDERS.set(RENDERS.get() + 1);
     // In both modes: the preview pane draws from the same cache, and the list
     // has to release a folder's thumbnails on leaving it just as the grid does.
     page.thumbnails.show_directory(&page.cwd, cx);

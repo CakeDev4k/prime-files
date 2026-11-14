@@ -73,7 +73,7 @@ pub fn render(
         (None, None) => (String::new(), theme::fg_secondary()),
     };
 
-    let is_file = |entry: &&prime_files_services::fs::listing::FileEntryDto| entry.kind != "dir";
+    let is_file = |entry: &&std::sync::Arc<prime_files_services::fs::listing::FileEntryDto>| entry.kind != "dir";
     let folders_shown = page.filtered_entries.iter().filter(|entry| entry.kind == "dir").count();
     let folders_total = page.entries.iter().filter(|entry| entry.kind == "dir").count();
     let files_shown = page.filtered_entries.iter().filter(is_file).count();

@@ -158,7 +158,7 @@ impl ExplorerPane {
         if let Some(search) = self.deep_search.as_mut() {
             search.found += batch.len();
         }
-        self.filtered_entries.extend(batch);
+        self.filtered_entries.extend(batch.into_iter().map(std::sync::Arc::new));
         self.update_item_sizes();
     }
 

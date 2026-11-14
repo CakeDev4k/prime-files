@@ -385,7 +385,7 @@ impl ExplorerPane {
                     // Its file belonged to the folder left behind.
                     self.quick_look = false;
                 }
-                self.entries = entries;
+                self.entries = entries.into_iter().map(std::sync::Arc::new).collect();
                 self.apply_filter();
                 self.update_item_sizes();
                 self.listed_cwd = Some(self.cwd.clone());
@@ -432,7 +432,8 @@ impl ExplorerPane {
     ) -> bool {
         !preview_gone
             && self.listed_cwd.as_deref() == Some(self.cwd.as_str())
-            && self.entries.as_slice() == entries
+            && self.entries.len() == entries.len()
+            && self.entries.iter().zip(entries).all(|(shown, read)| **shown == *read)
             && open_folders.len() == self.tree.children.len()
             && open_folders.iter().all(|(folder, contents)| {
                 contents.as_ref().is_some_and(|contents| self.tree.children.get(folder) == Some(contents))

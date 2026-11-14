@@ -847,7 +847,7 @@ impl ExplorerPage {
     /// shown, files in the folder)`. Shown is after the filter or search.
     pub fn listing_counts(&self, cx: &App) -> (usize, usize, usize) {
         let pane = self.group.active_pane().read(cx);
-        let is_file = |entry: &&prime_files_services::fs::listing::FileEntryDto| entry.kind != "dir";
+        let is_file = |entry: &&std::sync::Arc<prime_files_services::fs::listing::FileEntryDto>| entry.kind != "dir";
         let folders = pane.filtered_entries.iter().filter(|entry| entry.kind == "dir").count();
         let shown = pane.filtered_entries.iter().filter(is_file).count();
         // Search results come from other folders too: compared with this

@@ -61,7 +61,7 @@ pub fn render(
                                 .py(px(PADDING))
                                 .pl(px(PADDING));
                             for ix in first..last {
-                                let Some(item) = page.filtered_entries.get(ix).cloned() else {
+                                let Some(item) = page.filtered_entries.get(ix).map(|item| (**item).clone()) else {
                                     continue;
                                 };
                                 let icon = page.thumbnails.icon(&item.path, item.kind == "dir", icon_px, cx);

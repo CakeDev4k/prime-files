@@ -93,3 +93,11 @@ pub enum FileKind {
     /// A symbolic link.
     Link,
 }
+
+// So code that sorts or groups rows takes them owned or shared alike
+// (`Vec<FileEntryDto>`, `Vec<Arc<FileEntryDto>>`).
+impl AsRef<FileEntryDto> for FileEntryDto {
+    fn as_ref(&self) -> &FileEntryDto {
+        self
+    }
+}

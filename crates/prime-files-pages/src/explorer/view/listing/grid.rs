@@ -105,7 +105,7 @@ pub fn render(
                                 .px(px(GRID_PADDING_X))
                                 .pt(px(TILE_GAP));
                             for ix in first..last {
-                                let Some(item) = page.filtered_entries.get(ix).cloned() else {
+                                let Some(item) = page.filtered_entries.get(ix).map(|item| (**item).clone()) else {
                                     continue;
                                 };
                                 let selected = page.is_selected(ix);

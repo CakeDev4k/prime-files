@@ -101,7 +101,7 @@ impl ExplorerPane {
         self.filtered_entries = out;
     }
 
-    fn push_with_children(&mut self, entry: FileEntryDto, depth: usize, out: &mut Vec<FileEntryDto>) {
+    fn push_with_children(&mut self, entry: std::sync::Arc<FileEntryDto>, depth: usize, out: &mut Vec<std::sync::Arc<FileEntryDto>>) {
         let open = entry.kind == "dir" && self.tree.expanded.contains(&entry.path);
         let path = entry.path.clone();
         if depth > 0 {
@@ -115,10 +115,10 @@ impl ExplorerPane {
             return;
         };
         let show_hidden = self.show_hidden;
-        let mut children: Vec<FileEntryDto> = children
+        let mut children: Vec<std::sync::Arc<FileEntryDto>> = children
             .iter()
             .filter(|child| show_hidden || !super::state::is_hidden(&child.name))
-            .cloned()
+            .map(|child| std::sync::Arc::new(child.clone()))
             .collect();
         super::entries::sort_entries_with(&mut children, self.sort_key, self.sort_asc, self.folder_order);
         for child in children {

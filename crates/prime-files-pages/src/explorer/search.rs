@@ -73,7 +73,7 @@ impl ExplorerPane {
                         this.clear_selection();
                         match processed {
                             Ok((grouped, entries)) => {
-                                this.filtered_entries = entries;
+                                this.filtered_entries = entries.into_iter().map(std::sync::Arc::new).collect();
                                 this.search_results = Some(grouped);
                                 this.clear_status();
                             }

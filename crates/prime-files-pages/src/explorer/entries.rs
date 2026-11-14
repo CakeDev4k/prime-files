@@ -35,8 +35,8 @@ pub fn sort_entries(entries: &mut [FileEntryDto], key: SortKey, asc: bool) {
 /// Sorts by `key`, with folders placed as `folders` says. Names compare as
 /// Explorer compares them (`2.txt` before `10.txt`), so a folder lists in the
 /// order the user already knows from it.
-pub fn sort_entries_with(
-    entries: &mut [FileEntryDto],
+pub fn sort_entries_with<E: AsRef<FileEntryDto>>(
+    entries: &mut [E],
     key: SortKey,
     asc: bool,
     folders: FolderOrder,
@@ -57,7 +57,8 @@ pub fn sort_entries_with(
                 SortKey::Size => entry.size,
                 _ => entry.modified,
             };
-            let compare = |a: &FileEntryDto, b: &FileEntryDto| {
+            let compare = |a: &E, b: &E| {
+                let (a, b) = (a.as_ref(), b.as_ref());
                 grouping(a, b).then_with(|| direction(value(a).cmp(&value(b))))
             };
             if !entries.is_sorted_by(|a, b| compare(a, b) != Ordering::Greater) {
@@ -70,13 +71,14 @@ pub fn sort_entries_with(
             // comparison, about 34 per entry in a folder of 35,000.
             let keys: Vec<SortName> = entries
                 .iter()
+                .map(|entry| entry.as_ref())
                 .map(|entry| match key {
                     SortKey::Name => SortName::new(&entry.name),
                     _ => SortName::new(&get_extension(&entry.name, &entry.kind)),
                 })
                 .collect();
             let compare = |a: usize, b: usize| {
-                grouping(&entries[a], &entries[b]).then_with(|| direction(keys[a].cmp(&keys[b])))
+                grouping(entries[a].as_ref(), entries[b].as_ref()).then_with(|| direction(keys[a].cmp(&keys[b])))
             };
             // The listing is sorted again after every filter and on every
             // reload; most of those calls get it already in order, and a check

@@ -165,8 +165,8 @@ fn prefetchable_image(path: &str) -> bool {
 /// The photos next to `row` in `entries` (row and path), nearest first. With `wrap` the ends
 /// prefetch each other, as the arrows do with continuous scrolling; without it
 /// the listing has ends and a photo across one is not reachable to prefetch.
-fn neighbours_to_prefetch(
-    entries: &[prime_files_services::fs::listing::FileEntryDto],
+fn neighbours_to_prefetch<E: AsRef<prime_files_services::fs::listing::FileEntryDto>>(
+    entries: &[E],
     row: usize,
     wrap: bool,
 ) -> Vec<(usize, String)> {
@@ -188,7 +188,7 @@ fn neighbours_to_prefetch(
         if index == row {
             continue;
         }
-        let Some(entry) = entries.get(index) else {
+        let Some(entry) = entries.get(index).map(AsRef::as_ref) else {
             continue;
         };
         if entry.kind == "file"

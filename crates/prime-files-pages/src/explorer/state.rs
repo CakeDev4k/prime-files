@@ -24,9 +24,9 @@ pub struct ExplorerPane {
     /// Index of the current position within `history`.
     pub history_index: usize,
     /// All entries read from `cwd`, before filtering.
-    pub entries: Vec<FileEntryDto>,
+    pub entries: Vec<std::sync::Arc<FileEntryDto>>,
     /// Entries currently shown after applying hidden/search filters and sorting.
-    pub filtered_entries: Vec<FileEntryDto>,
+    pub filtered_entries: Vec<std::sync::Arc<FileEntryDto>>,
     // Whether the current directory has been loaded. Tracked explicitly rather
     // than via `entries.is_empty()` so an empty (or failed-to-read) directory is
     // not reloaded on every render.

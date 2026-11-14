@@ -75,16 +75,16 @@ impl Clock {
 /// Reorders `entries` so each group is one run, keeping the current sort
 /// inside every group, and returns the runs in display order. `GroupBy::None`
 /// leaves the entries alone and returns no groups.
-pub fn group_entries(entries: &mut [FileEntryDto], by: GroupBy, clock: &Clock) -> Vec<Group> {
+pub fn group_entries<E: AsRef<FileEntryDto>>(entries: &mut [E], by: GroupBy, clock: &Clock) -> Vec<Group> {
     if by == GroupBy::None {
         return Vec::new();
     }
     // A stable sort by the group's rank: within a group, the order the
     // listing was already sorted in survives.
-    entries.sort_by_key(|entry| group_of(entry, by, clock).0);
+    entries.sort_by_key(|entry| group_of(entry.as_ref(), by, clock).0);
     let mut groups: Vec<Group> = Vec::new();
     for (index, entry) in entries.iter().enumerate() {
-        let (_, label) = group_of(entry, by, clock);
+        let (_, label) = group_of(entry.as_ref(), by, clock);
         match groups.last_mut() {
             Some(group) if group.label == label => group.len += 1,
             _ => groups.push(Group {

@@ -1413,7 +1413,7 @@ impl ExplorerPane {
                         .into_iter()
                         .next()
                         .and_then(|path| {
-                            self.filtered_entries.iter().find(|entry| entry.path == path).cloned()
+                            self.filtered_entries.iter().find(|entry| entry.path == path).map(|entry| (**entry).clone())
                         });
                     if let Some(folder) = folder {
                         self.activate_entry(folder, window, cx);

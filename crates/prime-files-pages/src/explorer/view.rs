@@ -237,7 +237,7 @@ pub fn render(
                 {
                     if let Some(item) = this
                         .active_row()
-                        .and_then(|index| this.filtered_entries.get(index).cloned())
+                        .and_then(|index| this.filtered_entries.get(index).map(|item| (**item).clone()))
                     {
                         this.close_quick_look(cx);
                         this.activate_entry(item, window, cx);

@@ -172,7 +172,7 @@ async fn grouping_counts_headers_when_scrolling_to_an_entry(cx: &mut TestAppCont
                 file("b.png", "file", 1),
                 file("docs", "dir", 0),
                 file("a.png", "file", 1),
-            ];
+            ].into_iter().map(std::sync::Arc::new).collect();
             page.set_group_by(super::grouping::GroupBy::Kind);
             let names: Vec<&str> = page.filtered_entries.iter().map(|e| e.name.as_str()).collect();
             assert_eq!(names, ["docs", "a.png", "b.png"]);
@@ -239,7 +239,7 @@ async fn apply_filter_hides_dotfiles_until_enabled(cx: &mut TestAppContext) {
                 file(".hidden", "file", 1),
                 file("visible.txt", "file", 2),
                 file("docs", "dir", 0),
-            ];
+            ].into_iter().map(std::sync::Arc::new).collect();
 
             page.show_hidden = false;
             page.apply_filter();
@@ -740,7 +740,7 @@ async fn item_sizes_track_entries_and_table_width_sums_columns(cx: &mut TestAppC
     let window = new_explorer(cx);
     window
         .update(cx, |page, _window, _cx| {
-            page.filtered_entries = vec![file("a", "file", 1), file("b", "file", 2)];
+            page.filtered_entries = vec![file("a", "file", 1), file("b", "file", 2)].into_iter().map(std::sync::Arc::new).collect();
             page.update_item_sizes();
             assert_eq!(page.item_sizes.len(), 2);
 
@@ -1387,7 +1387,7 @@ async fn selection_single_toggle_range_and_paths(cx: &mut TestAppContext) {
                 file("b", "file", 2),
                 file("c", "file", 3),
                 file("d", "file", 4),
-            ];
+            ].into_iter().map(std::sync::Arc::new).collect();
 
             // Single selection re-anchors and becomes active.
             page.select_single(1);
@@ -1422,7 +1422,7 @@ async fn selection_all_clear_and_arrow_navigation(cx: &mut TestAppContext) {
                 file("a", "file", 1),
                 file("b", "file", 2),
                 file("c", "file", 3),
-            ];
+            ].into_iter().map(std::sync::Arc::new).collect();
             // This test is about clamping; the wrap has its own below.
             page.infinite_scroll = false;
 
@@ -1463,7 +1463,7 @@ async fn infinite_scroll_wraps_around_the_ends(cx: &mut TestAppContext) {
                 file("a", "file", 1),
                 file("b", "file", 2),
                 file("c", "file", 3),
-            ];
+            ].into_iter().map(std::sync::Arc::new).collect();
             page.infinite_scroll = true;
 
             // Down past the last row lands on the first.
@@ -1493,7 +1493,7 @@ async fn sorting_keeps_the_selection_on_the_entries_it_was_made_on(cx: &mut Test
                 file("a", "file", 1),
                 file("b", "file", 2),
                 file("c", "file", 3),
-            ];
+            ].into_iter().map(std::sync::Arc::new).collect();
             page.apply_filter();
 
             // Pick the first two rows, then reverse the sort. "Select, then sort,
@@ -1520,7 +1520,7 @@ async fn filtering_drops_entries_that_are_no_longer_visible(cx: &mut TestAppCont
     let window = new_explorer(cx);
     window
         .update(cx, |page, _window, _cx| {
-            page.entries = vec![file("a", "file", 1), file("b", "file", 2)];
+            page.entries = vec![file("a", "file", 1), file("b", "file", 2)].into_iter().map(std::sync::Arc::new).collect();
             page.apply_filter();
             page.select_all();
 
@@ -2582,11 +2582,11 @@ async fn fitting_a_column_follows_its_longest_value(cx: &mut TestAppContext) {
     let window = new_explorer(cx);
     window
         .update(cx, |page, _window, _cx| {
-            page.entries = vec![file("a.txt", "file", 1), file(&"x".repeat(60), "file", 1)];
+            page.entries = vec![file("a.txt", "file", 1), file(&"x".repeat(60), "file", 1)].into_iter().map(std::sync::Arc::new).collect();
             page.apply_filter();
             page.fit_column(0);
             let long = page.col_name_width;
-            page.entries = vec![file("a.txt", "file", 1)];
+            page.entries = vec![file("a.txt", "file", 1)].into_iter().map(std::sync::Arc::new).collect();
             page.apply_filter();
             page.fit_column(0);
             assert!(page.col_name_width < long);
@@ -2599,7 +2599,7 @@ async fn the_tree_view_splices_an_open_folder_under_it(cx: &mut TestAppContext) 
     let window = new_explorer(cx);
     window
         .update(cx, |page, _window, cx| {
-            page.entries = vec![file("docs", "dir", 0), file("z.txt", "file", 1)];
+            page.entries = vec![file("docs", "dir", 0), file("z.txt", "file", 1)].into_iter().map(std::sync::Arc::new).collect();
             page.set_view_mode(ViewMode::Tree, cx);
             settle_zoom(page, cx);
             let docs = page.filtered_entries[0].path.clone();

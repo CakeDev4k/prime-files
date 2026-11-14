@@ -58,6 +58,12 @@ pub fn watch(_window: &mut Window, cx: &mut Context<RootView>) {
     if !platform::start_hook(sender) {
         return;
     }
+    // So the next time the app is closed, a folder from the Explorer's Jump
+    // List still opens here (issue #60). Off the UI thread: it asks `reg`.
+    std::thread::Builder::new()
+        .name("prime-files-ensure-watch".into())
+        .spawn(crate::default_explorer::ensure_resident_watch)
+        .ok();
     // Shown in the window used last (`crate::windows`).
     cx.spawn(async move |_this: WeakEntity<RootView>, cx: &mut gpui::AsyncApp| {
         while let Ok(path) = receiver.recv().await {
@@ -80,6 +86,31 @@ impl RootView {
             .update(cx, |page, cx| page.open_path(folder, select, window, cx));
         window.activate_window();
     }
+}
+
+/// The resident watch (`prime-files --watch-explorer`): the same hook with
+/// no window of the app, for while Prime Files is closed.
+///
+/// With Prime Files the default explorer, a folder from the Explorer
+/// taskbar icon's Jump List opens in an Explorer window, not through the
+/// folder verb (issue #60). While the app runs its hook takes that window
+/// (issue #10); with the app closed nothing did, and the folder stayed in
+/// the Explorer. This process is started at sign-in and by the app, keeps
+/// only the hook (a few MB), and hands each window it takes to
+/// `prime-files <path>`, which starts the app. While the app runs it steps
+/// aside: the app's own hook answers.
+///
+/// It ends when Prime Files stops being the default explorer, when Windows
+/// or the installer asks its hidden window to close, or when
+/// `--stop-watching` signals it.
+pub fn run_resident() {
+    platform::run_resident();
+}
+
+/// Asks a running resident watch to end (the uninstaller, before removing
+/// the program).
+pub fn stop_resident() {
+    platform::stop_resident();
 }
 
 #[cfg(windows)]
@@ -129,6 +160,132 @@ mod platform {
     const EMPTY_GRACE: u32 = 40;
 
     static SENDER: OnceLock<async_channel::Sender<String>> = OnceLock::new();
+    // Set in the resident watch, which leaves windows to a running app.
+    static RESIDENT: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+    const RESIDENT_MUTEX: windows::core::PCWSTR = windows::core::w!("Local\\PrimeFilesExplorerWatch");
+    const RESIDENT_STOP: windows::core::PCWSTR = windows::core::w!("Local\\PrimeFilesExplorerWatchStop");
+    /// How often the resident watch asks whether Prime Files is still the
+    /// default explorer.
+    const DEFAULT_CHECK_MS: u32 = 60_000;
+
+    pub fn run_resident() {
+        use windows::Win32::Foundation::{ERROR_ALREADY_EXISTS, GetLastError, HANDLE, LPARAM, LRESULT, WAIT_OBJECT_0, WPARAM};
+        use windows::Win32::System::Threading::{CreateEventW, CreateMutexW};
+        use windows::Win32::UI::WindowsAndMessaging::{
+            CreateWindowExW, DefWindowProcW, DestroyWindow, MsgWaitForMultipleObjects, PM_REMOVE, PeekMessageW,
+            PostQuitMessage, QS_ALLINPUT, RegisterClassW, SetTimer, WINDOW_EX_STYLE, WINDOW_STYLE, WM_CLOSE,
+            WM_DESTROY, WM_ENDSESSION, WM_QUERYENDSESSION, WM_QUIT, WM_TIMER, WNDCLASSW,
+        };
+
+        // One per session: the app starts one at each launch, and sign-in
+        // starts another.
+        let Ok(_single) = (unsafe { CreateMutexW(None, true, RESIDENT_MUTEX) }) else {
+            return;
+        };
+        if unsafe { GetLastError() } == ERROR_ALREADY_EXISTS {
+            return;
+        }
+        let Ok(stop) = (unsafe { CreateEventW(None, true, false, RESIDENT_STOP) }) else {
+            return;
+        };
+        if !super::super::default_explorer::is_default() {
+            return;
+        }
+        RESIDENT.store(true, std::sync::atomic::Ordering::Relaxed);
+        let (sender, receiver) = async_channel::unbounded::<String>();
+        if !start_hook(sender) {
+            return;
+        }
+        let Ok(exe) = std::env::current_exe() else {
+            return;
+        };
+        std::thread::Builder::new()
+            .name("prime-files-resident-open".into())
+            .spawn(move || {
+                while let Ok(path) = receiver.recv_blocking() {
+                    // The app, started with the folder (or the file to
+                    // select): it opens a window, or hands over to one that
+                    // started meanwhile.
+                    if let Err(error) = std::process::Command::new(&exe).arg(&path).spawn() {
+                        tracing::warn!("could not open {path} in Prime Files: {error}");
+                    }
+                }
+            })
+            .ok();
+
+        // A hidden top-level window, so the installer (Restart Manager) and
+        // the end of the session can ask this process to close.
+        unsafe extern "system" fn on_message(hwnd: windows::Win32::Foundation::HWND, message: u32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
+            match message {
+                WM_QUERYENDSESSION => LRESULT(1),
+                WM_ENDSESSION | WM_CLOSE => {
+                    unsafe { DestroyWindow(hwnd) }.ok();
+                    LRESULT(0)
+                }
+                WM_DESTROY => {
+                    unsafe { PostQuitMessage(0) };
+                    LRESULT(0)
+                }
+                WM_TIMER => {
+                    if !super::super::default_explorer::is_default() {
+                        unsafe { DestroyWindow(hwnd) }.ok();
+                    }
+                    LRESULT(0)
+                }
+                _ => unsafe { DefWindowProcW(hwnd, message, wparam, lparam) },
+            }
+        }
+        let class = WNDCLASSW {
+            lpfnWndProc: Some(on_message),
+            lpszClassName: windows::core::w!("PrimeFilesExplorerWatch"),
+            ..Default::default()
+        };
+        unsafe { RegisterClassW(&class) };
+        let Ok(hwnd) = (unsafe {
+            CreateWindowExW(
+                WINDOW_EX_STYLE(0),
+                class.lpszClassName,
+                windows::core::w!("Prime Files Explorer Watch"),
+                WINDOW_STYLE(0),
+                0,
+                0,
+                0,
+                0,
+                None,
+                None,
+                None,
+                None,
+            )
+        }) else {
+            return;
+        };
+        unsafe { SetTimer(Some(hwnd), 1, DEFAULT_CHECK_MS, None) };
+        let handles: [HANDLE; 1] = [stop];
+        loop {
+            let woke = unsafe { MsgWaitForMultipleObjects(Some(&handles), false, u32::MAX, QS_ALLINPUT) };
+            if woke == WAIT_OBJECT_0 {
+                unsafe { DestroyWindow(hwnd) }.ok();
+            }
+            let mut message = MSG::default();
+            while unsafe { PeekMessageW(&mut message, None, 0, 0, PM_REMOVE) }.as_bool() {
+                if message.message == WM_QUIT {
+                    return;
+                }
+                unsafe {
+                    _ = TranslateMessage(&message);
+                    DispatchMessageW(&message);
+                }
+            }
+        }
+    }
+
+    pub fn stop_resident() {
+        use windows::Win32::System::Threading::{EVENT_MODIFY_STATE, OpenEventW, SetEvent};
+        if let Ok(stop) = unsafe { OpenEventW(EVENT_MODIFY_STATE, false, RESIDENT_STOP) } {
+            unsafe { SetEvent(stop) }.ok();
+        }
+    }
 
     pub fn start_hook(sender: async_channel::Sender<String>) -> bool {
         if SENDER.set(sender).is_err() {
@@ -193,6 +350,10 @@ mod platform {
     }
 
     fn watch_window(hwnd: isize) {
+        // The app is running: its own hook takes the window.
+        if RESIDENT.load(std::sync::atomic::Ordering::Relaxed) && crate::ipc::is_running() {
+            return;
+        }
         unsafe { CoInitializeEx(None, COINIT_APARTMENTTHREADED) }.ok().ok();
         // Asked once: it reads the registry, and asking on every poll
         // started a process each time.
@@ -342,4 +503,8 @@ mod platform {
     pub fn start_hook(_sender: async_channel::Sender<String>) -> bool {
         false
     }
+
+    pub fn run_resident() {}
+
+    pub fn stop_resident() {}
 }

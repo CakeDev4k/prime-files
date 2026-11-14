@@ -241,6 +241,9 @@ begin
   else if ResultCode <> 0 then
     Log(Format('forget-listary ended with %d.', [ResultCode]));
   RegDeleteValue(HKCU, 'Software\Microsoft\Windows\CurrentVersion\Run', 'Prime Files');
+  // The resident watch (issue #60) holds the program open: it ends first.
+  RegDeleteValue(HKCU, 'Software\Microsoft\Windows\CurrentVersion\Run', 'Prime Files Watch');
+  Exec(ExpandConstant('{app}\{#AppExe}'), '--stop-watching', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
   RegDeleteKeyIncludingSubkeys(HKCU, 'Software\Classes\Directory\shell\prime-files');
   RegDeleteKeyIncludingSubkeys(HKCU, 'Software\Classes\Drive\shell\prime-files');
   if RegQueryStringValue(HKCU, 'Software\Classes\Directory\shell', '', Value) and (Value = 'prime-files') then

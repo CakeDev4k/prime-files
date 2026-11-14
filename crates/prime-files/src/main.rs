@@ -27,6 +27,16 @@ fn main() {
     }
     let cli = cli::Cli::parse();
 
+    // Neither opens a window, nor reads the config.
+    if cli.watch_explorer {
+        prime_files_pages::reveal::run_resident();
+        return;
+    }
+    if cli.stop_watching {
+        prime_files_pages::reveal::stop_resident();
+        return;
+    }
+
     // `config` subcommands run headless and exit without opening a window.
     if let Some(cli::Command::Config { action }) = &cli.command {
         prime_files_core::telemetry::logging::init_logging();

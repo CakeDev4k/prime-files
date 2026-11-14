@@ -128,11 +128,7 @@ fn shell_object_verbs(program: &str) -> io::Result<()> {
 pub fn repair() -> io::Result<()> {
     // Only the installed copy: a build run from the source tree, or a test
     // copy, must not change what the person's taskbar opens.
-    let installed = std::env::current_exe()
-        .ok()
-        .and_then(|exe| exe.parent().map(|folder| folder.join("unins000.exe").is_file()))
-        .unwrap_or(false);
-    if !installed || !is_default() {
+    if installed_copy().is_none() || !is_default() {
         return Ok(());
     }
     let command_of = |key: &str| -> Option<String> {
@@ -178,6 +174,9 @@ pub fn disable() -> io::Result<()> {
             reg_ok(&["delete", key, "/f"])?;
         }
     }
+    // The resident watch has nothing left to do; it notices within a
+    // minute and ends.
+    reg(&["delete", RUN_KEY, "/v", WATCH_VALUE, "/f"])?;
     Ok(())
 }
 
@@ -203,6 +202,45 @@ fn is_ours(key: &str) -> bool {
 // Where Windows starts programs at sign-in for this user, and the value name.
 const RUN_KEY: &str = r"HKCU\Software\Microsoft\Windows\CurrentVersion\Run";
 const RUN_VALUE: &str = "Prime Files";
+/// The resident watch's value under [`RUN_KEY`] (`crate::reveal::run_resident`).
+const WATCH_VALUE: &str = "Prime Files Watch";
+
+// Whether this is the installed copy. A build run from the source tree, or
+// a test copy, must not change what the person's taskbar opens or what
+// starts at sign-in.
+fn installed_copy() -> Option<std::path::PathBuf> {
+    let exe = std::env::current_exe().ok()?;
+    exe.parent()?.join("unins000.exe").is_file().then_some(exe)
+}
+
+/// With the installed copy the default explorer: makes sure the resident
+/// watch starts at sign-in and is running now (issue #60). Asks `reg`, so
+/// never on the UI thread.
+pub fn ensure_resident_watch() {
+    let Some(exe) = installed_copy() else {
+        return;
+    };
+    if !is_default() {
+        return;
+    }
+    let command = format!("\"{}\" --watch-explorer", exe.display());
+    if let Err(error) = reg_ok(&["add", RUN_KEY, "/v", WATCH_VALUE, "/t", "REG_SZ", "/d", &command, "/f"]) {
+        tracing::warn!("could not start the explorer watch at sign-in: {error}");
+    }
+    // A second one finds the first's mutex and ends at once.
+    let mut start = std::process::Command::new(&exe);
+    start.arg("--watch-explorer");
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        const DETACHED_PROCESS: u32 = 0x0000_0008;
+        const CREATE_NEW_PROCESS_GROUP: u32 = 0x0000_0200;
+        start.creation_flags(DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP);
+    }
+    if let Err(error) = start.spawn() {
+        tracing::warn!("could not start the explorer watch: {error}");
+    }
+}
 
 /// Whether Prime Files starts, minimized, when this user signs in.
 pub fn starts_with_windows() -> bool {

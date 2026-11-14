@@ -30,6 +30,16 @@ pub struct Cli {
     #[arg(long)]
     pub background: bool,
 
+    /// Runs only the watch that opens the Explorer's folder windows here
+    /// while the app is closed (issue #60). Started by the app and at
+    /// sign-in, with Prime Files the default explorer.
+    #[arg(long, hide = true)]
+    pub watch_explorer: bool,
+
+    /// Ends a running `--watch-explorer` (the uninstaller).
+    #[arg(long, hide = true)]
+    pub stop_watching: bool,
+
     /// A folder to open, or a file to open its folder with it selected. When
     /// Prime Files is already running it opens there, in a new tab.
     #[arg(value_name = "PATH", value_parser = parse_path)]

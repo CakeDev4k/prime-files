@@ -32,6 +32,7 @@ Explorador de arquivos para Windows, rápido, escrito em Rust.
 - A busca rápida podia deixar de ver arquivos novos depois de uma cópia ou extração muito grande, até reabrir o app. Agora ela percebe quando perdeu nomes e lê o disco de novo.
 - Clicar numa pasta de rede que não responde mostra "Abrindo…" em vez de não mostrar nada.
 - Com a janela minimizada, o Prime Files não confere mais as pastas abertas.
+- Um vídeo tocando na prévia redesenhava a lista e a barra lateral a cada quadro. Agora só o player é redesenhado.
 
 ## Prime Files 0.3.10
 

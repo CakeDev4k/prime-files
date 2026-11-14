@@ -1533,13 +1533,45 @@ cabeçalho do `Arc`; no total, cerca de 5 MB a menos e nenhum clone dos nomes
 a cada filtro.
 
 **Ficou de fora** (nesta rodada, 13/11/2026):
-- **O player redesenhando o painel inteiro.** Exige lista e barra lateral
-  como views `.cached()` e o player como entidade própria. É uma
-  reestruturação do desenho do painel que não dá para conferir sem ver a
-  tela.
 - **Memória do índice** (`Entry` de 40 bytes, índice velho e novo juntos
   durante a atualização) e **a grade guardando o nome duas vezes**:
   estruturais, ganho de ~20 MB num C: de 2,5 milhões de nomes.
 - **Soltar do celular dentro do app**: o gpui só entende `HDROP`; precisaria
   de remendo no `IDropTarget` dele para entregar o `IDataObject` e copiar
   por `IFileOperation`.
+
+### 31. O vídeo tocando redesenha só o player (14/11/2026)
+
+**Origem.** "Ficou de fora" das passadas 14, 20 e 30: cada quadro de um vídeo
+na prévia avisava o painel (`cx.notify()`), e o gpui redesenha a view avisada
+e todos os ancestrais (`mark_view_dirty`). Lista, barra lateral, cabeçalho e
+prévia eram uma view só, então tudo era refeito a cada quadro.
+
+**Medido** (`a_video_frame_redraws_the_player_alone`, 200 itens, barra e
+prévia abertas, 30 quadros):
+
+| | Lista refeita | Barra lateral refeita |
+|---|---:|---:|
+| Antes | 60 vezes | 60 vezes |
+| Depois | 0 | 0 |
+
+**Mudança.**
+- `view/parts.rs`: a lista e a barra lateral viraram views cacheadas, e o
+  player uma view própria. O task do player avisa só ela (`media::redraw`).
+  Em tela cheia, que não usa essas views, avisa o painel como antes.
+- Remendo no gpui (`third_party/gpui/PRIME-FILES.md`): a lista e a barra
+  leem o painel, os globais (tags, rede, marcadores) e a configuração, e
+  antes qualquer mudança na janela as redesenhava. Para manter isso, elas
+  são *seguidoras* (`Window::redraw_with_every_change`): redesenham com
+  qualquer aviso de outra view, menos o do player (`redraw_alone`) e menos
+  os avisos feitos durante o próprio desenho. O `InputState` do
+  `gpui_component` se avisa a cada pintura, e com ele cada quadro ainda
+  puxava a lista.
+
+**Cobertura.** O teste acima conta as reconstruções em 30 quadros (60 antes,
+0 depois). Ele também confere que uma mudança no painel e uma na página em
+volta ainda redesenham a lista e a barra.
+
+**Não conferido.** A CPU tocando não foi medida no app, e o layout da lista
+dentro da view cacheada não foi visto na tela. Os testes que desenham o
+painel passam, mas não substituem olhar.

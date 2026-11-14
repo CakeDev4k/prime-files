@@ -492,14 +492,13 @@ impl ExplorerPage {
             self.add_tab_beside(anchor, home_dir(), window, cx);
             return;
         }
-        let check = cx
-            .background_spawn(async move { std::path::Path::new(&configured).is_dir().then_some(configured) });
+        let check = super::ask_disk::ask(cx, move || std::path::Path::new(&configured).is_dir().then_some(configured));
         cx.spawn_in(
             window,
             async move |this: gpui::WeakEntity<Self>, cx: &mut gpui::AsyncWindowContext| {
                 let found = check.await;
                 this.update_in(cx, |this, window, cx| {
-                    this.add_tab_beside(anchor, found.unwrap_or_else(home_dir), window, cx);
+                    this.add_tab_beside(anchor, found.flatten().unwrap_or_else(home_dir), window, cx);
                 })
                 .ok();
             },

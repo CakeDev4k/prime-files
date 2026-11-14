@@ -1,3 +1,4 @@
+mod ask_disk;
 mod audio_session;
 mod batch_rename;
 pub(crate) mod commands;

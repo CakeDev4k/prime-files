@@ -6,10 +6,12 @@ use std::collections::{HashMap, HashSet};
 use std::time::{Duration, Instant};
 
 use gpui::{AppContext as _, Context, WeakEntity, Window};
+use prime_files_core::t;
 use prime_files_core::telemetry::LogErr;
 
 use super::ExplorerPane;
 use super::thumbnails::Thumbnails;
+use super::types::StatusLevel;
 
 /// One sidebar entry.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -201,6 +203,8 @@ pub fn this_pc_entries() -> Vec<prime_files_services::fs::listing::FileEntryDto>
 // again: pinning in Explorer, or a folder becoming frequent, shows up without
 // a restart, and the Shell is not asked on every frame.
 const REFRESH_AFTER: Duration = Duration::from_secs(15);
+/// How long a click on a place waits for the disk before saying so.
+const SLOW_ANSWER: Duration = Duration::from_millis(400);
 
 /// What the sidebar shows and which tree nodes are open.
 pub struct SidebarState {
@@ -430,15 +434,38 @@ impl ExplorerPane {
             // it (`docs/PERFORMANCE.md`, pass 13).
             Some(path) => {
                 let path = path.clone();
-                let is_file = cx.background_spawn({
+                let is_file = super::ask_disk::ask(cx, {
                     let path = path.clone();
-                    async move { std::path::Path::new(&path).is_file() }
+                    move || std::path::Path::new(&path).is_file()
                 });
+                // A question that does not come back at once says so on
+                // screen: until 13/11/2026 a click on a dead share showed
+                // nothing at all for the 21 s.
+                let answered = std::rc::Rc::new(std::cell::Cell::new(false));
+                cx.spawn({
+                    let answered = answered.clone();
+                    async move |this: WeakEntity<Self>, cx| {
+                        cx.background_executor().timer(SLOW_ANSWER).await;
+                        if !answered.get() {
+                            this.update(cx, |page, cx| {
+                                page.set_status(StatusLevel::Info, t!("Abrindo…").to_string());
+                                cx.notify();
+                            })
+                            .ok();
+                        }
+                    }
+                })
+                .detach();
                 cx.spawn_in(window, async move |this: WeakEntity<Self>, cx| {
-                    let is_file = is_file.await;
+                    // Unknown (too many questions stuck): opened as a
+                    // folder, whose read says what is wrong.
+                    let is_file = is_file.await.unwrap_or(false);
+                    answered.set(true);
                     this.update_in(cx, |page, window, cx| {
                         if is_file {
+                            page.clear_status();
                             page.open_with_default_app(&path);
+                            cx.notify();
                         } else {
                             page.change_dir(path, window, cx);
                         }
@@ -503,12 +530,12 @@ impl ExplorerPane {
             self.open_path_in_new_tab(&address, true, true, cx);
             return;
         }
-        let is_file = cx.background_spawn({
+        let is_file = super::ask_disk::ask(cx, {
             let path = address.clone();
-            async move { std::path::Path::new(&path).is_file() }
+            move || std::path::Path::new(&path).is_file()
         });
         cx.spawn(async move |this: WeakEntity<Self>, cx| {
-            if is_file.await {
+            if is_file.await.unwrap_or(false) {
                 return;
             }
             this.update(cx, |page, cx| page.open_path_in_new_tab(&address, true, true, cx))

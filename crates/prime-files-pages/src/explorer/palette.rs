@@ -442,16 +442,16 @@ pub(crate) trait PaletteBox: PaletteHost {
         rows.extend(palette.rows.iter().filter(|row| matches!(row, Row::Typed { .. })).take(1).cloned());
         palette._typed = None;
         if Path::new(&typed).is_absolute() {
-            let check = cx.background_spawn({
+            let check = super::ask_disk::ask(cx, {
                 let typed = typed.clone();
-                async move {
+                move || {
                     let path = Path::new(&typed);
                     path.exists().then(|| path.is_dir())
                 }
             });
             let asked = query.clone();
             palette._typed = Some(cx.spawn(async move |page: WeakEntity<Self>, cx| {
-                let dir = check.await;
+                let dir = check.await.flatten();
                 page.update(cx, |page, cx| {
                     let Some(palette) = page.palette_slot().as_mut() else {
                         return;

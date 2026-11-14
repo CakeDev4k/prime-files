@@ -77,9 +77,9 @@ impl ExplorerPane {
         // server is gone (`Z:\`) held the window at every Enter until
         // 12/11/2026 (docs/PERFORMANCE.md, pass 19). The field stays open
         // meanwhile, so a typo found missing is still there to fix.
-        let found = cx.background_spawn({
+        let found = super::ask_disk::ask(cx, {
             let typed = typed.clone();
-            async move {
+            move || {
                 let path = Path::new(&typed);
                 if path.is_dir() {
                     Some(typed.clone())
@@ -91,7 +91,7 @@ impl ExplorerPane {
             }
         });
         cx.spawn_in(window, async move |this, cx| {
-            let target = found.await;
+            let target = found.await.flatten();
             this.update_in(cx, |pane, window, cx| {
                 // Typed over or closed while the disk answered: that newer
                 // intent wins.

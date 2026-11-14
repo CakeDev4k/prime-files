@@ -457,9 +457,9 @@ impl ExplorerPane {
                 Some(Command::OpenInNewTab) => {
                     // Which are folders is asked off the window's thread,
                     // like a place opened with the middle button (pass 12).
-                    let kinds = cx.background_spawn({
+                    let kinds = super::ask_disk::ask(cx, {
                         let paths = or_folder(&paths);
-                        async move {
+                        move || {
                             paths
                                 .into_iter()
                                 .map(|path| {
@@ -470,7 +470,7 @@ impl ExplorerPane {
                         }
                     });
                     cx.spawn(async move |this: WeakEntity<Self>, cx| {
-                        let kinds = kinds.await;
+                        let kinds = kinds.await.unwrap_or_default();
                         this.update(cx, |pane, cx| {
                             for (path, is_dir) in kinds {
                                 pane.open_path_in_new_tab(&path, is_dir, false, cx);

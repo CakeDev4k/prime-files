@@ -608,10 +608,16 @@ mod tests {
             pump(cx, std::time::Duration::from_millis(50));
         }
         writer.join().unwrap();
-        // Up to 4.5 s for the last refresh: room for a busy machine (one run
-        // of 13 with the whole suite missed 3 s), still short of the 10 s
-        // the old timing pushed it to.
-        let until = Instant::now() + std::time::Duration::from_millis(4500);
+        // The last refresh comes within the pace the watch set from what its
+        // last read cost, plus room for the read itself. A fixed 4.5 s
+        // failed 2 runs in 8 of the whole suite (13/11/2026): with the suite
+        // loading every core a read of these 120 names cost over 200 ms, and
+        // 20× that is the pace by design. The old fault this test caught
+        // (the cost timed on the UI thread) is held by
+        // `a_read_is_timed_by_its_own_thread`.
+        let cost = window.read_with(cx, |pane, _| pane.last_read_cost).unwrap();
+        let promised = super::SETTLE + super::refresh_spacing(cost, in_front) + cost * 4 + std::time::Duration::from_millis(1500);
+        let until = Instant::now() + promised.max(std::time::Duration::from_millis(4500));
         while Instant::now() < until && window.read_with(cx, |pane, _| pane.filtered_entries.len()).unwrap() < 120 {
             pump(cx, std::time::Duration::from_millis(50));
         }

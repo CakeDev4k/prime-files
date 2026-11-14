@@ -476,7 +476,7 @@ fn render_grid_item(
 /// cut, unless `ui.name_lines` caps the lines (`max_lines`, 0 = no cap):
 /// then the last one shown ends in "…".
 fn wrap_name(
-    layouts: &mut std::collections::HashMap<String, NameWidths>,
+    layouts: &mut std::collections::HashMap<u64, NameWidths>,
     name: &str,
     width: f32,
     max_lines: u32,
@@ -542,50 +542,104 @@ fn typed_width(text: &str, window: &Window) -> f32 {
 /// a glyph, in a slice of the exact size.
 pub(crate) struct NameWidths {
     width: f32,
-    glyphs: Box<[(u32, f32)]>,
+    glyphs: Glyphs,
+}
+
+// Where each glyph of a name starts. Nearly every name has a glyph per
+// character, and then the character's byte in the name is known from the
+// name itself: only the x is kept, 4 bytes a glyph instead of 8
+// (`docs/PERFORMANCE.md`, pass 33). A ligature or a joined emoji keeps both.
+enum Glyphs {
+    PerChar(Box<[f32]>),
+    Mixed(Box<[(u32, f32)]>),
 }
 
 impl NameWidths {
-    fn of(layout: &LineLayout) -> Self {
-        let glyphs = layout
+    fn of(layout: &LineLayout, text: &str) -> Self {
+        let glyphs: Vec<(u32, f32)> = layout
             .runs
             .iter()
             .flat_map(|run| run.glyphs.iter())
             .map(|glyph| (glyph.index as u32, f32::from(glyph.position.x)))
             .collect();
+        let per_char = glyphs.len() == text.chars().count()
+            && glyphs.iter().zip(text.char_indices()).all(|((at, _), (byte, _))| *at as usize == byte);
+        let glyphs = if per_char {
+            Glyphs::PerChar(glyphs.iter().map(|(_, x)| *x).collect())
+        } else {
+            Glyphs::Mixed(glyphs.into_boxed_slice())
+        };
         Self { width: f32::from(layout.width), glyphs }
     }
 
-    /// The same answer as `LineLayout::index_for_x`.
-    fn index_for_x(&self, x: f32) -> Option<usize> {
+    /// The same answer as `LineLayout::index_for_x`, for the `text` this
+    /// was made of.
+    fn index_for_x(&self, x: f32, text: &str) -> Option<usize> {
         if x >= self.width {
             return None;
         }
-        Some(self.glyphs.iter().rev().find(|(_, at)| *at <= x).map_or(0, |(index, _)| *index as usize))
+        Some(match &self.glyphs {
+            // The last glyph starting at or before `x`.
+            Glyphs::PerChar(xs) => xs
+                .iter()
+                .zip(text.char_indices())
+                .filter(|(at, _)| **at <= x)
+                .last()
+                .map_or(0, |(_, (byte, _))| byte),
+            Glyphs::Mixed(glyphs) => glyphs.iter().rev().find(|(_, at)| *at <= x).map_or(0, |(index, _)| *index as usize),
+        })
     }
 
-    /// The same answer as `LineLayout::x_for_index`.
-    fn x_for_index(&self, index: usize) -> f32 {
-        self.glyphs.iter().find(|(at, _)| *at as usize >= index).map_or(self.width, |(_, x)| *x)
+    /// The same answer as `LineLayout::x_for_index`, for the `text` this
+    /// was made of.
+    fn x_for_index(&self, index: usize, text: &str) -> f32 {
+        match &self.glyphs {
+            Glyphs::PerChar(xs) => {
+                xs.iter().zip(text.char_indices()).find(|(_, (byte, _))| *byte >= index).map_or(self.width, |(x, _)| *x)
+            }
+            Glyphs::Mixed(glyphs) => {
+                glyphs.iter().find(|(at, _)| *at as usize >= index).map_or(self.width, |(_, x)| *x)
+            }
+        }
     }
+
+    #[cfg(test)]
+    fn bytes(&self) -> usize {
+        match &self.glyphs {
+            Glyphs::PerChar(xs) => std::mem::size_of_val(&**xs),
+            Glyphs::Mixed(glyphs) => std::mem::size_of_val(&**glyphs),
+        }
+    }
+}
+
+/// The key of a name in the grid's map: its hash, not a copy of it. The
+/// name is in the listing already, and the copy was a quarter of what the
+/// map held. Two names sharing a hash would only wrap one by the other's
+/// widths.
+pub(crate) fn name_key(name: &str) -> u64 {
+    use std::hash::{Hash, Hasher};
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    name.hash(&mut hasher);
+    hasher.finish()
 }
 
 /// `name` shaped in the label's font, once per name.
 fn name_layout<'a>(
-    layouts: &'a mut std::collections::HashMap<String, NameWidths>,
+    layouts: &'a mut std::collections::HashMap<u64, NameWidths>,
     name: &str,
     window: &Window,
 ) -> &'a NameWidths {
-    if !layouts.contains_key(name) {
+    let key = name_key(name);
+    if !layouts.contains_key(&key) {
         let style = window.text_style();
         // `text_xs`, which the label is drawn in.
         let font_size = rems(0.75).to_pixels(window.rem_size());
         let layout = window
             .text_system()
             .layout_line(name, font_size, &[style.to_run(name.len())], None);
-        layouts.insert(name.to_string(), NameWidths::of(&layout));
+        layouts.insert(key, NameWidths::of(&layout, name));
     }
-    &layouts[name]
+    &layouts[&key]
 }
 
 /// Calls `line` with each line of `name` wrapped at `width`. The grid counts
@@ -596,7 +650,7 @@ fn wrap_layout(layout: &NameWidths, name: &str, width: f32, mut line: impl FnMut
     while start < name.len() {
         // The first character that does not fit after `start`; none when the
         // rest of the name does.
-        let Some(fits) = layout.index_for_x(layout.x_for_index(start) + width) else {
+        let Some(fits) = layout.index_for_x(layout.x_for_index(start, name) + width, name) else {
             line(&name[start..]);
             break;
         };
@@ -684,27 +738,49 @@ mod tests {
         let (first, second) = glyphs.split_at(4);
         let layouts = [shaped(cx, text, &[first, second], x), shaped(cx, "", &[], 0.0)];
         for layout in layouts {
-            let slim = NameWidths::of(&layout);
+            let text: &str = if layout.len == 0 { "" } else { text };
+            let slim = NameWidths::of(&layout, text);
             let mut probe = -1.0;
             while probe <= f32::from(layout.width) + 1.0 {
-                assert_eq!(slim.index_for_x(probe), layout.index_for_x(gpui::px(probe)), "index_for_x({probe})");
+                assert_eq!(slim.index_for_x(probe, text), layout.index_for_x(gpui::px(probe)), "index_for_x({probe})");
                 probe += 0.25;
             }
             for index in 0..=layout.len + 1 {
-                assert_eq!(slim.x_for_index(index), f32::from(layout.x_for_index(index)), "x_for_index({index})");
+                assert_eq!(slim.x_for_index(index, text), f32::from(layout.x_for_index(index)), "x_for_index({index})");
             }
         }
     }
 
-    // A name of 70 glyphs costs its 8 bytes a glyph and nothing grown in
-    // advance (the shaped line cost ~3.4 KB).
+    // A name of 70 glyphs, one per character, costs 4 bytes a glyph and
+    // nothing grown in advance (the shaped line cost ~3.4 KB, then 8 bytes).
     #[gpui::test]
-    fn a_name_keeps_eight_bytes_a_glyph(cx: &mut gpui::TestAppContext) {
+    fn a_name_keeps_four_bytes_a_glyph(cx: &mut gpui::TestAppContext) {
         let glyphs: Vec<(usize, f32)> = (0..70).map(|index| (index, index as f32 * 6.0)).collect();
         let cx = cx.add_empty_window();
-        let layout = shaped(cx, &"a".repeat(70), &[&glyphs], 420.0);
-        let slim = super::NameWidths::of(&layout);
-        assert_eq!(std::mem::size_of_val(&*slim.glyphs), 70 * 8);
+        let text = "a".repeat(70);
+        let layout = shaped(cx, &text, &[&glyphs], 420.0);
+        let slim = super::NameWidths::of(&layout, &text);
+        assert_eq!(slim.bytes(), 70 * 4);
+    }
+
+    // A ligature ("ffi" as one glyph) breaks one glyph per character: the
+    // byte of each glyph is kept, and the answers stay the shaped line's.
+    #[gpui::test]
+    fn a_ligature_keeps_each_glyphs_byte(cx: &mut gpui::TestAppContext) {
+        let cx = cx.add_empty_window();
+        let text = "effic b";
+        let glyphs: Vec<(usize, f32)> = vec![(0, 0.0), (1, 6.0), (4, 16.0), (5, 22.0), (6, 26.0)];
+        let layout = shaped(cx, text, &[&glyphs], 32.0);
+        let slim = super::NameWidths::of(&layout, text);
+        assert_eq!(slim.bytes(), 5 * 8);
+        let mut probe = -1.0;
+        while probe <= 33.0 {
+            assert_eq!(slim.index_for_x(probe, text), layout.index_for_x(gpui::px(probe)), "index_for_x({probe})");
+            probe += 0.25;
+        }
+        for index in 0..=text.len() + 1 {
+            assert_eq!(slim.x_for_index(index, text), f32::from(layout.x_for_index(index)), "x_for_index({index})");
+        }
     }
 
     // What the grid keeps to wrap every name of a big folder. Run alone; the

@@ -77,6 +77,30 @@ fn is_in_front(in_front: &std::sync::atomic::AtomicBool) -> bool {
     in_front.load(std::sync::atomic::Ordering::Relaxed)
 }
 
+/// Whether the window with this handle is minimized: nobody sees its rows,
+/// so the watch reads nothing until it comes back, then once for all it
+/// heard meanwhile. Until 13/11/2026 a minimized window was paced as one
+/// behind another, read every 2 s to 60 s for nobody.
+fn is_minimized(hwnd: &std::sync::atomic::AtomicI64) -> bool {
+    let hwnd = hwnd.load(std::sync::atomic::Ordering::Relaxed);
+    #[cfg(windows)]
+    #[allow(unsafe_code)]
+    {
+        hwnd != 0
+            && unsafe {
+                windows::Win32::UI::WindowsAndMessaging::IsIconic(windows::Win32::Foundation::HWND(
+                    hwnd as isize as *mut core::ffi::c_void,
+                ))
+            }
+            .as_bool()
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = hwnd;
+        false
+    }
+}
+
 /// Prime Files' own operations running on the folder this pane watches.
 #[derive(Default)]
 struct Quiet {
@@ -195,6 +219,7 @@ impl ExplorerPane {
         let quiet_for_task = quiet.clone();
         let busy_keys: Vec<String> = folders.iter().map(|folder| busy_key(folder)).collect();
         let in_front = self.in_front.clone();
+        let hwnd = self.window_hwnd.clone();
         let setup = cx.background_spawn({
             let folders = folders.clone();
             async move { start_watching(folders, sender) }
@@ -204,7 +229,8 @@ impl ExplorerPane {
             let Some((watcher, polled)) = setup.await else {
                 return;
             };
-            let poll = (!polled.is_empty()).then(|| poll(polled, sender_for_poll, in_front.clone(), &executor));
+            let poll =
+                (!polled.is_empty()).then(|| poll(polled, sender_for_poll, in_front.clone(), hwnd.clone(), &executor));
             // This task belongs to the watch it fills: a newer watch dropped
             // it, and it never gets here.
             let installed = this.update(cx, |pane, _| match pane.folder_watch.as_mut() {
@@ -226,6 +252,9 @@ impl ExplorerPane {
             let mut cost = Duration::ZERO;
             while let Ok(mut heard) = receiver.recv().await {
                 cx.background_executor().timer(SETTLE).await;
+                while is_minimized(&hwnd) {
+                    cx.background_executor().timer(POLL_CHECK).await;
+                }
                 // Waited in steps, so coming to the front ends a wait set by
                 // the slower pace behind.
                 while let Some(since) = last.map(|last| last.elapsed()) {
@@ -374,6 +403,7 @@ fn poll(
     folders: Vec<String>,
     changed: async_channel::Sender<Instant>,
     in_front: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    hwnd: std::sync::Arc<std::sync::atomic::AtomicI64>,
     executor: &BackgroundExecutor,
 ) -> Task<()> {
     let executor = executor.clone();
@@ -382,6 +412,9 @@ fn poll(
         let mut looked = Instant::now();
         let mut cost = Duration::ZERO;
         loop {
+            while is_minimized(&hwnd) {
+                executor.timer(POLL_CHECK).await;
+            }
             loop {
                 let wait = poll_wait(cost, is_in_front(&in_front));
                 let since = looked.elapsed();
@@ -917,6 +950,7 @@ mod tests {
             vec![dir.path().to_string_lossy().into_owned()],
             sender,
             in_front.clone(),
+            std::sync::Arc::default(),
             &cx.executor(),
         );
         let advance = |cx: &mut TestAppContext, real: std::time::Duration| {

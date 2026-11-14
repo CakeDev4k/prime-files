@@ -66,6 +66,11 @@ pub fn render(
     page.take_rename_when_listed(window, cx);
     if page.activation_watch.is_none() {
         page.in_front.store(window.is_window_active(), std::sync::atomic::Ordering::Relaxed);
+        // Test windows have no platform window, and asking panics.
+        #[cfg(not(test))]
+        if let Some(hwnd) = crate::ipc::window_hwnd(window) {
+            page.window_hwnd.store(hwnd, std::sync::atomic::Ordering::Relaxed);
+        }
         page.activation_watch = Some(cx.observe_window_activation(window, |page, window, cx| {
             page.in_front.store(window.is_window_active(), std::sync::atomic::Ordering::Relaxed);
             if !window.is_window_active() {

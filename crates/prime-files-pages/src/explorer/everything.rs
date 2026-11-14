@@ -1124,6 +1124,12 @@ fn build(
     mut finished: impl FnMut(Vec<Arc<Segment>>),
 ) -> Index {
     let started = Instant::now();
+    // The previous drives one by one, not the previous index whole: each
+    // goes as soon as its drive is done. Holding the whole index until the
+    // last drive was walked kept a drive read from the MFT in seconds twice
+    // over for the minutes another drive's walk took (pass 32).
+    let previous_built = previous.as_ref().map(|previous| previous.built);
+    let mut previous: Vec<Arc<Segment>> = previous.map(|previous| previous.segments.clone()).unwrap_or_default();
     let mut segments: Vec<Arc<Segment>> = Vec::new();
     let path = index_file();
     let from_mft = mft::snapshot(&progress);
@@ -1132,20 +1138,13 @@ fn build(
         if let Some(segment) = from_mft.iter().find(|segment| segment.root().eq_ignore_ascii_case(&root)) {
             segments.push(segment.clone());
             let mut kept = segments.clone();
-            if let Some(previous) = &previous {
-                kept.extend(
-                    previous
-                        .segments
-                        .iter()
-                        .filter(|old| !segments.iter().any(|new| new.root() == old.root()))
-                        .cloned(),
-                );
-            }
+            kept.extend(previous.iter().filter(|old| !segments.iter().any(|new| new.root() == old.root())).cloned());
             let all: Vec<&Segment> = kept.iter().map(|segment| &**segment).collect();
-            let built = previous.as_ref().map_or(SystemTime::UNIX_EPOCH, |previous| previous.built);
+            let built = previous_built.unwrap_or(SystemTime::UNIX_EPOCH);
             if let Err(error) = save_segments(built, &all, &path) {
                 tracing::warn!("could not save the everything index so far: {error}");
             }
+            previous.retain(|old| !old.root().eq_ignore_ascii_case(&root));
             finished(segments.clone());
             continue;
         }
@@ -1155,23 +1154,18 @@ fn build(
         // drives done in this walk and, for the rest, the previous ones.
         let others = |segments: &[Arc<Segment>]| -> Vec<Arc<Segment>> {
             let mut kept = segments.to_vec();
-            if let Some(previous) = &previous {
-                kept.extend(
-                    previous
-                        .segments
-                        .iter()
-                        .filter(|old| old.root() != root && !segments.iter().any(|new| new.root() == old.root()))
-                        .cloned(),
-                );
-            }
+            kept.extend(
+                previous
+                    .iter()
+                    .filter(|old| old.root() != root && !segments.iter().any(|new| new.root() == old.root()))
+                    .cloned(),
+            );
             kept
         };
         // A drive with no whole table yet has its walk saved as it goes:
         // the first walk of a system drive takes minutes, and an app closed
         // in the middle (an update, a restart) started it over from nothing.
-        let first_walk = !previous.as_ref().is_some_and(|previous| {
-            previous.segments.iter().any(|old| old.root() == root && old.complete)
-        });
+        let first_walk = !previous.iter().any(|old| old.root() == root && old.complete);
         let kept = others(&segments);
         let mut checkpoint = |table: &Segment| {
             if !first_walk {
@@ -1195,10 +1189,11 @@ fn build(
         // drive done is never walked from nothing again.
         let kept = others(&segments);
         let all: Vec<&Segment> = kept.iter().map(|segment| &**segment).collect();
-        let built = previous.as_ref().map_or(SystemTime::UNIX_EPOCH, |previous| previous.built);
+        let built = previous_built.unwrap_or(SystemTime::UNIX_EPOCH);
         if let Err(error) = save_segments(built, &all, &path) {
             tracing::warn!("could not save the everything index so far: {error}");
         }
+        previous.retain(|old| !old.root().eq_ignore_ascii_case(&root));
         finished(segments.clone());
     }
     Index { segments, built: SystemTime::now() }

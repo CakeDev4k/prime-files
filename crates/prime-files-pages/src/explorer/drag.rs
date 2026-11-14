@@ -338,6 +338,17 @@ impl ExplorerPane {
         // Onto a phone: the Shell copies, with its own progress window, as a
         // drop on the phone in the Explorer does.
         let address = dest.to_string_lossy().into_owned();
+        // From a phone: its files have no path, only the Shell's names
+        // (`::{…}`), which gpui hands over for a drag with no file list
+        // (third_party/gpui/PRIME-FILES.md). The Shell copies them, as a
+        // paste of them does.
+        if paths.iter().any(|path| path.to_string_lossy().starts_with("::")) {
+            let sources: Vec<String> = paths.iter().map(|path| path.to_string_lossy().into_owned()).collect();
+            // Test windows have no platform window to own the Shell's.
+            let owner = if cfg!(test) { None } else { crate::ipc::window_hwnd(window) };
+            self.run_device_op(move |owner| super::device::transfer(sources, address, false, owner), owner, cx);
+            return;
+        }
         if super::device::is_device(&address) {
             let sources: Vec<String> = paths.iter().map(|path| path.to_string_lossy().into_owned()).collect();
             let owner = crate::ipc::window_hwnd(window);

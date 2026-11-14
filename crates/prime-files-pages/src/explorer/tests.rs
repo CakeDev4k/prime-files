@@ -2711,6 +2711,34 @@ async fn dropping_files_on_a_folder_moves_them_on_the_same_drive(cx: &mut TestAp
     assert!(!root.join("a.txt").exists(), "a drop on the same drive is a move");
 }
 
+// A phone's file dropped here is a Shell item with no path (`::{…}`): the
+// Shell copies it, never the copy for files on disk, which would fail on it
+// ("1 of 1 failed"). One that is not there comes back as the device's error.
+#[gpui::test]
+async fn a_phones_file_dropped_here_goes_through_the_shell(cx: &mut TestAppContext) {
+    cx.executor().allow_parking();
+    let dir = tempfile::tempdir().unwrap();
+    let window = open_pane_at(cx, dir.path());
+    let phone = std::path::PathBuf::from(r"::{20D04FE0-3AEA-1069-A2D8-08002B30309D}\prime-files-sem-aparelhooto.jpg");
+    window
+        .update(cx, |pane, window, cx| {
+            pane.drop_paths(&[phone.clone()], dir.path().to_path_buf(), window, cx);
+            assert!(pane.paste_plan.is_none(), "planned as a copy of files on disk");
+        })
+        .unwrap();
+    let until = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    let status = loop {
+        cx.run_until_parked();
+        let status = window.read_with(cx, |pane, _| pane.status_message.as_ref().map(|status| status.text.clone())).unwrap();
+        if status.is_some() || std::time::Instant::now() > until {
+            break status;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(20));
+    };
+    let status = status.expect("the Shell's copy never answered");
+    assert!(status.contains("aparelho") || status.contains("device"), "{status}");
+}
+
 #[gpui::test]
 async fn a_folder_dropped_into_itself_is_refused(cx: &mut TestAppContext) {
     let dir = tempfile::tempdir().unwrap();

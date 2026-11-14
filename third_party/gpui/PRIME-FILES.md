@@ -129,3 +129,16 @@ marking them dirty finds no path and costs nothing.
 When gpui is upgraded: carry the two sets and the branch in
 `mark_view_dirty` (marked `PRIME FILES`), or drop them with the
 `view::parts` of the explorer.
+
+## Drops of a phone's files (14/11/2026)
+
+`src/platform/windows/window.rs`, `DragEnter`: a drag without `CF_HDROP` was
+refused. A phone's files dragged out of the Explorer have no path on disk and
+come only as the Shell's items, so they could not be dropped in Prime Files.
+Now, when the drag has no HDROP and every item it carries is in the Shell's
+namespace (its parsing name starts with `::`), the drop is accepted and the
+paths handed to the app are those parsing names; the app copies them with
+`IFileOperation`. Anything else without an HDROP is refused as before.
+
+When gpui is upgraded: carry `shell_namespace_items` and its branch in
+`DragEnter` (marked `PRIME FILES`).

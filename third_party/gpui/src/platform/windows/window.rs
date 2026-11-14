@@ -928,6 +928,30 @@ impl WindowsDragDropHandler {
     }
 }
 
+/// PRIME FILES: the Shell's items a drag carries, by their parsing names,
+/// when every one is an item of the Shell's namespace (`::{…}`, as a phone's
+/// files are). `None` for anything else: a drag of text, or of files inside a
+/// .zip the Explorer shows as a folder, stays refused as before. The app
+/// copies these through the Shell (`IFileOperation`).
+unsafe fn shell_namespace_items(data: &IDataObject) -> Option<SmallVec<[PathBuf; 2]>> {
+    use windows::Win32::UI::Shell::{IShellItemArray, SHCreateShellItemArrayFromDataObject, SIGDN_DESKTOPABSOLUTEPARSING};
+    let items: IShellItemArray = unsafe { SHCreateShellItemArrayFromDataObject(data) }.ok()?;
+    let count = unsafe { items.GetCount() }.ok()?;
+    let mut paths = SmallVec::new();
+    for index in 0..count {
+        let item = unsafe { items.GetItemAt(index) }.ok()?;
+        let name = unsafe { item.GetDisplayName(SIGDN_DESKTOPABSOLUTEPARSING) }.ok()?;
+        let text = unsafe { name.to_string() }.ok();
+        unsafe { windows::Win32::System::Com::CoTaskMemFree(Some(name.0 as _)) };
+        let text = text?;
+        if !text.starts_with("::") {
+            return None;
+        }
+        paths.push(PathBuf::from(text));
+    }
+    (!paths.is_empty()).then_some(paths)
+}
+
 #[allow(non_snake_case)]
 impl IDropTarget_Impl for WindowsDragDropHandler_Impl {
     fn DragEnter(
@@ -949,7 +973,24 @@ impl IDropTarget_Impl for WindowsDragDropHandler_Impl {
                 tymed: TYMED_HGLOBAL.0 as _,
             };
             let cursor_position = POINT { x: pt.x, y: pt.y };
-            if idata_obj.QueryGetData(&config as _) == S_OK {
+            // PRIME FILES: items with no path on disk (a phone's files, from
+            // the Explorer) come as the Shell's items, never as an HDROP.
+            let shell_items = if idata_obj.QueryGetData(&config as _) == S_OK {
+                None
+            } else {
+                shell_namespace_items(idata_obj)
+            };
+            if let Some(paths) = shell_items {
+                *pdweffect = DROPEFFECT_COPY;
+                let mut cursor_position = cursor_position;
+                ScreenToClient(self.0.hwnd, &mut cursor_position).ok().log_err();
+                let scale_factor = self.0.state.borrow().scale_factor;
+                let input = PlatformInput::FileDrop(FileDropEvent::Entered {
+                    position: logical_point(cursor_position.x as f32, cursor_position.y as f32, scale_factor),
+                    paths: ExternalPaths(paths),
+                });
+                *pdweffect = self.dispatch_drag_move(input, allowed);
+            } else if idata_obj.QueryGetData(&config as _) == S_OK {
                 *pdweffect = DROPEFFECT_COPY;
                 let Some(mut idata) = idata_obj.GetData(&config as _).log_err() else {
                     return Ok(());

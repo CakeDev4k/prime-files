@@ -137,13 +137,15 @@ impl super::ExplorerPane {
             // A thread that died without answering panicked: say so.
             let outcome = receiver.recv().await.unwrap_or_else(|_| Err(String::from("panic")));
             this.update(cx, |pane, cx| {
-                if let Err(error) = outcome {
-                    pane.set_status(super::types::StatusLevel::Error, prime_files_core::tf!("O aparelho recusou: {error}", error = error));
-                }
                 // Ended just before the reload, which reads what the watch
                 // heard until now.
                 drop(quiet);
                 pane.reload(cx);
+                // After the reload, which clears the status: set before it,
+                // the device's refusal was wiped before anyone saw it.
+                if let Err(error) = outcome {
+                    pane.set_status(super::types::StatusLevel::Error, prime_files_core::tf!("O aparelho recusou: {error}", error = error));
+                }
                 cx.notify();
             })
             .ok();

@@ -98,7 +98,7 @@ impl ExplorerPane {
                 0 => longest(entry.name.clone()),
                 1 => longest(get_file_type(&entry.name, &entry.kind)),
                 2 => longest(human_bytes(entry.size)),
-                _ => longest(format_date(&entry.modified)),
+                _ => longest(format_date(&entry.modified, self.date_format)),
             })
             .max()
             .unwrap_or(0);

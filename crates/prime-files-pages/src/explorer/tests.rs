@@ -139,6 +139,7 @@ async fn apply_config_ui_reflects_ui_section(cx: &mut TestAppContext) {
                 language: "auto".to_string(),
                 default_sort: config::SortOrder::Size,
                 default_sort_descending: false,
+                date_format: config::DateFormat::Date,
                 show_hidden: true,
                 icon_pack: "default".to_string(),
                 name_lines: 0,
@@ -160,6 +161,21 @@ async fn apply_config_ui_reflects_ui_section(cx: &mut TestAppContext) {
             page.apply_config_ui(&ui, cx);
             assert!(page.show_hidden);
             assert!(page.sort_key == SortKey::Size);
+        })
+        .unwrap();
+}
+
+#[gpui::test]
+async fn apply_config_ui_sets_the_date_format(cx: &mut TestAppContext) {
+    let window = new_explorer(cx);
+    window
+        .update(cx, |page, _window, cx| {
+            let ui = config::Ui {
+                date_format: config::DateFormat::DateTime,
+                ..config::Ui::default()
+            };
+            page.apply_config_ui(&ui, cx);
+            assert_eq!(page.date_format, config::DateFormat::DateTime);
         })
         .unwrap();
 }
@@ -196,6 +212,7 @@ async fn config_reload_keeps_a_sort_chosen_in_the_session(cx: &mut TestAppContex
                 language: "auto".to_string(),
                 default_sort: config::SortOrder::Name,
                 default_sort_descending: false,
+                date_format: config::DateFormat::Date,
                 show_hidden: false,
                 icon_pack: "default".to_string(),
                 name_lines: 0,
@@ -966,6 +983,7 @@ async fn split_pane_inherits_applied_ui_config(cx: &mut TestAppContext) {
                 language: "auto".to_string(),
                 default_sort: config::SortOrder::Size,
                 default_sort_descending: false,
+                date_format: config::DateFormat::Date,
                 show_hidden: true,
                 icon_pack: "default".to_string(),
                 name_lines: 0,
@@ -2994,6 +3012,7 @@ async fn each_folder_opens_with_the_zoom_and_sort_it_was_left_with(cx: &mut Test
                 language: "auto".to_string(),
                 default_sort: config::SortOrder::Name,
                 default_sort_descending: true,
+                date_format: config::DateFormat::Date,
                 show_hidden: false,
                 icon_pack: "default".to_string(),
                 name_lines: 0,

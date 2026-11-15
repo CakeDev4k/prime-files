@@ -13,6 +13,7 @@ expression: parsed
             language: "auto",
             default_sort: Name,
             default_sort_descending: false,
+            date_format: Date,
             show_hidden: true,
             icon_pack: "default",
             name_lines: 0,

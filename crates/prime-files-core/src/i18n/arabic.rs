@@ -3,6 +3,10 @@
 //! survive.
 
 pub(super) static ARABIC: &[(&str, &str)] = &[
+    ("Formato da data", "تنسيق التاريخ"),
+    ("Como a coluna Modificado mostra a data: só o dia, ou o dia e a hora.", "كيف يعرض عمود التعديل التاريخ: اليوم فقط، أو اليوم والوقت."),
+    ("Só data", "التاريخ فقط"),
+    ("Data e hora", "التاريخ والوقت"),
     ("Converter com Filee", "تحويل باستخدام Filee"),
     ("Selecione ao menos um arquivo para converter", "حدد ملفًا واحدًا على الأقل لتحويله"),
     ("O Filee não está instalado", "Filee غير مثبّت"),

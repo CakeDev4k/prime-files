@@ -71,6 +71,21 @@
       },
       "type": "object"
     },
+    "DateFormat": {
+      "description": "How the Modificado column writes a date.",
+      "oneOf": [
+        {
+          "const": "date",
+          "description": "`2026/11/15`: the day alone, the way the column always showed it.",
+          "type": "string"
+        },
+        {
+          "const": "date_time",
+          "description": "`2026/11/15 18:46`: the day and the hour, for telling apart two renders\n(or two saves) from the same day.",
+          "type": "string"
+        }
+      ]
+    },
     "Diagnostics": {
       "description": "Diagnostics / performance-logging settings (see `docs/persistence.md` §5).",
       "properties": {
@@ -775,6 +790,11 @@
           "description": "Whether a row of buttons for the common file commands sits under the\npath, as Windows 11's Explorer has.",
           "type": "boolean"
         },
+        "date_format": {
+          "$ref": "#/$defs/DateFormat",
+          "default": "date",
+          "description": "How the Modificado column writes a date: `date` (the default, the day\nalone) or `date_time` (day and hour)."
+        },
         "default_sort": {
           "$ref": "#/$defs/SortOrder",
           "default": "name",
@@ -1039,6 +1059,7 @@
       "default": {
         "audio_waveforms": false,
         "command_bar": false,
+        "date_format": "date",
         "default_sort": "name",
         "default_sort_descending": false,
         "folder_previews": false,

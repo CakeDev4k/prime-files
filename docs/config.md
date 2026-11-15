@@ -36,6 +36,7 @@ accent = "orange"   # "orange" | "blue" | "teal" | "green" | "purple" | "pink" |
 [ui]
 default_sort = "name"      # "name" | "modified" | "size" | "kind"
 default_sort_descending = false  # true = Z→A, maior/mais novo primeiro
+date_format = "date"       # "date" | "date_time" — 更新日時列が時刻も出す
 show_hidden = false
 icon_pack = "default"
 
@@ -142,6 +143,7 @@ config.toml の冒頭に:
 | `theme.accent` | ✅ Yes | **P1** | 同上 |
 | `ui.default_sort` | ✅ Yes | **P1** | 開いているビューに伝播 |
 | `ui.default_sort_descending` | ✅ Yes | **P1** | 開いているビューに伝播 (表示を保存済みのフォルダーは除く) |
+| `ui.date_format` | ✅ Yes | **P1** | 開いているビューに伝播 |
 | `ui.show_hidden` | ✅ Yes | **P1** | 開いているビューに伝播 |
 | `ui.icon_pack` | ✅ Yes | **P1** | アイコンキャッシュをクリア |
 | `diagnostics.store.*` | ❌ No (再起動) | P3 で hot reload に格上げ検討 | ストア接続 open 時に profile フックの登録可否を決めるため (off 時はフック未登録でオーバーヘッド 0) |

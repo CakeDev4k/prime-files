@@ -1,3 +1,4 @@
+use prime_files_core::config::DateFormat;
 use prime_files_core::t;
 use crate::theme::theme;
 use gpui::{ParentElement, Styled, Window, div, px, rgb};
@@ -18,6 +19,8 @@ pub struct FileListDelegate {
     // Callback hooks
     /// Callback invoked when an entry is confirmed.
     pub on_confirm: Option<ConfirmCallback>,
+    /// How the Modificado column writes its date.
+    pub date_format: DateFormat,
 }
 
 impl Default for FileListDelegate {
@@ -33,6 +36,7 @@ impl FileListDelegate {
             items: Vec::new(),
             selected: None,
             on_confirm: None,
+            date_format: DateFormat::Date,
         }
     }
 
@@ -148,7 +152,7 @@ impl ListDelegate for FileListDelegate {
                             .overflow_hidden()
                             .text_ellipsis()
                             .whitespace_nowrap()
-                            .child(format_date(&item.modified)),
+                            .child(format_date(&item.modified, self.date_format)),
                     )
                     .child(
                         // Actions column - compact
@@ -218,12 +222,16 @@ pub fn human_bytes(size: u64) -> String {
     }
 }
 
-/// Format a Unix timestamp (seconds) as a `year/month/day` date, or `-` if invalid.
-pub fn format_date(timestamp: &u64) -> String {
+/// Format a Unix timestamp (seconds) for the Modificado column: the day, or the
+/// day and the hour, as `date_format` asks. `-` when the stamp is invalid.
+pub fn format_date(timestamp: &u64, date_format: DateFormat) -> String {
     use time::OffsetDateTime;
     use time::macros::format_description;
 
-    let format = format_description!("[year]/[month]/[day]");
+    let format = match date_format {
+        DateFormat::Date => format_description!("[year]/[month]/[day]"),
+        DateFormat::DateTime => format_description!("[year]/[month]/[day] [hour]:[minute]"),
+    };
     match OffsetDateTime::from_unix_timestamp(*timestamp as i64) {
         Ok(datetime) => datetime.format(&format).unwrap_or_else(|_| "-".to_string()),
         Err(_) => "-".to_string(),
@@ -252,6 +260,7 @@ pub fn get_file_type(name: &str, kind: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::{FileListDelegate, format_date, get_file_type, human_bytes};
+    use prime_files_core::config::DateFormat;
     use gpui::TestAppContext;
     use gpui_component::IndexPath;
     use gpui_component::list::{ListDelegate, ListState};
@@ -324,7 +333,8 @@ mod tests {
 
     #[test]
     fn format_date_is_stable_for_the_epoch() {
-        assert_eq!(format_date(&0), "1970/01/01");
+        assert_eq!(format_date(&0, DateFormat::Date), "1970/01/01");
+        assert_eq!(format_date(&0, DateFormat::DateTime), "1970/01/01 00:00");
     }
 
     proptest! {

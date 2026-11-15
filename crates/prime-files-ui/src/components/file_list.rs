@@ -7,9 +7,10 @@ use gpui_component::{Icon, IconName, IndexPath};
 use prime_files_models::file_entry::FileEntryDto;
 use std::sync::Arc;
 
-// Average glyph width used to size the compact columns without text layout,
-// the same estimate `fit_column` makes.
+/// Average glyph width used to size the compact columns without text layout,
+/// the same estimate `fit_column` makes.
 pub const GLYPH_WIDTH: f32 = 7.2;
+/// Padding a measured column adds around its text.
 pub const COLUMN_PADDING: f32 = 20.0;
 
 /// Width of the compact Modified cell. A date fits in the width the cell has

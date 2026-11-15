@@ -84,9 +84,9 @@ impl ExplorerPane {
     /// Explorer's "Size column to fit". Text is measured by an average glyph
     /// width: close enough for a column, and needs no text layout.
     pub(crate) fn fit_column(&mut self, column: usize) {
-        use prime_files_ui::components::file_list::{format_date, get_file_type, human_bytes};
-        const GLYPH: f32 = 7.2;
-        const PADDING: f32 = 20.0;
+        use prime_files_ui::components::file_list::{
+            COLUMN_PADDING, GLYPH_WIDTH, format_date, get_file_type, human_bytes,
+        };
         if !self.column_visible(column) {
             return;
         }
@@ -106,7 +106,7 @@ impl ExplorerPane {
             .get(column)
             .map_or(0, |label| label.chars().count() + 2);
         let indent = if column == 0 { view_name_indent() } else { 0.0 };
-        let fitted = (indent + widest.max(heading) as f32 * GLYPH + PADDING)
+        let fitted = (indent + widest.max(heading) as f32 * GLYPH_WIDTH + COLUMN_PADDING)
             .clamp(config::MIN_COLUMN_WIDTH, 900.0);
         if let Some(width) = self.column_width_mut(column) {
             *width = fitted;

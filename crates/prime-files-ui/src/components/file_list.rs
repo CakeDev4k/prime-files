@@ -7,6 +7,22 @@ use gpui_component::{Icon, IconName, IndexPath};
 use prime_files_models::file_entry::FileEntryDto;
 use std::sync::Arc;
 
+// Average glyph width used to size the compact columns without text layout,
+// the same estimate `fit_column` makes.
+pub const GLYPH_WIDTH: f32 = 7.2;
+pub const COLUMN_PADDING: f32 = 20.0;
+
+/// Width of the compact Modified cell. A date fits in the width the cell has
+/// always had; the date plus the hour does not, and `text_ellipsis` would cut
+/// the time off.
+pub(crate) fn compact_modified_width(format: DateFormat) -> f32 {
+    match format {
+        DateFormat::Date => 90.0,
+        // "2026/11/15 18:46" is 16 glyphs.
+        DateFormat::DateTime => (16.0 * GLYPH_WIDTH + COLUMN_PADDING).max(90.0),
+    }
+}
+
 /// Callback invoked when a file list entry is confirmed (clicked or activated).
 pub type ConfirmCallback = Arc<dyn Fn(&FileEntryDto) + 'static>;
 
@@ -145,7 +161,7 @@ impl ListDelegate for FileListDelegate {
                     .child(
                         // Modified column - compact
                         div()
-                            .w(px(90.0))
+                            .w(px(compact_modified_width(self.date_format)))
                             .flex_shrink_0()
                             .text_sm()
                             .text_color(rgb(theme::fg_secondary()))
@@ -259,7 +275,10 @@ pub fn get_file_type(name: &str, kind: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{FileListDelegate, format_date, get_file_type, human_bytes};
+    use super::{
+        COLUMN_PADDING, GLYPH_WIDTH, FileListDelegate, compact_modified_width, format_date,
+        get_file_type, human_bytes,
+    };
     use prime_files_core::config::DateFormat;
     use gpui::TestAppContext;
     use gpui_component::IndexPath;
@@ -335,6 +354,19 @@ mod tests {
     fn format_date_is_stable_for_the_epoch() {
         assert_eq!(format_date(&0, DateFormat::Date), "1970/01/01");
         assert_eq!(format_date(&0, DateFormat::DateTime), "1970/01/01 00:00");
+    }
+
+    #[test]
+    fn the_compact_modified_cell_fits_the_time() {
+        // Measured from what `format_date` really renders, not from a guess.
+        let glyphs = format_date(&0, DateFormat::DateTime).chars().count();
+        assert_eq!(glyphs, 16);
+        assert_eq!(compact_modified_width(DateFormat::Date), 90.0);
+        assert!(
+            compact_modified_width(DateFormat::DateTime)
+                >= glyphs as f32 * GLYPH_WIDTH + COLUMN_PADDING,
+            "the hour and minute would be ellipsed"
+        );
     }
 
     proptest! {

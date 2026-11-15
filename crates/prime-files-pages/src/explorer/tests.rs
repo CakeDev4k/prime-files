@@ -23,6 +23,7 @@ use prime_files_services::fs::trash::Ledger as TrashLedger;
 use prime_files_store::{KvStore, RedbKvStore, StoreLogConfig};
 
 use prime_files_core::config::SplitDirection;
+use prime_files_ui::components::file_list::{COLUMN_PADDING, GLYPH_WIDTH, format_date};
 
 use super::types::{SortKey, StatusLevel, ViewMode};
 use super::{ExplorerPage, ExplorerPane};
@@ -176,6 +177,35 @@ async fn apply_config_ui_sets_the_date_format(cx: &mut TestAppContext) {
             };
             page.apply_config_ui(&ui, cx);
             assert_eq!(page.date_format, config::DateFormat::DateTime);
+        })
+        .unwrap();
+}
+
+#[gpui::test]
+async fn the_modified_column_refits_when_the_format_gains_the_time(cx: &mut TestAppContext) {
+    let window = new_explorer(cx);
+    window
+        .update(cx, |page, _window, cx| {
+            page.filtered_entries = vec![file("a", "file", 1)]
+                .into_iter()
+                .map(std::sync::Arc::new)
+                .collect();
+            page.fit_column(3);
+            let date_only = page.col_modified_width;
+            let ui = config::Ui {
+                date_format: config::DateFormat::DateTime,
+                ..config::Ui::default()
+            };
+            page.apply_config_ui(&ui, cx);
+            // The column has to fit what the format actually renders.
+            let needed = format_date(&0u64, config::DateFormat::DateTime).chars().count() as f32
+                * GLYPH_WIDTH
+                + COLUMN_PADDING;
+            assert!(
+                page.col_modified_width > date_only && page.col_modified_width >= needed,
+                "{date_only} -> {} (needs {needed})",
+                page.col_modified_width
+            );
         })
         .unwrap();
 }

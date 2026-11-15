@@ -1437,6 +1437,10 @@ impl ExplorerPane {
         }
         if self.date_format != ui.date_format {
             self.date_format = ui.date_format;
+            // The column has to fit the longer value, or the time is ellipsed.
+            if self.column_visible(3) {
+                self.fit_column(3);
+            }
             cx.notify();
         }
         if changed {

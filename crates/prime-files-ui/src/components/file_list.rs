@@ -16,7 +16,7 @@ pub const COLUMN_PADDING: f32 = 20.0;
 /// Width of the compact Modified cell. A date fits in the width the cell has
 /// always had; the date plus the hour does not, and `text_ellipsis` would cut
 /// the time off.
-pub(crate) fn compact_modified_width(format: DateFormat) -> f32 {
+pub fn compact_modified_width(format: DateFormat) -> f32 {
     match format {
         DateFormat::Date => 90.0,
         // "2026/11/15 18:46" is 16 glyphs.

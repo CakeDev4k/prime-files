@@ -23,7 +23,9 @@ use prime_files_services::fs::trash::Ledger as TrashLedger;
 use prime_files_store::{KvStore, RedbKvStore, StoreLogConfig};
 
 use prime_files_core::config::SplitDirection;
-use prime_files_ui::components::file_list::{COLUMN_PADDING, GLYPH_WIDTH, format_date};
+use prime_files_ui::components::file_list::{
+    COLUMN_PADDING, GLYPH_WIDTH, compact_modified_width, format_date,
+};
 
 use super::types::{SortKey, StatusLevel, ViewMode};
 use super::{ExplorerPage, ExplorerPane};
@@ -235,6 +237,29 @@ async fn a_hidden_modified_column_keeps_room_for_the_time(cx: &mut TestAppContex
                 page.col_modified_width >= needed,
                 "showing it back restored the date-only width: {}",
                 page.col_modified_width
+            );
+        })
+        .unwrap();
+}
+
+#[gpui::test]
+async fn an_empty_listing_still_fits_the_selected_date_format(cx: &mut TestAppContext) {
+    let window = new_explorer(cx);
+    window
+        .update(cx, |page, _window, cx| {
+            // Nothing to measure: only the heading is left.
+            page.filtered_entries.clear();
+            page.toggle_column(3);
+            let ui = config::Ui {
+                date_format: config::DateFormat::DateTime,
+                ..config::Ui::default()
+            };
+            page.apply_config_ui(&ui, cx);
+            assert!(
+                page.hidden_column_widths[3]
+                    >= compact_modified_width(config::DateFormat::DateTime),
+                "the empty listing stored only {}",
+                page.hidden_column_widths[3]
             );
         })
         .unwrap();

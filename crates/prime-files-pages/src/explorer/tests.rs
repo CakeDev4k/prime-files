@@ -211,6 +211,36 @@ async fn the_modified_column_refits_when_the_format_gains_the_time(cx: &mut Test
 }
 
 #[gpui::test]
+async fn a_hidden_modified_column_keeps_room_for_the_time(cx: &mut TestAppContext) {
+    let window = new_explorer(cx);
+    window
+        .update(cx, |page, _window, cx| {
+            page.filtered_entries = vec![file("a", "file", 1)]
+                .into_iter()
+                .map(std::sync::Arc::new)
+                .collect();
+            page.fit_column(3);
+            page.toggle_column(3);
+            let ui = config::Ui {
+                date_format: config::DateFormat::DateTime,
+                ..config::Ui::default()
+            };
+            page.apply_config_ui(&ui, cx);
+            assert!(!page.column_visible(3), "a hidden column stays hidden");
+            page.toggle_column(3);
+            let needed = format_date(&0u64, config::DateFormat::DateTime).chars().count() as f32
+                * GLYPH_WIDTH
+                + COLUMN_PADDING;
+            assert!(
+                page.col_modified_width >= needed,
+                "showing it back restored the date-only width: {}",
+                page.col_modified_width
+            );
+        })
+        .unwrap();
+}
+
+#[gpui::test]
 async fn grouping_counts_headers_when_scrolling_to_an_entry(cx: &mut TestAppContext) {
     let window = new_explorer(cx);
     window

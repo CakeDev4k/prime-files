@@ -80,16 +80,13 @@ impl ExplorerPane {
         self.update_item_sizes();
     }
 
-    /// Sizes `column` to its widest value among the entries on screen, as
-    /// Explorer's "Size column to fit". Text is measured by an average glyph
-    /// width: close enough for a column, and needs no text layout.
-    pub(crate) fn fit_column(&mut self, column: usize) {
+    /// The width `column` would take from the values on screen. Text is
+    /// measured by an average glyph: close enough for a column, and needs no
+    /// text layout.
+    pub(crate) fn fitted_width(&self, column: usize) -> f32 {
         use prime_files_ui::components::file_list::{
             COLUMN_PADDING, GLYPH_WIDTH, format_date, get_file_type, human_bytes,
         };
-        if !self.column_visible(column) {
-            return;
-        }
         let longest = |text: String| text.chars().count();
         let widest = self
             .filtered_entries
@@ -106,8 +103,17 @@ impl ExplorerPane {
             .get(column)
             .map_or(0, |label| label.chars().count() + 2);
         let indent = if column == 0 { view_name_indent() } else { 0.0 };
-        let fitted = (indent + widest.max(heading) as f32 * GLYPH_WIDTH + COLUMN_PADDING)
-            .clamp(config::MIN_COLUMN_WIDTH, 900.0);
+        (indent + widest.max(heading) as f32 * GLYPH_WIDTH + COLUMN_PADDING)
+            .clamp(config::MIN_COLUMN_WIDTH, 900.0)
+    }
+
+    /// Sizes `column` to its widest value among the entries on screen, as
+    /// Explorer's "Size column to fit".
+    pub(crate) fn fit_column(&mut self, column: usize) {
+        if !self.column_visible(column) {
+            return;
+        }
+        let fitted = self.fitted_width(column);
         if let Some(width) = self.column_width_mut(column) {
             *width = fitted;
         }

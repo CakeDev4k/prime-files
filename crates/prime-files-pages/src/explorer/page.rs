@@ -580,6 +580,104 @@ impl ExplorerPage {
         }
     }
 
+    /// A tab let go onto this page's tab list from another pane, or from another
+    /// window's page: a tab at the same path opens here at the slot the pointer
+    /// was over, and the tab it came from closes. The moved tab is not made
+    /// active, and this pane's active tab is left where it was.
+    fn move_tab(
+        &mut self,
+        from_pane: usize,
+        from_tab: usize,
+        from_window: AnyWindowHandle,
+        to_pane: usize,
+        to_index: usize,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let here = window.window_handle();
+        let same_window = from_window == here;
+        let source = if same_window {
+            None
+        } else {
+            crate::windows::page_for(from_window, cx)
+        };
+        // Reading this page from inside its own update would panic, so the
+        // origin is read through `self` when the drop landed on the same window.
+        let counts = if same_window {
+            (self.group.tab_count(from_pane), self.group.pane_count())
+        } else {
+            let other = source.as_ref().unwrap().read(cx);
+            (other.group.tab_count(from_pane), other.group.pane_count())
+        };
+        // In the same window the last pane cannot be emptied, so a pane's only
+        // tab stays where it is. Across windows the last tab may leave: the
+        // window it came from has nothing to show afterwards and closes.
+        if same_window && counts.0 <= 1 {
+            return;
+        }
+        let origin_empty = !same_window && counts.0 <= 1 && counts.1 == 1;
+        let tab = if same_window {
+            self.group.tab(from_pane, from_tab)
+        } else {
+            source.as_ref().unwrap().read(cx).group.tab(from_pane, from_tab)
+        };
+        let Some(tab) = tab else { return };
+        let start = tab.read(cx).cwd.clone();
+        let sidebar = tab.read(cx).sidebar_visible;
+        if !self.place_tab(start, sidebar, to_pane, to_index, window, cx) {
+            return;
+        }
+        // The tab it came from closes; its pane goes with it when it was the
+        // pane's last tab, and the origin's active tab falls to a neighbour.
+        if from_window == here {
+            self.close_tab_in_pane(from_pane, from_tab, window, cx);
+        } else {
+            source.unwrap().update(cx, |page, cx| page.close_tab_quiet(from_pane, from_tab, cx));
+            // Its only pane is left with no tab, so there is nothing to show:
+            // the window it came from closes.
+            if origin_empty {
+                from_window.update(cx, |_, w, _| w.remove_window()).ok();
+            }
+        }
+    }
+
+    /// Opens a tab on the receiving page at the slot it was dropped on, at the
+    /// same path, and leaves this pane's active tab where it was before.
+    fn place_tab(
+        &mut self,
+        start: String,
+        sidebar: bool,
+        to_pane: usize,
+        to_index: usize,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        let active_before = self.group.active_tab(to_pane);
+        let Some(new_tab) = self.group.add_tab(to_pane, window, cx) else {
+            return false;
+        };
+        self.subscribe_tab(&new_tab, cx);
+        self.configure_tab(&new_tab, Some(start), sidebar, cx);
+        let added = self.group.tab_count(to_pane) - 1;
+        self.group.reorder_tab(to_pane, added, to_index.min(added));
+        self.group.restore_active_tab(to_pane, active_before);
+        self.schedule_save(cx);
+        cx.notify();
+        true
+    }
+
+    /// [`Self::close_tab_in_pane`] without moving focus: the cross-window move
+    /// closes a tab in a window it is not standing in.
+    fn close_tab_quiet(&mut self, pane_index: usize, tab_index: usize, cx: &mut Context<Self>) {
+        let outcome = self.group.close_tab_quiet(pane_index, tab_index);
+        for id in &outcome.removed {
+            self.tab_subscriptions.remove(id);
+            self.terminals.remove(id);
+        }
+        self.schedule_save(cx);
+        cx.notify();
+    }
+
     // Mirrors a tab's navigation into the other panes while syncing is enabled.
     fn on_pane_event(
         &mut self,
@@ -1123,6 +1221,9 @@ impl ExplorerPage {
             on_reorder_tab: Rc::new(|this: &mut Self, pane, from, to, _window, cx| {
                 this.reorder_tab(pane, from, to, cx)
             }),
+            on_move_tab: Rc::new(|this: &mut Self, from_pane, from_tab, from_window, to_pane, to_index, window, cx| {
+                this.move_tab(from_pane, from_tab, from_window, to_pane, to_index, window, cx)
+            }),
             on_group_drag: Rc::new(|this: &mut Self, drag, _window, cx| {
                 this.group.begin_drag(drag);
                 if drag == GroupDrag::EvenOut {
@@ -1583,7 +1684,99 @@ impl ExplorerPage {
             || position.x > viewport.width
             || position.y > viewport.height;
         let tabs: usize = (0..self.group.pane_count()).map(|index| self.group.tab_count(index)).sum();
-        if !outside || tabs <= 1 {
+        if !outside {
+            return;
+        }
+        // A window with a single tab can still cross over, but only into another
+        // window: let go over empty space it would leave this window with nothing
+        // to show, so the tab stays.
+        let only_tab = tabs <= 1;
+        // gpui gives the release to the window the drag started in, so a tab let
+        // go over another Prime Files window is seen here rather than on that
+        // window's tab row. Hit-test the other windows: over one of their tab
+        // rows the tab moves there; over nothing at all it opens a window.
+        let here = window.window_handle();
+        let origin = window.bounds().origin;
+        let global = point(
+            px(f32::from(origin.x) + f32::from(position.x)),
+            px(f32::from(origin.y) + f32::from(position.y)),
+        );
+        tracing::info!(
+            "tab let go at ({}, {}); {} other windows",
+            f32::from(global.x),
+            f32::from(global.y),
+            cx.windows().len() - 1,
+        );
+        // The window's own root view is not `RootView` (it is wrapped), so
+        // `downcast` never matched: the page of another window comes from the
+        // registry in `windows.rs`. The pointer is taken from that window
+        // itself, which is where gpui keeps the live position.
+        let Some(origin_tab) = self.group.tab(pane, tab) else {
+            return;
+        };
+        let start = origin_tab.read(cx).cwd.clone();
+        let sidebar = origin_tab.read(cx).sidebar_visible;
+        for handle in cx.windows() {
+            if handle == here {
+                continue;
+            }
+            let Some(page) = crate::windows::page_for(handle, cx) else {
+                continue;
+            };
+            let Ok((bounds, pointer)) = handle.update(cx, |_, w, _| (w.bounds(), w.mouse_position())) else {
+                continue;
+            };
+            tracing::info!(
+                "window other: ({}, {}) {}x{}, pointer ({}, {})",
+                f32::from(bounds.origin.x),
+                f32::from(bounds.origin.y),
+                f32::from(bounds.size.width),
+                f32::from(bounds.size.height),
+                f32::from(pointer.x),
+                f32::from(pointer.y),
+            );
+            // Only the window the pointer is actually inside. Without this the
+            // first window in the list wins on its last-known pointer, so a tab
+            // let go over empty space lands in whichever window gpui painted
+            // last. `mouse_position` is stale for a window the pointer is not
+            // over, so the local point comes from the release point, as the
+            // pointer would be inside this window's own coordinates.
+            if !bounds.contains(&global) {
+                continue;
+            }
+            let local = point(
+                px(f32::from(global.x) - f32::from(bounds.origin.x)),
+                px(f32::from(global.y) - f32::from(bounds.origin.y)),
+            );
+            let on_row = page.read(cx).group.landing(local);
+            let Some((to_pane, to_index)) = on_row else {
+                tracing::info!("the pointer was inside that window but not on a measured tab row");
+                continue;
+            };
+            tracing::info!("landing at pane {to_pane}, slot {to_index}");
+            let placed = handle
+                .update(cx, |_, w, app| {
+                    page.update(app, |page, app| {
+                        page.place_tab(start.clone(), sidebar, to_pane, to_index, w, app)
+                    })
+                })
+                .unwrap_or(false);
+            if placed {
+                self.close_tab_in_pane(pane, tab, window, cx);
+                // This window is left with no tab, so it closes. Deferred: this
+                // page is the one being updated here, and a window cannot be
+                // removed from inside its own update.
+                if only_tab {
+                    cx.defer(move |cx| {
+                        here.update(cx, |_, w, _| w.remove_window()).ok();
+                    });
+                }
+                return;
+            }
+        }
+        // Its only tab, let go over empty space: it stays where it is, otherwise
+        // this window would have nothing left to show.
+        if only_tab {
             return;
         }
         let Some(entity) = self.group.tab(pane, tab) else {
@@ -1937,6 +2130,21 @@ impl ExplorerPage {
         cx: &mut Context<Self>,
     ) {
         self.reorder_tab(pane_index, from, to, cx);
+    }
+
+    /// A tab let go onto this page's tab list, for a test: `from_window` is the
+    /// window it was picked up in, so the same page answers for a cross-pane drop.
+    pub(crate) fn test_move_tab(
+        &mut self,
+        from_pane: usize,
+        from_tab: usize,
+        from_window: gpui::AnyWindowHandle,
+        to_pane: usize,
+        to_index: usize,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.move_tab(from_pane, from_tab, from_window, to_pane, to_index, window, cx);
     }
 
     /// Number of live per-tab subscriptions; used to assert the subscription map

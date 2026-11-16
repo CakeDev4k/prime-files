@@ -1397,6 +1397,156 @@ async fn reorder_tab_swaps_order_and_follows_active(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+async fn cross_pane_move_inserts_at_the_slot_and_closes_the_origin(cx: &mut TestAppContext) {
+    let dir = tempfile::tempdir().unwrap();
+    let origin = dir.path().join("origin");
+    let target = dir.path().join("target");
+    std::fs::create_dir(&origin).unwrap();
+    std::fs::create_dir(&target).unwrap();
+    let origin = origin.to_string_lossy().to_string();
+    let target = target.to_string_lossy().to_string();
+
+    let window = new_explorer_page(cx);
+    window.update(cx, |page, window, cx| {
+        page.split(SplitDirection::Vertical, window, cx);
+        page.pane(1).update(cx, |pane, _| pane.cwd = target.clone());
+        page.pane(0).update(cx, |pane, _| pane.cwd = origin.clone());
+        // A second tab in the origin pane, so moving it leaves one behind.
+        page.test_new_tab(0, window, cx);
+        let dropped = origin.clone();
+        // Pane 0's active tab is the new one: the tab the test drags.
+        page.pane(0).update(cx, |pane, _| pane.cwd = dropped.clone());
+        assert_eq!(page.active_tab(1), 0, "the target's active tab before the drop");
+        // `test_new_tab` made pane 0 active, so this is what the drop must not change.
+        let active_pane_before = page.active_index();
+
+        // Let go over pane 1's second slot.
+        page.test_move_tab(0, 1, window.window_handle(), 1, 1, window, cx);
+
+        assert_eq!(page.tab_cwd(1, 1, cx).as_deref(), Some(origin.as_str()), "inserted where the pointer was");
+        assert_eq!(page.active_tab(1), 0, "the moved tab is not made active in the target");
+        assert_eq!(page.tab_count(0), 1, "the origin tab closed");
+        assert_eq!(page.active_index(), active_pane_before, "the active pane is left as it was");
+        assert_eq!(cx.windows().len(), 1, "no new window");
+    })
+    .unwrap();
+}
+
+#[gpui::test]
+async fn a_window_s_last_tab_does_not_move(cx: &mut TestAppContext) {
+    let window = new_explorer_page(cx);
+    window.update(cx, |page, window, cx| {
+        let before = page.tab_cwd(0, 0, cx);
+        page.test_move_tab(0, 0, window.window_handle(), 0, 0, window, cx);
+        assert_eq!(page.tab_count(0), 1, "the tab that keeps the pane open stays");
+        assert_eq!(page.tab_cwd(0, 0, cx), before);
+    })
+    .unwrap();
+}
+
+// A tab let go on another window's tab list: it lands there at the slot the
+// pointer was over, the origin's tab closes, no new window opens.
+#[gpui::test]
+async fn a_tab_let_go_on_another_window_lands_there_and_closes_the_origin(cx: &mut TestAppContext) {
+    let dir = tempfile::tempdir().unwrap();
+    let origin_dir = dir.path().join("origin");
+    let target_dir = dir.path().join("target");
+    std::fs::create_dir(&origin_dir).unwrap();
+    std::fs::create_dir(&target_dir).unwrap();
+    let origin = origin_dir.to_string_lossy().to_string();
+    let target = target_dir.to_string_lossy().to_string();
+
+    let origin_window = new_explorer_page(cx);
+    let target_window = new_explorer_page(cx);
+
+    let mut origin_watched = 0;
+    let origin_handle = origin_window
+        .update(cx, |page, window, cx| {
+            crate::windows::register_page_for_test(window.window_handle(), &cx.entity(), cx);
+            page.pane(0).update(cx, |pane, _| pane.cwd = origin.clone());
+            // A second tab, so the origin window still has one left behind.
+            page.test_new_tab(0, window, cx);
+            origin_watched = page.subscription_count();
+            window.window_handle()
+        })
+        .unwrap();
+
+    let mut target_watched = 0;
+    let _target_handle = target_window
+        .update(cx, |page, window, cx| {
+            crate::windows::register_page_for_test(window.window_handle(), &cx.entity(), cx);
+            page.pane(0).update(cx, |pane, _| pane.cwd = target.clone());
+            assert_eq!(page.tab_count(0), 1, "the target had its own tab");
+            assert_eq!(page.active_tab(0), 0, "the target's active tab before the drop");
+            target_watched = page.subscription_count();
+            window.window_handle()
+        })
+        .unwrap();
+
+    // Let go over the target's second slot, from the other window.
+    target_window
+        .update(cx, |page, window, cx| {
+            page.test_move_tab(0, 0, origin_handle, 0, 1, window, cx);
+            assert_eq!(page.tab_count(0), 2, "the tab landed on the other window");
+            assert_eq!(
+                page.tab_cwd(0, 1, cx).as_deref(),
+                Some(origin.as_str()),
+                "at the slot the pointer was over"
+            );
+            assert_eq!(page.active_tab(0), 0, "the moved tab is not made active there");
+            assert_eq!(page.subscription_count(), target_watched + 1, "the landed tab is watched there");
+            assert_eq!(cx.windows().len(), 2, "no new window");
+        })
+        .unwrap();
+
+    origin_window
+        .update(cx, |page, _window, _cx| {
+            assert_eq!(page.tab_count(0), 1, "the origin tab closed");
+            assert_eq!(page.subscription_count(), origin_watched - 1, "the origin stopped watching it");
+        })
+        .unwrap();
+}
+
+#[gpui::test]
+async fn the_only_tab_of_a_window_crosses_to_the_other_and_that_window_closes(cx: &mut TestAppContext) {
+    let dir = tempfile::tempdir().unwrap();
+    let origin_dir = dir.path().join("origin");
+    let target_dir = dir.path().join("target");
+    std::fs::create_dir(&origin_dir).unwrap();
+    std::fs::create_dir(&target_dir).unwrap();
+    let origin = origin_dir.to_string_lossy().to_string();
+    let target = target_dir.to_string_lossy().to_string();
+
+    let origin_window = new_explorer_page(cx);
+    let target_window = new_explorer_page(cx);
+
+    let origin_handle = origin_window
+        .update(cx, |page, window, cx| {
+            crate::windows::register_page_for_test(window.window_handle(), &cx.entity(), cx);
+            page.pane(0).update(cx, |pane, _| pane.cwd = origin.clone());
+            window.window_handle()
+        })
+        .unwrap();
+
+    target_window
+        .update(cx, |page, window, cx| {
+            crate::windows::register_page_for_test(window.window_handle(), &cx.entity(), cx);
+            page.pane(0).update(cx, |pane, _| pane.cwd = target.clone());
+            // The origin has one tab and one pane, so it is emptied by the move.
+            page.test_move_tab(0, 0, origin_handle, 0, 1, window, cx);
+            assert_eq!(page.tab_count(0), 2, "the only tab of the other window crossed over");
+            assert_eq!(
+                page.tab_cwd(0, 1, cx).as_deref(),
+                Some(origin.as_str()),
+                "at the slot the pointer was over"
+            );
+        })
+        .unwrap();
+
+    assert_eq!(cx.windows().len(), 1, "the window left with no tab is gone");
+}
+
+#[gpui::test]
 async fn subscriptions_track_every_tab(cx: &mut TestAppContext) {
     let window = new_explorer_page(cx);
     window
@@ -3791,4 +3941,45 @@ async fn a_video_in_the_preview_goes_full_screen_and_back(cx: &mut TestAppContex
         pane.toggle_media_fullscreen(window, cx);
     });
     assert_eq!(state(&mut cx), (false, true), "the window's own full screen was undone");
+}
+// The release is delivered to the window the drag started in, so the window the
+// pointer is over is hit-tested from the areas its tab rows measured at paint.
+#[gpui::test]
+async fn the_slot_hit_tested_for_another_window_is_the_row_under_the_pointer(
+    cx: &mut TestAppContext,
+) {
+    let window = new_explorer_page(cx);
+    window
+        .update(cx, |page, window, cx| page.test_new_tab(0, window, cx))
+        .unwrap();
+    let mut cx = gpui::VisualTestContext::from_window(window.into(), cx);
+    cx.update(|window, cx| window.draw(cx).clear());
+
+    let first = window
+        .read_with(&cx, |page, _| page.group.tab_area(0, 0))
+        .unwrap()
+        .expect("the row was measured");
+    let landing = |point: gpui::Point<gpui::Pixels>| {
+        window
+            .read_with(&cx, |page, _| page.group.landing(point))
+            .unwrap()
+    };
+
+    assert_eq!(landing(first.center()), Some((0, 0)), "over the first tab");
+    let second = window
+        .read_with(&cx, |page, _| page.group.tab_area(0, 1))
+        .unwrap()
+        .expect("the second row was measured");
+    assert_eq!(landing(second.center()), Some((0, 1)), "over the second tab");
+
+    // Empty space at the end of the row takes the end, as a drop there does.
+    let empty = point(px(f32::from(first.right()) + 40.0), px(f32::from(first.origin.y)));
+    assert_eq!(landing(empty), Some((0, 2)), "empty space appends");
+
+    // In the pane but not on its row: still the end of that row.
+    let body = point(px(f32::from(first.origin.x) + 20.0), px(f32::from(first.bottom()) + 60.0));
+    assert_eq!(landing(body), Some((0, 2)), "not on a row: the end of it");
+
+    // Over nothing: no slot, so the release is a new window.
+    assert_eq!(landing(point(px(-10.0), px(-10.0))), None);
 }

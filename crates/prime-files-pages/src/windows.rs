@@ -176,6 +176,43 @@ pub(crate) fn touch(window: &Window, cx: &mut App) {
     }
 }
 
+/// The explorer page of one open window, for a tab let go onto its tab list
+/// from another window (`pane_group` routes the drop to the window it lands on).
+pub(crate) fn page_for(handle: AnyWindowHandle, cx: &mut App) -> Option<Entity<crate::explorer::ExplorerPage>> {
+    let open = cx.default_global::<OpenWindows>();
+    if let Some(root) = open.windows.iter().find(|(known, _)| *known == handle).and_then(|(_, root)| root.upgrade()) {
+        return Some(root.read(cx).explorer_entity());
+    }
+    // Tests build a page straight on a window, with no `RootView` in front of it.
+    #[cfg(test)]
+    {
+        let built = cx.default_global::<TestPages>();
+        return built.pages.iter().find(|(known, _)| *known == handle).and_then(|(_, page)| page.upgrade());
+    }
+    #[cfg(not(test))]
+    None
+}
+
+#[cfg(test)]
+#[derive(Default)]
+struct TestPages {
+    pages: Vec<(AnyWindowHandle, WeakEntity<crate::explorer::ExplorerPage>)>,
+}
+
+#[cfg(test)]
+impl Global for TestPages {}
+
+/// Records a page built by a test as belonging to `handle`, so a drop that
+/// lands on that window can find its page.
+#[cfg(test)]
+pub(crate) fn register_page_for_test(
+    handle: AnyWindowHandle,
+    page: &Entity<crate::explorer::ExplorerPage>,
+    cx: &mut App,
+) {
+    cx.default_global::<TestPages>().pages.push((handle, page.downgrade()));
+}
+
 // The window used last that is still open, else any open one.
 fn target(cx: &mut App) -> Option<(AnyWindowHandle, WeakEntity<RootView>)> {
     let open = cx.default_global::<OpenWindows>();

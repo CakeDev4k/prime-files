@@ -208,6 +208,20 @@ type PaneHook<V> = Rc<dyn Fn(&mut V, usize, &mut Window, &mut Context<V>)>;
 type TabHook<V> = Rc<dyn Fn(&mut V, usize, usize, &mut Window, &mut Context<V>)>;
 /// A tab-reorder render hook: `(view, pane, from, to, window, cx)`.
 type ReorderHook<V> = Rc<dyn Fn(&mut V, usize, usize, usize, &mut Window, &mut Context<V>)>;
+/// A tab-move render hook: `(view, from_pane, from_tab, from_window, to_pane, to_index, window, cx)`.
+/// Runs on the page the tab was let go on, which may be another window's page.
+type MoveHook<V> = Rc<
+    dyn Fn(
+        &mut V,
+        usize,
+        usize,
+        AnyWindowHandle,
+        usize,
+        usize,
+        &mut Window,
+        &mut Context<V>,
+    ),
+>;
 /// A press that starts one of the group's drags: `(view, drag, window, cx)`.
 type DragHook<V> = Rc<dyn Fn(&mut V, GroupDrag, &mut Window, &mut Context<V>)>;
 
@@ -228,6 +242,9 @@ pub struct PaneGroupCallbacks<V: 'static> {
     pub on_close_tab: TabHook<V>,
     /// A tab was dragged onto another within the same pane: `(pane, from, to)`.
     pub on_reorder_tab: ReorderHook<V>,
+    /// A tab was let go onto a tab of a different pane, or of another window's
+    /// page: `(drag, to_pane, to_index)`. Runs on the page it landed on.
+    pub on_move_tab: MoveHook<V>,
     /// The divider or the tab column's edge was pressed: the embedder hands
     /// the drag to [`PaneGroup::begin_drag`] and the mouse after it to
     /// [`PaneGroup::drag_to`] and [`PaneGroup::finish_drag`].
@@ -244,30 +261,42 @@ impl<V: 'static> Clone for PaneGroupCallbacks<V> {
             on_activate_tab: self.on_activate_tab.clone(),
             on_close_tab: self.on_close_tab.clone(),
             on_reorder_tab: self.on_reorder_tab.clone(),
+            on_move_tab: self.on_move_tab.clone(),
             on_group_drag: self.on_group_drag.clone(),
         }
     }
 }
 
 thread_local! {
-    // The tab a drag started from, for the window to tear it off when it is
-    // let go outside (`take_dragged_tab`): gpui's drag ends without a drop
-    // there, and nothing else says which tab it was.
-    static DRAGGED_TAB: std::cell::Cell<Option<(usize, usize)>> = const { std::cell::Cell::new(None) };
+    // The tab a drag started from, and the window it started in: for the window
+    // to tear it off when it is let go outside (`take_dragged_tab`), and for a
+    // drop onto another window's tab bar to find the page it came from. gpui's
+    // drag ends without a drop there, and nothing else says which tab it was.
+    static DRAGGED_TAB: Cell<Option<(usize, usize, AnyWindowHandle)>> = const { Cell::new(None) };
 }
 
 /// The `(pane, tab)` a tab drag started from, if one is under way; taken, so
 /// the next release does not see it again.
 pub fn take_dragged_tab() -> Option<(usize, usize)> {
-    DRAGGED_TAB.take()
+    DRAGGED_TAB.with(|cell| cell.take().map(|(pane, tab, _)| (pane, tab)))
 }
 
-/// The drag payload for a tab reorder: identifies the tab being dragged by its
-/// `(pane, tab)` position. Matched by type at the drop site.
+/// Where the tab under drag was picked up from, without consuming it: the drop
+/// site needs it to tell a same-pane reorder from a move across panes or windows.
+pub fn dragged_source() -> Option<(usize, usize, AnyWindowHandle)> {
+    DRAGGED_TAB.with(|cell| cell.get())
+}
+
+/// The drag payload for a tab reorder or move: identifies the tab being dragged
+/// by its `(pane, tab)` position and by the window it was picked up in, so a drop
+/// into another window's tab bar can find the page it came from. Matched by type
+/// at the drop site.
 #[derive(Clone)]
-struct TabDrag {
-    pane: usize,
-    tab: usize,
+pub struct TabDrag {
+    /// Pane the tab was picked up in.
+    pub pane: usize,
+    /// Its index in that pane.
+    pub tab: usize,
 }
 
 /// gpui's view under the cursor while a tab is dragged: nothing, since the
@@ -304,6 +333,42 @@ pub struct PaneGroup<T: PaneItem> {
     /// beside the panes (the terminal on a side) reaches the window's top:
     /// the window's buttons would sit in the middle of the window.
     title_bar_allowed: bool,
+    /// Where each tab's row was drawn, in this window's coordinates. gpui
+    /// delivers the release to the window the drag started in, so a tab let go
+    /// over another window's row cannot be dropped through this row's own
+    /// handler: it is hit-tested here instead.
+    tab_bounds: TabBounds,
+    /// Each pane's area, same reason.
+    pane_bounds: PaneBounds,
+}
+
+type TabBounds = std::rc::Rc<std::cell::RefCell<std::collections::HashMap<(usize, usize), Bounds<Pixels>>>>;
+type PaneBounds = std::rc::Rc<std::cell::RefCell<std::collections::HashMap<usize, Bounds<Pixels>>>>;
+
+/// Records the area it is put in, at paint, into `map[key]`.
+fn measure_into(map: TabBounds, key: (usize, usize)) -> AnyElement {
+    canvas(
+        move |area, _window, _| {
+            map.borrow_mut().insert(key, area);
+        },
+        |_, _, _, _| {},
+    )
+    .absolute()
+    .size_full()
+    .into_any_element()
+}
+
+/// The same for a pane, keyed by its index alone.
+fn measure_pane(map: PaneBounds, key: usize) -> AnyElement {
+    canvas(
+        move |area, _window, _| {
+            map.borrow_mut().insert(key, area);
+        },
+        |_, _, _, _| {},
+    )
+    .absolute()
+    .size_full()
+    .into_any_element()
 }
 
 impl<T: PaneItem> PaneGroup<T> {
@@ -323,6 +388,8 @@ impl<T: PaneItem> PaneGroup<T> {
             compact: Compact::default(),
             vertical_tabs: false,
             title_bar_allowed: true,
+            tab_bounds: Rc::default(),
+            pane_bounds: Rc::default(),
         };
         (group, first)
     }
@@ -474,6 +541,18 @@ impl<T: PaneItem> PaneGroup<T> {
         removed.tabs.iter().map(|tab| tab.entity_id()).collect()
     }
 
+    /// [`Self::remove_pane`] without moving focus, for the cross-window move.
+    pub fn remove_pane_quiet(&mut self, index: usize) -> Vec<EntityId> {
+        if self.panes.len() <= 1 || index >= self.panes.len() {
+            return Vec::new();
+        }
+        let removed = self.panes.remove(index);
+        if self.active >= self.panes.len() {
+            self.active = self.panes.len() - 1;
+        }
+        removed.tabs.iter().map(|tab| tab.entity_id()).collect()
+    }
+
     /// Builds a tab, appends it to the pane at `pane_index`, and makes it that
     /// pane's active tab. Returns the new tab (or `None` for an out-of-range
     /// pane) so the embedder can subscribe and configure it. Does not change the
@@ -492,6 +571,43 @@ impl<T: PaneItem> PaneGroup<T> {
         pane.tabs.push(tab.clone());
         pane.active_tab = pane.tabs.len() - 1;
         Some(tab)
+    }
+
+    /// Closes the tab at `(pane_index, tab_index)` without moving focus: the
+    /// cross-window move closes a tab in a window it is not standing in, so it
+    /// cannot focus that window's active pane. Same rules as [`Self::close_tab`].
+    pub fn close_tab_quiet(&mut self, pane_index: usize, tab_index: usize) -> TabCloseOutcome {
+        let tab_len = match self.panes.get(pane_index) {
+            Some(pane) if tab_index < pane.tabs.len() => pane.tabs.len(),
+            _ => return TabCloseOutcome::default(),
+        };
+        if tab_len > 1 {
+            let pane = &mut self.panes[pane_index];
+            let removed = pane.tabs.remove(tab_index);
+            if pane.active_tab >= pane.tabs.len() {
+                pane.active_tab = pane.tabs.len() - 1;
+            } else if tab_index < pane.active_tab {
+                pane.active_tab -= 1;
+            }
+            return TabCloseOutcome {
+                removed: vec![removed.entity_id()],
+                pane_closed: false,
+            };
+        }
+        let removed = self.remove_pane_quiet(pane_index);
+        let pane_closed = !removed.is_empty();
+        TabCloseOutcome {
+            removed,
+            pane_closed,
+        }
+    }
+
+    /// Points `pane_index`'s active tab at `tab_index` without touching focus:
+    /// a tab let go into a pane does not become that pane's active tab.
+    pub fn restore_active_tab(&mut self, pane_index: usize, tab_index: usize) {
+        if let Some(pane) = self.panes.get_mut(pane_index) {
+            pane.active_tab = tab_index.min(pane.tabs.len().saturating_sub(1));
+        }
     }
 
     /// Closes the tab at `(pane_index, tab_index)`. When it is the pane's last
@@ -560,13 +676,25 @@ impl<T: PaneItem> PaneGroup<T> {
         changed
     }
 
+    /// Inserts `tab` into `pane_index` at `index` (an index past the end appends),
+    /// leaving the pane's active tab where it was. Used by the page side for a tab
+    /// let go onto this page's tab list: the moved tab is not made active.
+    pub fn insert_tab_at(&mut self, pane_index: usize, index: usize, tab: Entity<T>) -> bool {
+        let Some(pane) = self.panes.get_mut(pane_index) else {
+            return false;
+        };
+        let index = index.min(pane.tabs.len());
+        pane.tabs.insert(index, tab);
+        true
+    }
+
     /// Moves the tab at `from` to `to` within `pane_index`, preserving which tab
     /// is active. Returns whether the order changed.
     pub fn reorder_tab(&mut self, pane_index: usize, from: usize, to: usize) -> bool {
         let Some(pane) = self.panes.get_mut(pane_index) else {
             return false;
         };
-        if from >= pane.tabs.len() || to >= pane.tabs.len() || from == to {
+        if from >= pane.tabs.len() || to > pane.tabs.len() || from == to {
             return false;
         }
         let active_id = pane.tabs[pane.active_tab].entity_id();
@@ -681,6 +809,26 @@ impl<T: PaneItem> PaneGroup<T> {
     /// Number of open panes (1 or 2).
     pub fn pane_count(&self) -> usize {
         self.panes.len()
+    }
+
+    /// The area a tab's row was measured at, for the tests that check a hit-test.
+    #[cfg(test)]
+    pub(crate) fn tab_area(&self, pane: usize, tab: usize) -> Option<Bounds<Pixels>> {
+        self.tab_bounds.borrow().get(&(pane, tab)).copied()
+    }
+
+    /// Where a point in this window's coordinates would put a tab: the pane
+    /// under it and the slot it is over. A point in the pane but not on a tab
+    /// row gives the end of that row, as a drop on empty space does.
+    pub fn landing(&self, point: Point<Pixels>) -> Option<(usize, usize)> {
+        let panes = self.pane_bounds.borrow();
+        let pane = (0..self.panes.len())
+            .find(|index| panes.get(index).is_some_and(|b| b.contains(&point)))?;
+        let rows = self.tab_bounds.borrow();
+        let slot = (0..self.panes[pane].tabs.len())
+            .find(|tab| rows.get(&(pane, *tab)).is_some_and(|b| b.contains(&point)))
+            .unwrap_or(self.panes[pane].tabs.len());
+        Some((pane, slot))
     }
 
     /// Index of the active pane.
@@ -840,6 +988,7 @@ impl<T: PaneItem> PaneGroup<T> {
                 )
                 .child(column)
                 .child(div().flex_1().min_w(px(0.0)).h_full().overflow_hidden().child(content))
+                .child(measure_pane(self.pane_bounds.clone(), pane_index))
                 .into_any_element();
         }
         let tab_bar = self
@@ -886,6 +1035,7 @@ impl<T: PaneItem> PaneGroup<T> {
             )
             // After the content, so what floats is painted over it.
             .children(layered)
+            .child(measure_pane(self.pane_bounds.clone(), pane_index))
             .into_any_element()
     }
 
@@ -1164,6 +1314,7 @@ impl<T: PaneItem> PaneGroup<T> {
                 let on_close_tab = callbacks.on_close_tab.clone();
                 let on_middle_close = callbacks.on_close_tab.clone();
                 let on_reorder_tab = callbacks.on_reorder_tab.clone();
+                let on_move_tab = callbacks.on_move_tab.clone();
                 let drag_title = SharedString::from(title.clone());
                 let group = SharedString::from(format!("vtab-group-{pane_index}-{tab_index}"));
                 let show_close = tab_count > 1;
@@ -1207,16 +1358,42 @@ impl<T: PaneItem> PaneGroup<T> {
                             pane: pane_index,
                             tab: tab_index,
                         },
-                        move |drag, _offset, _window, cx| {
-                            DRAGGED_TAB.set(Some((drag.pane, drag.tab)));
+                        move |drag, _offset, window, cx| {
+                            tracing::info!(
+                                "drag started: pane {}, tab {}",
+                                drag.pane,
+                                drag.tab,
+                            );
+                            DRAGGED_TAB.set(Some((drag.pane, drag.tab, window.window_handle())));
                             let chip_title = drag_title.clone();
                             cx.defer(move |cx| crate::drag_chip::show(chip_title, cx));
                             cx.new(|_cx| TabDragPreview)
                         },
                     )
                     .on_drop(cx.listener(move |this, drag: &TabDrag, window, cx| {
-                        if drag.pane == pane_index {
+                        let Some((from_pane, from_tab, from_window)) = dragged_source() else {
+                            return;
+                        };
+                        tracing::info!(
+                            "drop on the vertical row: pane {pane_index} slot {tab_index}, from pane {from_pane} tab {from_tab}, same window as the drag: {}",
+                            from_window == window.window_handle(),
+                        );
+                        // Same pane in the same window: reorder. Anywhere else the
+                        // tab is moved into this page's tab list at the slot the
+                        // pointer was over.
+                        if from_pane == pane_index && from_window == window.window_handle() {
                             on_reorder_tab(this, pane_index, drag.tab, tab_index, window, cx);
+                        } else {
+                            on_move_tab(
+                                this,
+                                from_pane,
+                                from_tab,
+                                from_window,
+                                pane_index,
+                                tab_index,
+                                window,
+                                cx,
+                            );
                         }
                     }))
                     .child(
@@ -1261,6 +1438,8 @@ impl<T: PaneItem> PaneGroup<T> {
                                 .child(Icon::new(IconName::Close).size_3()),
                         )
                     })
+                    .relative()
+                    .child(measure_into(self.tab_bounds.clone(), (pane_index, tab_index)))
                     .into_any_element()
             })
             .collect();
@@ -1371,6 +1550,7 @@ impl<T: PaneItem> PaneGroup<T> {
         let on_activate_tab = callbacks.on_activate_tab.clone();
         let on_close_tab = callbacks.on_close_tab.clone();
         let on_reorder_tab = callbacks.on_reorder_tab.clone();
+        let on_move_tab = callbacks.on_move_tab.clone();
         let drag_title = SharedString::from(title.clone());
         let on_middle_close = callbacks.on_close_tab.clone();
         let group = SharedString::from(format!("tab-group-{pane_index}-{tab_index}"));
@@ -1449,18 +1629,37 @@ impl<T: PaneItem> PaneGroup<T> {
                     pane: pane_index,
                     tab: tab_index,
                 },
-                move |drag, _offset, _window, cx| {
-                    DRAGGED_TAB.set(Some((drag.pane, drag.tab)));
+                move |drag, _offset, window, cx| {
+                    DRAGGED_TAB.set(Some((drag.pane, drag.tab, window.window_handle())));
                     let chip_title = drag_title.clone();
                     cx.defer(move |cx| crate::drag_chip::show(chip_title, cx));
                     cx.new(|_cx| TabDragPreview)
                 },
             )
-            // Only same-pane reorders are supported (§4 — reorder within the tab
-            // bar); a drop from another pane is ignored.
+            // A drop inside the same pane reorders; a drop from another pane, or
+            // from another window's page, moves the tab into this pane at the slot
+            // the pointer was over (`on_move_tab`).
             .on_drop(cx.listener(move |this, drag: &TabDrag, window, cx| {
-                if drag.pane == pane_index {
+                let Some((from_pane, from_tab, from_window)) = dragged_source() else {
+                    return;
+                };
+                tracing::info!(
+                    "drop on the row: pane {pane_index} slot {tab_index}, from pane {from_pane} tab {from_tab}, same window as the drag: {}",
+                    from_window == window.window_handle(),
+                );
+                if from_pane == pane_index && from_window == window.window_handle() {
                     on_reorder_tab(this, pane_index, drag.tab, tab_index, window, cx);
+                } else {
+                    on_move_tab(
+                        this,
+                        from_pane,
+                        from_tab,
+                        from_window,
+                        pane_index,
+                        tab_index,
+                        window,
+                        cx,
+                    );
                 }
             }))
             .when_some(icon, |this, icon| {
@@ -1517,6 +1716,8 @@ impl<T: PaneItem> PaneGroup<T> {
                         .child(Icon::new(IconName::Close).size_3()),
                 )
             })
+            .relative()
+            .child(measure_into(self.tab_bounds.clone(), (pane_index, tab_index)))
             .into_any_element()
     }
 }

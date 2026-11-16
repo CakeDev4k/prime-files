@@ -243,6 +243,7 @@ pub fn human_bytes(size: u64) -> String {
 /// day and the hour, as `date_format` asks. `-` when the stamp is invalid.
 pub fn format_date(timestamp: &u64, date_format: DateFormat) -> String {
     use time::OffsetDateTime;
+    use time::UtcOffset;
     use time::macros::format_description;
 
     let format = match date_format {
@@ -250,7 +251,12 @@ pub fn format_date(timestamp: &u64, date_format: DateFormat) -> String {
         DateFormat::DateTime => format_description!("[year]/[month]/[day] [hour]:[minute]"),
     };
     match OffsetDateTime::from_unix_timestamp(*timestamp as i64) {
-        Ok(datetime) => datetime.format(&format).unwrap_or_else(|_| "-".to_string()),
+        // Group headers use the local offset, so the hour here has to be the
+        // local hour too. When the zone cannot be read, stay in UTC.
+        Ok(datetime) => datetime
+            .to_offset(UtcOffset::current_local_offset().unwrap_or(UtcOffset::UTC))
+            .format(&format)
+            .unwrap_or_else(|_| "-".to_string()),
         Err(_) => "-".to_string(),
     }
 }
@@ -354,7 +360,16 @@ mod tests {
     #[test]
     fn format_date_is_stable_for_the_epoch() {
         assert_eq!(format_date(&0, DateFormat::Date), "1970/01/01");
-        assert_eq!(format_date(&0, DateFormat::DateTime), "1970/01/01 00:00");
+        // The hour is the local one, so the epoch reads 00:00 only on a machine
+        // whose zone is UTC.
+        use time::{OffsetDateTime, UtcOffset, macros::format_description};
+        let offset = UtcOffset::current_local_offset().unwrap_or(UtcOffset::UTC);
+        let local = OffsetDateTime::from_unix_timestamp(0)
+            .unwrap()
+            .to_offset(offset)
+            .format(&format_description!("[year]/[month]/[day] [hour]:[minute]"))
+            .unwrap();
+        assert_eq!(format_date(&0, DateFormat::DateTime), local);
     }
 
     #[test]

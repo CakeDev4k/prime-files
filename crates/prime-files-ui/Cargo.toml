@@ -24,7 +24,8 @@ rust-embed = "8"
 serde.workspace      = true
 serde_json.workspace = true
 anyhow.workspace     = true
-time.workspace       = true
+# `local-offset`: the Modificado hour must match the local day in Group by.
+time = { workspace = true, features = ["local-offset"] }
 
 [dev-dependencies]
 # `test-support` gates `TestAppContext` and the `#[gpui::test]` macro. It is a

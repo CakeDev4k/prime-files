@@ -360,17 +360,22 @@ mod tests {
 
     #[test]
     fn format_date_is_stable_for_the_epoch() {
-        assert_eq!(format_date(&0, DateFormat::Date), "1970/01/01");
-        // The hour is the local one at that moment, so the epoch reads 00:00
-        // only on a machine whose zone is UTC.
+        // Both formats are checked against the offset at that moment, so a
+        // machine in another zone still passes.
         use time::{OffsetDateTime, UtcOffset, macros::format_description};
         let epoch = OffsetDateTime::from_unix_timestamp(0).unwrap();
         let offset = UtcOffset::local_offset_at(epoch).unwrap_or(UtcOffset::UTC);
-        let local = epoch
-            .to_offset(offset)
-            .format(&format_description!("[year]/[month]/[day] [hour]:[minute]"))
-            .unwrap();
-        assert_eq!(format_date(&0, DateFormat::DateTime), local);
+        let local = epoch.to_offset(offset);
+        assert_eq!(
+            format_date(&0, DateFormat::Date),
+            local.format(&format_description!("[year]/[month]/[day]")).unwrap()
+        );
+        assert_eq!(
+            format_date(&0, DateFormat::DateTime),
+            local
+                .format(&format_description!("[year]/[month]/[day] [hour]:[minute]"))
+                .unwrap()
+        );
     }
 
     #[test]

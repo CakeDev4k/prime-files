@@ -641,10 +641,15 @@ impl ExplorerPage {
             };
             other.update(cx, |page, _cx| page.terminals.remove(&origin_id))
         };
-        if let Some(set) = self.place_tab(start, sidebar, to_pane, to_index, carried, window, cx) {
-            // Nothing was added there, so the shells stay with the tab they came from.
-            self.terminals.insert(origin_id, set);
-            return;
+        match self.place_tab(start, sidebar, to_pane, to_index, carried, window, cx) {
+            Placement::Rejected(set) => {
+                // Nothing was added there, so the shells stay with the tab they came from.
+                if let Some(set) = set {
+                    self.terminals.insert(origin_id, set);
+                }
+                return;
+            }
+            Placement::Placed => {}
         }
         // The tab it came from closes; its pane goes with it when it was the
         // pane's last tab, and the origin's active tab falls to a neighbour.
@@ -665,8 +670,9 @@ impl ExplorerPage {
 
     /// Opens a tab on the receiving page at the slot it was dropped on, at the
     /// same path, and leaves this pane's active tab where it was before.
-    /// Returns the shells it could not attach, which is only when the tab was
-    /// not added there; nothing back means the tab landed.
+    /// `Rejected` carries the shells that could not be attached, which is only
+    /// when the tab was not added there; the caller gives them back to the tab
+    /// they came from.
     fn place_tab(
         &mut self,
         start: String,
@@ -676,7 +682,7 @@ impl ExplorerPage {
         carried: Option<TerminalSet>,
         window: &mut Window,
         cx: &mut Context<Self>,
-    ) -> Option<TerminalSet> {
+    ) -> Placement {
         // The active tab is kept by identity, not by the number it had before:
         // the moved tab can land on that same slot, and then an index taken
         // beforehand would activate the moved tab instead.
@@ -685,7 +691,7 @@ impl ExplorerPage {
             .tab(to_pane, self.group.active_tab(to_pane))
             .map(|tab| tab.entity_id());
         let Some(new_tab) = self.group.add_tab(to_pane, window, cx) else {
-            return carried;
+            return Placement::Rejected(carried);
         };
         self.subscribe_tab(&new_tab, cx);
         self.configure_tab(&new_tab, Some(start), sidebar, cx);
@@ -702,7 +708,7 @@ impl ExplorerPage {
         }
         self.schedule_save(cx);
         cx.notify();
-        None
+        Placement::Placed
     }
 
     // A moved tab's terminal events must reach the page that owns it now, so the
@@ -1294,6 +1300,12 @@ struct TerminalSet {
     active: usize,
 }
 
+/// Whether a dropped tab was taken by the receiving page.
+enum Placement {
+    Placed,
+    Rejected(Option<TerminalSet>),
+}
+
 impl TerminalSet {
     fn active(&self) -> Option<&Entity<TerminalView>> {
         self.terminals.get(self.active).or(self.terminals.last()).map(|(terminal, _)| terminal)
@@ -1821,19 +1833,26 @@ impl ExplorerPage {
             // Only hand the shells over once a window actually takes the tab;
             // on a path where nothing takes it, this tab keeps them.
             let carried = self.terminals.remove(&origin_tab.entity_id());
-            let leftover = target
+            let outcome = target
                 .update(cx, move |_, w, app| {
                     page.update(app, |page, app| {
                         page.place_tab(start.clone(), sidebar, to_pane, to_index, carried, w, app)
                     })
                 })
-                .ok()
-                .flatten();
-            let placed = leftover.is_none();
-            if let Some(set) = leftover {
-                // The tab was not added there, so the shells stay with this tab.
-                self.terminals.insert(origin_tab.entity_id(), set);
-            }
+                .ok();
+            let placed = match outcome {
+                Some(Placement::Placed) => true,
+                Some(Placement::Rejected(set)) => {
+                    // The tab was not added there, so the shells stay with this tab.
+                    if let Some(set) = set {
+                        self.terminals.insert(origin_tab.entity_id(), set);
+                    }
+                    false
+                }
+                // The receiving page is gone, so the placement never ran and
+                // nothing landed; the shells went with that page.
+                None => false,
+            };
             if placed {
                 self.close_tab_in_pane(pane, tab, window, cx);
                 // This window is left with no tab, so it closes. Deferred: this

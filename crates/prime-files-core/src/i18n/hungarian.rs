@@ -3,6 +3,10 @@
 //! survive.
 
 pub(super) static HUNGARIAN: &[(&str, &str)] = &[
+    ("Formato da data", "Dátum formátuma"),
+    ("Como a coluna Modificado mostra a data: só o dia, ou o dia e a hora.", "Hogyan jeleníti meg a Módosítva oszlop a dátumot: csak a nap, vagy a nap és az idő."),
+    ("Só data", "Csak dátum"),
+    ("Data e hora", "Dátum és idő"),
     ("Converter com Filee", "Konvertálás a Filee-vel"),
     ("Selecione ao menos um arquivo para converter", "Jelöljön ki legalább egy konvertálandó fájlt"),
     ("O Filee não está instalado", "A Filee nincs telepítve"),

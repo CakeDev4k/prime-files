@@ -4,6 +4,10 @@
 //! has a row here. Sorted by key to keep duplicates easy to spot.
 
 pub(super) static STRINGS: &[(&str, &str, &str)] = &[
+    ("Formato da data", "Date format", "Formato de fecha"),
+    ("Como a coluna Modificado mostra a data: só o dia, ou o dia e a hora.", "How the Modified column shows a date: the day alone, or the day and the time.", "Cómo muestra la columna Modificado la fecha: solo el día, o el día y la hora."),
+    ("Só data", "Date only", "Solo fecha"),
+    ("Data e hora", "Date and time", "Fecha y hora"),
     ("Converter com Filee", "Convert with Filee", "Convertir con Filee"),
     ("Selecione ao menos um arquivo para converter", "Select at least one file to convert", "Selecciona al menos un archivo para convertir"),
     ("O Filee não está instalado", "Filee is not installed", "Filee no está instalado"),

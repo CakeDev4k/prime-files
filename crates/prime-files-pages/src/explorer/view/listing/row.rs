@@ -445,7 +445,7 @@ pub fn render(
                                 .overflow_hidden()
                                 .text_ellipsis()
                                 .whitespace_nowrap()
-                                .child(format_date(&item.modified)),
+                                .child(format_date(&item.modified, page.date_format)),
                         ),
                 ),
         )

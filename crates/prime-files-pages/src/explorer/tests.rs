@@ -23,6 +23,9 @@ use prime_files_services::fs::trash::Ledger as TrashLedger;
 use prime_files_store::{KvStore, RedbKvStore, StoreLogConfig};
 
 use prime_files_core::config::SplitDirection;
+use prime_files_ui::components::file_list::{
+    COLUMN_PADDING, GLYPH_WIDTH, compact_modified_width, format_date,
+};
 
 use super::types::{SortKey, StatusLevel, ViewMode};
 use super::{ExplorerPage, ExplorerPane};
@@ -139,6 +142,7 @@ async fn apply_config_ui_reflects_ui_section(cx: &mut TestAppContext) {
                 language: "auto".to_string(),
                 default_sort: config::SortOrder::Size,
                 default_sort_descending: false,
+                date_format: config::DateFormat::Date,
                 show_hidden: true,
                 icon_pack: "default".to_string(),
                 name_lines: 0,
@@ -160,6 +164,103 @@ async fn apply_config_ui_reflects_ui_section(cx: &mut TestAppContext) {
             page.apply_config_ui(&ui, cx);
             assert!(page.show_hidden);
             assert!(page.sort_key == SortKey::Size);
+        })
+        .unwrap();
+}
+
+#[gpui::test]
+async fn apply_config_ui_sets_the_date_format(cx: &mut TestAppContext) {
+    let window = new_explorer(cx);
+    window
+        .update(cx, |page, _window, cx| {
+            let ui = config::Ui {
+                date_format: config::DateFormat::DateTime,
+                ..config::Ui::default()
+            };
+            page.apply_config_ui(&ui, cx);
+            assert_eq!(page.date_format, config::DateFormat::DateTime);
+        })
+        .unwrap();
+}
+
+#[gpui::test]
+async fn the_modified_column_refits_when_the_format_gains_the_time(cx: &mut TestAppContext) {
+    let window = new_explorer(cx);
+    window
+        .update(cx, |page, _window, cx| {
+            page.filtered_entries = vec![file("a", "file", 1)]
+                .into_iter()
+                .map(std::sync::Arc::new)
+                .collect();
+            page.fit_column(3);
+            let date_only = page.col_modified_width;
+            let ui = config::Ui {
+                date_format: config::DateFormat::DateTime,
+                ..config::Ui::default()
+            };
+            page.apply_config_ui(&ui, cx);
+            // The column has to fit what the format actually renders.
+            let needed = format_date(&0u64, config::DateFormat::DateTime).chars().count() as f32
+                * GLYPH_WIDTH
+                + COLUMN_PADDING;
+            assert!(
+                page.col_modified_width > date_only && page.col_modified_width >= needed,
+                "{date_only} -> {} (needs {needed})",
+                page.col_modified_width
+            );
+        })
+        .unwrap();
+}
+
+#[gpui::test]
+async fn a_hidden_modified_column_keeps_room_for_the_time(cx: &mut TestAppContext) {
+    let window = new_explorer(cx);
+    window
+        .update(cx, |page, _window, cx| {
+            page.filtered_entries = vec![file("a", "file", 1)]
+                .into_iter()
+                .map(std::sync::Arc::new)
+                .collect();
+            page.fit_column(3);
+            page.toggle_column(3);
+            let ui = config::Ui {
+                date_format: config::DateFormat::DateTime,
+                ..config::Ui::default()
+            };
+            page.apply_config_ui(&ui, cx);
+            assert!(!page.column_visible(3), "a hidden column stays hidden");
+            page.toggle_column(3);
+            let needed = format_date(&0u64, config::DateFormat::DateTime).chars().count() as f32
+                * GLYPH_WIDTH
+                + COLUMN_PADDING;
+            assert!(
+                page.col_modified_width >= needed,
+                "showing it back restored the date-only width: {}",
+                page.col_modified_width
+            );
+        })
+        .unwrap();
+}
+
+#[gpui::test]
+async fn an_empty_listing_still_fits_the_selected_date_format(cx: &mut TestAppContext) {
+    let window = new_explorer(cx);
+    window
+        .update(cx, |page, _window, cx| {
+            // Nothing to measure: only the heading is left.
+            page.filtered_entries.clear();
+            page.toggle_column(3);
+            let ui = config::Ui {
+                date_format: config::DateFormat::DateTime,
+                ..config::Ui::default()
+            };
+            page.apply_config_ui(&ui, cx);
+            assert!(
+                page.hidden_column_widths[3]
+                    >= compact_modified_width(config::DateFormat::DateTime),
+                "the empty listing stored only {}",
+                page.hidden_column_widths[3]
+            );
         })
         .unwrap();
 }
@@ -196,6 +297,7 @@ async fn config_reload_keeps_a_sort_chosen_in_the_session(cx: &mut TestAppContex
                 language: "auto".to_string(),
                 default_sort: config::SortOrder::Name,
                 default_sort_descending: false,
+                date_format: config::DateFormat::Date,
                 show_hidden: false,
                 icon_pack: "default".to_string(),
                 name_lines: 0,
@@ -966,6 +1068,7 @@ async fn split_pane_inherits_applied_ui_config(cx: &mut TestAppContext) {
                 language: "auto".to_string(),
                 default_sort: config::SortOrder::Size,
                 default_sort_descending: false,
+                date_format: config::DateFormat::Date,
                 show_hidden: true,
                 icon_pack: "default".to_string(),
                 name_lines: 0,
@@ -2994,6 +3097,7 @@ async fn each_folder_opens_with_the_zoom_and_sort_it_was_left_with(cx: &mut Test
                 language: "auto".to_string(),
                 default_sort: config::SortOrder::Name,
                 default_sort_descending: true,
+                date_format: config::DateFormat::Date,
                 show_hidden: false,
                 icon_pack: "default".to_string(),
                 name_lines: 0,

@@ -131,7 +131,13 @@ pub fn open_window(request: WindowRequest, cx: &mut App) -> anyhow::Result<AnyWi
 
 /// Opens `folder` in a window of its own near `origin` (screen pixels): a tab
 /// dragged out of its window and let go there.
-pub fn open_window_at(folder: String, origin: gpui::Point<Pixels>, window_size: gpui::Size<Pixels>, cx: &mut App) {
+pub(crate) fn open_window_at(
+    folder: String,
+    origin: gpui::Point<Pixels>,
+    window_size: gpui::Size<Pixels>,
+    carried: Option<crate::explorer::TerminalSet>,
+    cx: &mut App,
+) {
     let width = (window_size.width * 0.85).max(px(640.0));
     let height = (window_size.height * 0.85).max(px(420.0));
     // The pointer lands on the new window's tab row, as when a browser tab is
@@ -148,7 +154,14 @@ pub fn open_window_at(folder: String, origin: gpui::Point<Pixels>, window_size: 
     }
     let request =
         WindowRequest { path: Some(PathBuf::from(folder)), bounds: Some(WindowBounds::Windowed(bounds)), background: false };
-    open_window(request, cx).log_err();
+    let handle = open_window(request, cx).log_err();
+    // The shells come with the tab. They were taken off the window it left, so the
+    // page that opened the folder must own them now, with its own handlers.
+    if let (Some(handle), Some(set)) = (handle, carried) {
+        if let Some(page) = page_for(handle, cx) {
+            page.update(cx, |page, cx| page.adopt_terminals(set, cx));
+        }
+    }
 }
 
 /// The explorer windows open, and which was used last.

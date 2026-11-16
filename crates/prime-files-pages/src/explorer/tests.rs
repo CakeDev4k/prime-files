@@ -1588,6 +1588,34 @@ async fn a_tab_crossing_windows_carries_its_shell(cx: &mut TestAppContext) {
         .unwrap();
 }
 
+// A tab torn off to a window of its own takes its shell along: the new page
+// starts with an empty map, so the set taken from the old page has to be put on
+// the tab it opens.
+#[gpui::test]
+async fn a_torn_off_tab_carries_its_shell_into_the_new_window(cx: &mut TestAppContext) {
+    let origin_window = new_explorer_page(cx);
+    let carried = origin_window
+        .update(cx, |page, window, cx| {
+            crate::windows::register_page_for_test(window.window_handle(), &cx.entity(), cx);
+            page.test_placeholder_terminal(0, 0);
+            assert!(page.holds_terminal(0, 0), "the shell was there before the tear-off");
+            page.test_take_terminals(0, 0)
+        })
+        .unwrap();
+
+    // The window that opens has no shell of its own yet.
+    let new_window = new_explorer_page(cx);
+    new_window
+        .update(cx, |page, _, cx| {
+            page.adopt_terminals(carried.unwrap(), cx);
+            assert!(
+                page.holds_terminal(0, 0),
+                "the shell came over with the tab instead of being ended"
+            );
+        })
+        .unwrap();
+}
+
 // Nothing takes the tab, so nothing takes its shell: the tab keeps it instead of
 // losing the ownership of a shell that no longer belongs to any tab.
 #[gpui::test]

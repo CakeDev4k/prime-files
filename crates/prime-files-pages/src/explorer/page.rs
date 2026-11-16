@@ -725,6 +725,20 @@ impl ExplorerPage {
         }
     }
 
+    /// Shells for a tab that was torn off into a window of its own. They arrive
+    /// after that window opened, so the handlers are re-registered here before
+    /// the shells run: the page that owns the tab now must receive its events.
+    pub(crate) fn adopt_terminals(&mut self, mut set: TerminalSet, cx: &mut Context<Self>) {
+        let Some(tab) = (0..self.group.pane_count())
+            .flat_map(|pane| (0..self.group.tab_count(pane)).map(move |tab| (pane, tab)))
+            .find_map(|(pane, tab)| self.group.tab(pane, tab))
+        else {
+            return;
+        };
+        self.rebind_terminals(&tab, &mut set, cx);
+        self.terminals.insert(tab.entity_id(), set);
+    }
+
     /// [`Self::close_tab_in_pane`] without moving focus: the cross-window move
     /// closes a tab in a window it is not standing in.
     fn close_tab_quiet(&mut self, pane_index: usize, tab_index: usize, cx: &mut Context<Self>) {
@@ -1295,7 +1309,7 @@ impl ExplorerPage {
 }
 
 /// One explorer tab's terminals: the panel's own tabs, one shown.
-struct TerminalSet {
+pub(crate) struct TerminalSet {
     terminals: Vec<(Entity<TerminalView>, Subscription)>,
     active: usize,
 }
@@ -1878,10 +1892,13 @@ impl ExplorerPage {
         let window_bounds = window.bounds();
         let origin = window_bounds.origin + position;
         let window_size = window_bounds.size;
+        // Shells taken before the tab closes, so they can be handed to the window
+        // that opens; the old page keeps nothing of its own once the tab is gone.
+        let carried = self.terminals.remove(&entity.entity_id());
         self.close_tab_in_pane(pane, tab, window, cx);
         // After this update: a window opened from inside another's update
         // would borrow the app twice.
-        cx.defer(move |cx| crate::windows::open_window_at(folder, origin, window_size, cx));
+        cx.defer(move |cx| crate::windows::open_window_at(folder, origin, window_size, carried, cx));
     }
 
     fn finish_page_drags(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -2262,6 +2279,14 @@ impl ExplorerPage {
         self.terminals
             .entry(tab.entity_id())
             .or_insert_with(|| TerminalSet { terminals: Vec::new(), active: 0 });
+    }
+
+    /// Takes the shell set a tab owns, as the tear-off does before the window
+    /// opens. Nothing is left on the page it was taken from.
+    #[cfg(test)]
+    pub(crate) fn test_take_terminals(&mut self, pane_index: usize, tab_index: usize) -> Option<TerminalSet> {
+        let tab = self.group.tab(pane_index, tab_index).expect("the tab is there");
+        self.terminals.remove(&tab.entity_id())
     }
 }
 

@@ -699,7 +699,9 @@ impl<T: PaneItem> PaneGroup<T> {
         }
         let active_id = pane.tabs[pane.active_tab].entity_id();
         let tab = pane.tabs.remove(from);
-        pane.tabs.insert(to, tab);
+        // `to` was allowed to be the end of the row before the removal; past the
+        // remaining tabs `Vec::insert` would panic, so the slot is clamped here.
+        pane.tabs.insert(to.min(pane.tabs.len()), tab);
         if let Some(position) = pane
             .tabs
             .iter()

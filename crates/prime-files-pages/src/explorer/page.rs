@@ -624,7 +624,15 @@ impl ExplorerPage {
         let Some(tab) = tab else { return };
         let start = tab.read(cx).cwd.clone();
         let sidebar = tab.read(cx).sidebar_visible;
-        if !self.place_tab(start, sidebar, to_pane, to_index, window, cx) {
+        // The shells are taken from the page that holds them now so they travel
+        // with the tab instead of being ended when the origin tab closes.
+        let origin_id = tab.entity_id();
+        let carried = if same_window {
+            self.terminals.remove(&origin_id)
+        } else {
+            source.as_ref().unwrap().update(cx, |page, _cx| page.terminals.remove(&origin_id))
+        };
+        if !self.place_tab(start, sidebar, to_pane, to_index, carried, window, cx) {
             return;
         }
         // The tab it came from closes; its pane goes with it when it was the
@@ -649,10 +657,17 @@ impl ExplorerPage {
         sidebar: bool,
         to_pane: usize,
         to_index: usize,
+        carried: Option<TerminalSet>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> bool {
-        let active_before = self.group.active_tab(to_pane);
+        // The active tab is kept by identity, not by the number it had before:
+        // the moved tab can land on that same slot, and then an index taken
+        // beforehand would activate the moved tab instead.
+        let active_id = self
+            .group
+            .tab(to_pane, self.group.active_tab(to_pane))
+            .map(|tab| tab.entity_id());
         let Some(new_tab) = self.group.add_tab(to_pane, window, cx) else {
             return false;
         };
@@ -660,10 +675,34 @@ impl ExplorerPage {
         self.configure_tab(&new_tab, Some(start), sidebar, cx);
         let added = self.group.tab_count(to_pane) - 1;
         self.group.reorder_tab(to_pane, added, to_index.min(added));
-        self.group.restore_active_tab(to_pane, active_before);
+        if let Some(id) = active_id {
+            if let Some((_, position)) = self.group.locate_tab(id) {
+                self.group.restore_active_tab(to_pane, position);
+            }
+        }
+        // The shells travel with the tab: the same views, only listened to by the
+        // page that owns the tab now. Dropping the origin's entry would end them.
+        if let Some(mut set) = carried {
+            self.rebind_terminals(&new_tab, &mut set, cx);
+            self.terminals.insert(new_tab.entity_id(), set);
+        }
         self.schedule_save(cx);
         cx.notify();
         true
+    }
+
+    // A moved tab's terminal events must reach the page that owns it now, so the
+    // handlers are re-registered for the tab it landed in.
+    fn rebind_terminals(&mut self, tab: &Entity<ExplorerPane>, set: &mut TerminalSet, cx: &mut Context<Self>) {
+        let tab_id = tab.entity_id();
+        for slot in &mut set.terminals {
+            let terminal = slot.0.clone();
+            slot.1 = cx.subscribe(&terminal, move |page, terminal, event, cx| match event {
+                TerminalEvent::RestartRequested => {
+                    page.replace_terminal(tab_id, terminal.entity_id(), true, cx)
+                }
+            });
+        }
     }
 
     /// [`Self::close_tab_in_pane`] without moving focus: the cross-window move
@@ -1716,7 +1755,14 @@ impl ExplorerPage {
         };
         let start = origin_tab.read(cx).cwd.clone();
         let sidebar = origin_tab.read(cx).sidebar_visible;
-        for handle in cx.windows() {
+        // The shells travel with the tab instead of being ended by the close.
+        let carried = self.terminals.remove(&origin_tab.entity_id());
+        // Front to back, so a window that is covered cannot answer for a pointer
+        // that is over the window on top of it. `cx.windows()` is creation order,
+        // not the order on screen.
+        let front_to_back = cx.window_stack().unwrap_or_else(|| cx.windows());
+        let mut landing = None;
+        for handle in front_to_back {
             if handle == here {
                 continue;
             }
@@ -1750,14 +1796,20 @@ impl ExplorerPage {
             );
             let on_row = page.read(cx).group.landing(local);
             let Some((to_pane, to_index)) = on_row else {
+                // The pointer is inside the window on top, so the tab was meant
+                // for it: a window behind does not answer for that spot.
                 tracing::info!("the pointer was inside that window but not on a measured tab row");
-                continue;
+                break;
             };
             tracing::info!("landing at pane {to_pane}, slot {to_index}");
-            let placed = handle
-                .update(cx, |_, w, app| {
+            landing = Some((handle, page, to_pane, to_index));
+            break;
+        }
+        if let Some((target, page, to_pane, to_index)) = landing {
+            let placed = target
+                .update(cx, move |_, w, app| {
                     page.update(app, |page, app| {
-                        page.place_tab(start.clone(), sidebar, to_pane, to_index, w, app)
+                        page.place_tab(start.clone(), sidebar, to_pane, to_index, carried, w, app)
                     })
                 })
                 .unwrap_or(false);
@@ -2151,6 +2203,25 @@ impl ExplorerPage {
     /// stays consistent across splits/closes/new tabs.
     pub(crate) fn subscription_count(&self) -> usize {
         self.tab_subscriptions.len()
+    }
+
+    /// Whether this page owns the shells of a tab; used to assert a moved tab
+    /// carries them to the page that owns it now.
+    pub(crate) fn holds_terminal(&self, pane_index: usize, tab_index: usize) -> bool {
+        let Some(tab) = self.group.tab(pane_index, tab_index) else {
+            return false;
+        };
+        self.terminals.contains_key(&tab.entity_id())
+    }
+
+    /// Puts an empty shell set on a tab without starting a shell: the ownership
+    /// of the map is what a test checks with it.
+    #[cfg(test)]
+    pub(crate) fn test_placeholder_terminal(&mut self, pane_index: usize, tab_index: usize) {
+        let tab = self.group.tab(pane_index, tab_index).expect("the tab is there");
+        self.terminals
+            .entry(tab.entity_id())
+            .or_insert_with(|| TerminalSet { terminals: Vec::new(), active: 0 });
     }
 }
 

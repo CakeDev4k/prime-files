@@ -1397,6 +1397,35 @@ async fn reorder_tab_swaps_order_and_follows_active(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+async fn a_reorder_slot_past_the_end_lands_on_the_last_slot(cx: &mut TestAppContext) {
+    let dir = tempfile::tempdir().unwrap();
+    let first = dir.path().join("first");
+    let second = dir.path().join("second");
+    std::fs::create_dir(&first).unwrap();
+    std::fs::create_dir(&second).unwrap();
+    let first = first.to_string_lossy().to_string();
+    let second = second.to_string_lossy().to_string();
+
+    let window = new_explorer_page(cx);
+    window
+        .update(cx, |page, window, cx| {
+            page.pane(0)
+                .update(cx, |pane, _cx| pane.cwd = first.clone());
+            page.test_new_tab(0, window, cx);
+            page.pane(0)
+                .update(cx, |pane, _cx| pane.cwd = second.clone());
+
+            // The tab being moved is removed before it is inserted, so only the
+            // other tab is left: slot 2 is past what remains and has to read as
+            // the last slot instead of panicking.
+            page.test_reorder_tab(0, 0, 2, cx);
+            assert_eq!(page.tab_cwd(0, 0, cx).as_deref(), Some(second.as_str()));
+            assert_eq!(page.tab_cwd(0, 1, cx).as_deref(), Some(first.as_str()));
+        })
+        .unwrap();
+}
+
+#[gpui::test]
 async fn cross_pane_move_inserts_at_the_slot_and_closes_the_origin(cx: &mut TestAppContext) {
     let dir = tempfile::tempdir().unwrap();
     let origin = dir.path().join("origin");
@@ -1503,6 +1532,58 @@ async fn a_tab_let_go_on_another_window_lands_there_and_closes_the_origin(cx: &m
         .update(cx, |page, _window, _cx| {
             assert_eq!(page.tab_count(0), 1, "the origin tab closed");
             assert_eq!(page.subscription_count(), origin_watched - 1, "the origin stopped watching it");
+        })
+        .unwrap();
+}
+
+// A tab with a running shell crosses to the other window: the shell is handed
+// over, so a job it is running is not ended by the origin tab closing.
+#[gpui::test]
+async fn a_tab_crossing_windows_carries_its_shell(cx: &mut TestAppContext) {
+    let dir = tempfile::tempdir().unwrap();
+    let origin_dir = dir.path().join("origin");
+    let target_dir = dir.path().join("target");
+    std::fs::create_dir(&origin_dir).unwrap();
+    std::fs::create_dir(&target_dir).unwrap();
+    let origin = origin_dir.to_string_lossy().to_string();
+    let target = target_dir.to_string_lossy().to_string();
+
+    let origin_window = new_explorer_page(cx);
+    let origin_handle = origin_window
+        .update(cx, |page, window, cx| {
+            crate::windows::register_page_for_test(window.window_handle(), &cx.entity(), cx);
+            page.pane(0).update(cx, |pane, _| pane.cwd = origin.clone());
+            page.test_new_tab(0, window, cx);
+            // The tab being moved owns the shell; the other keeps this window open.
+            page.test_placeholder_terminal(0, 1);
+            assert!(page.holds_terminal(0, 1), "the shell was there before the move");
+            window.window_handle()
+        })
+        .unwrap();
+
+    let target_window = new_explorer_page(cx);
+    target_window
+        .update(cx, |page, window, cx| {
+            crate::windows::register_page_for_test(window.window_handle(), &cx.entity(), cx);
+            page.pane(0).update(cx, |pane, _| pane.cwd = target.clone());
+            window.window_handle()
+        })
+        .unwrap();
+
+    target_window
+        .update(cx, |page, window, cx| {
+            page.test_move_tab(0, 1, origin_handle, 0, 1, window, cx);
+            assert!(
+                page.holds_terminal(0, 1),
+                "the shell came over with the tab instead of being ended"
+            );
+        })
+        .unwrap();
+
+    origin_window
+        .update(cx, |page, _window, _cx| {
+            assert_eq!(page.tab_count(0), 1, "the origin tab closed");
+            assert!(!page.holds_terminal(0, 0), "the origin no longer owns the shell");
         })
         .unwrap();
 }
@@ -3973,8 +4054,10 @@ async fn the_slot_hit_tested_for_another_window_is_the_row_under_the_pointer(
     assert_eq!(landing(second.center()), Some((0, 1)), "over the second tab");
 
     // Empty space at the end of the row takes the end, as a drop there does.
-    let empty = point(px(f32::from(first.right()) + 40.0), px(f32::from(first.origin.y)));
-    assert_eq!(landing(empty), Some((0, 2)), "empty space appends");
+    // Measured past the last tab: 40 px past the first one can fall inside the
+    // second tab, whose minimum width is 84 px.
+    let empty = point(px(f32::from(second.right()) + 40.0), px(f32::from(first.origin.y)));
+    assert_eq!(landing(empty), Some((0, 2)), "empty space past the last tab appends");
 
     // In the pane but not on its row: still the end of that row.
     let body = point(px(f32::from(first.origin.x) + 20.0), px(f32::from(first.bottom()) + 60.0));

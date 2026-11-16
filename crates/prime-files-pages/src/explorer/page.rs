@@ -632,7 +632,9 @@ impl ExplorerPage {
         } else {
             source.as_ref().unwrap().update(cx, |page, _cx| page.terminals.remove(&origin_id))
         };
-        if !self.place_tab(start, sidebar, to_pane, to_index, carried, window, cx) {
+        if let Some(set) = self.place_tab(start, sidebar, to_pane, to_index, carried, window, cx) {
+            // Nothing was added there, so the shells stay with the tab they came from.
+            self.terminals.insert(origin_id, set);
             return;
         }
         // The tab it came from closes; its pane goes with it when it was the
@@ -651,6 +653,8 @@ impl ExplorerPage {
 
     /// Opens a tab on the receiving page at the slot it was dropped on, at the
     /// same path, and leaves this pane's active tab where it was before.
+    /// Returns the shells it could not attach, which is only when the tab was
+    /// not added there; nothing back means the tab landed.
     fn place_tab(
         &mut self,
         start: String,
@@ -660,7 +664,7 @@ impl ExplorerPage {
         carried: Option<TerminalSet>,
         window: &mut Window,
         cx: &mut Context<Self>,
-    ) -> bool {
+    ) -> Option<TerminalSet> {
         // The active tab is kept by identity, not by the number it had before:
         // the moved tab can land on that same slot, and then an index taken
         // beforehand would activate the moved tab instead.
@@ -669,7 +673,7 @@ impl ExplorerPage {
             .tab(to_pane, self.group.active_tab(to_pane))
             .map(|tab| tab.entity_id());
         let Some(new_tab) = self.group.add_tab(to_pane, window, cx) else {
-            return false;
+            return carried;
         };
         self.subscribe_tab(&new_tab, cx);
         self.configure_tab(&new_tab, Some(start), sidebar, cx);
@@ -688,7 +692,7 @@ impl ExplorerPage {
         }
         self.schedule_save(cx);
         cx.notify();
-        true
+        None
     }
 
     // A moved tab's terminal events must reach the page that owns it now, so the
@@ -1755,8 +1759,6 @@ impl ExplorerPage {
         };
         let start = origin_tab.read(cx).cwd.clone();
         let sidebar = origin_tab.read(cx).sidebar_visible;
-        // The shells travel with the tab instead of being ended by the close.
-        let carried = self.terminals.remove(&origin_tab.entity_id());
         // Front to back, so a window that is covered cannot answer for a pointer
         // that is over the window on top of it. `cx.windows()` is creation order,
         // not the order on screen.
@@ -1806,13 +1808,22 @@ impl ExplorerPage {
             break;
         }
         if let Some((target, page, to_pane, to_index)) = landing {
-            let placed = target
+            // Only hand the shells over once a window actually takes the tab;
+            // on a path where nothing takes it, this tab keeps them.
+            let carried = self.terminals.remove(&origin_tab.entity_id());
+            let leftover = target
                 .update(cx, move |_, w, app| {
                     page.update(app, |page, app| {
                         page.place_tab(start.clone(), sidebar, to_pane, to_index, carried, w, app)
                     })
                 })
-                .unwrap_or(false);
+                .ok()
+                .flatten();
+            let placed = leftover.is_none();
+            if let Some(set) = leftover {
+                // The tab was not added there, so the shells stay with this tab.
+                self.terminals.insert(origin_tab.entity_id(), set);
+            }
             if placed {
                 self.close_tab_in_pane(pane, tab, window, cx);
                 // This window is left with no tab, so it closes. Deferred: this

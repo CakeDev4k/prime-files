@@ -1588,6 +1588,31 @@ async fn a_tab_crossing_windows_carries_its_shell(cx: &mut TestAppContext) {
         .unwrap();
 }
 
+// Nothing takes the tab, so nothing takes its shell: the tab keeps it instead of
+// losing the ownership of a shell that no longer belongs to any tab.
+#[gpui::test]
+async fn the_shell_stays_with_the_tab_when_no_pane_takes_it(cx: &mut TestAppContext) {
+    let dir = tempfile::tempdir().unwrap();
+    let origin_dir = dir.path().join("origin");
+    std::fs::create_dir(&origin_dir).unwrap();
+    let origin = origin_dir.to_string_lossy().to_string();
+
+    let origin_window = new_explorer_page(cx);
+    origin_window
+        .update(cx, |page, window, cx| {
+            crate::windows::register_page_for_test(window.window_handle(), &cx.entity(), cx);
+            page.pane(0).update(cx, |pane, _| pane.cwd = origin.clone());
+            page.test_new_tab(0, window, cx);
+            page.test_placeholder_terminal(0, 1);
+            assert!(page.holds_terminal(0, 1), "the shell was there before the move");
+            // No pane at index 1: the tab is nowhere to be added.
+            page.test_move_tab(0, 1, window.window_handle(), 1, 0, window, cx);
+            assert!(page.holds_terminal(0, 1), "the tab kept its shell");
+            assert_eq!(page.tab_count(0), 2, "the origin tab is still open");
+        })
+        .unwrap();
+}
+
 #[gpui::test]
 async fn the_only_tab_of_a_window_crosses_to_the_other_and_that_window_closes(cx: &mut TestAppContext) {
     let dir = tempfile::tempdir().unwrap();

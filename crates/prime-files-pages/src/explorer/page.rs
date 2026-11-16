@@ -606,7 +606,10 @@ impl ExplorerPage {
         let counts = if same_window {
             (self.group.tab_count(from_pane), self.group.pane_count())
         } else {
-            let other = source.as_ref().unwrap().read(cx);
+            let Some(other) = source.as_ref() else {
+                return;
+            };
+            let other = other.read(cx);
             (other.group.tab_count(from_pane), other.group.pane_count())
         };
         // In the same window the last pane cannot be emptied, so a pane's only
@@ -619,7 +622,10 @@ impl ExplorerPage {
         let tab = if same_window {
             self.group.tab(from_pane, from_tab)
         } else {
-            source.as_ref().unwrap().read(cx).group.tab(from_pane, from_tab)
+            let Some(other) = source.as_ref() else {
+                return;
+            };
+            other.read(cx).group.tab(from_pane, from_tab)
         };
         let Some(tab) = tab else { return };
         let start = tab.read(cx).cwd.clone();
@@ -630,7 +636,10 @@ impl ExplorerPage {
         let carried = if same_window {
             self.terminals.remove(&origin_id)
         } else {
-            source.as_ref().unwrap().update(cx, |page, _cx| page.terminals.remove(&origin_id))
+            let Some(other) = source.as_ref() else {
+                return;
+            };
+            other.update(cx, |page, _cx| page.terminals.remove(&origin_id))
         };
         if let Some(set) = self.place_tab(start, sidebar, to_pane, to_index, carried, window, cx) {
             // Nothing was added there, so the shells stay with the tab they came from.
@@ -639,10 +648,13 @@ impl ExplorerPage {
         }
         // The tab it came from closes; its pane goes with it when it was the
         // pane's last tab, and the origin's active tab falls to a neighbour.
-        if from_window == here {
+        if same_window {
             self.close_tab_in_pane(from_pane, from_tab, window, cx);
         } else {
-            source.unwrap().update(cx, |page, cx| page.close_tab_quiet(from_pane, from_tab, cx));
+            let Some(other) = source else {
+                return;
+            };
+            other.update(cx, |page, cx| page.close_tab_quiet(from_pane, from_tab, cx));
             // Its only pane is left with no tab, so there is nothing to show:
             // the window it came from closes.
             if origin_empty {
@@ -679,10 +691,8 @@ impl ExplorerPage {
         self.configure_tab(&new_tab, Some(start), sidebar, cx);
         let added = self.group.tab_count(to_pane) - 1;
         self.group.reorder_tab(to_pane, added, to_index.min(added));
-        if let Some(id) = active_id {
-            if let Some((_, position)) = self.group.locate_tab(id) {
-                self.group.restore_active_tab(to_pane, position);
-            }
+        if let Some((_, position)) = active_id.and_then(|id| self.group.locate_tab(id)) {
+            self.group.restore_active_tab(to_pane, position);
         }
         // The shells travel with the tab: the same views, only listened to by the
         // page that owns the tab now. Dropping the origin's entry would end them.

@@ -643,9 +643,19 @@ impl ExplorerPage {
         };
         match self.place_tab(start, sidebar, to_pane, to_index, carried, window, cx) {
             Placement::Rejected(set) => {
-                // Nothing was added there, so the shells stay with the tab they came from.
+                // Nothing was added there, so the shells go back to the page that
+                // still owns the tab. In this window that is this page; across
+                // windows the tab is still open on the page it came from, so the
+                // shells have to go back there and not stay here.
                 if let Some(set) = set {
-                    self.terminals.insert(origin_id, set);
+                    match source.as_ref() {
+                        Some(other) => {
+                            other.update(cx, |page, _cx| page.terminals.insert(origin_id, set));
+                        }
+                        None => {
+                            self.terminals.insert(origin_id, set);
+                        }
+                    }
                 }
                 return;
             }

@@ -1588,6 +1588,51 @@ async fn a_tab_crossing_windows_carries_its_shell(cx: &mut TestAppContext) {
         .unwrap();
 }
 
+// A cross-window drop the target refuses: the tab is still open on the page it
+// came from, so the shells go back to that page and not to the target, which has
+// no tab for them.
+#[gpui::test]
+async fn a_rejected_cross_window_drop_gives_the_shell_back_to_the_source_page(cx: &mut TestAppContext) {
+    let dir = tempfile::tempdir().unwrap();
+    let origin_dir = dir.path().join("origin");
+    let target_dir = dir.path().join("target");
+    std::fs::create_dir(&origin_dir).unwrap();
+    std::fs::create_dir(&target_dir).unwrap();
+
+    let origin_window = new_explorer_page(cx);
+    let origin_handle = origin_window
+        .update(cx, |page, window, cx| {
+            crate::windows::register_page_for_test(window.window_handle(), &cx.entity(), cx);
+            page.pane(0).update(cx, |pane, _| pane.cwd = origin_dir.to_string_lossy().to_string());
+            page.test_new_tab(0, window, cx);
+            page.test_placeholder_terminal(0, 1);
+            window.window_handle()
+        })
+        .unwrap();
+
+    let target_window = new_explorer_page(cx);
+    target_window
+        .update(cx, |page, window, cx| {
+            crate::windows::register_page_for_test(window.window_handle(), &cx.entity(), cx);
+            page.pane(0).update(cx, |pane, _| pane.cwd = target_dir.to_string_lossy().to_string());
+            // Pane 1 does not exist on this page, so nothing takes the tab.
+            page.test_move_tab(0, 1, origin_handle, 1, 0, window, cx);
+            assert_eq!(page.tab_count(0), 1, "nothing was added on the target");
+            assert_eq!(page.subscription_count(), 1, "the target never watched it");
+        })
+        .unwrap();
+
+    origin_window
+        .update(cx, |page, _window, _cx| {
+            assert_eq!(page.tab_count(0), 2, "the tab is still open where it came from");
+            assert!(
+                page.holds_terminal(0, 1),
+                "the shell went back to the page that still owns the tab"
+            );
+        })
+        .unwrap();
+}
+
 // A tab torn off to a window of its own takes its shell along: the new page
 // starts with an empty map, so the set taken from the old page has to be put on
 // the tab it opens.

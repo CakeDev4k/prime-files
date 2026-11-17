@@ -1625,6 +1625,50 @@ async fn a_torn_off_tab_carries_its_shell_into_the_new_window(cx: &mut TestAppCo
         .unwrap();
 }
 
+// The window a tear-off opens may never appear, and then the shells must not be
+// dropped with the tab already closed: the tab is closed only after that window
+// exists, so a failure leaves the tab with the shell it was carrying.
+#[gpui::test]
+async fn a_tear_off_that_failed_to_open_its_window_keeps_its_shell(cx: &mut TestAppContext) {
+    let origin = new_explorer_page(cx);
+    origin
+        .update(cx, |page, _, cx| {
+            page.test_placeholder_terminal(0, 0);
+            let tab_id = page.group.tab(0, 0).expect("the tab is there").entity_id();
+            let carried = page.test_take_terminals(0, 0).expect("the shell was taken for the new window");
+            assert!(!page.holds_terminal(0, 0), "nothing owned it while the window was opening");
+            // `open_window_at` hands the shells back when no window took them.
+            page.finish_tear_off(
+                0,
+                0,
+                tab_id,
+                Some((carried, prime_files_core::config::DockSide::Right, 300.0)),
+                cx,
+            );
+            assert_eq!(page.group.tab_count(0), 1, "so the tab was not closed");
+            assert!(page.holds_terminal(0, 0), "and owns its shell again");
+        })
+        .unwrap();
+}
+
+// The other half: when the new window does take the shells, the tab that left
+// can go, and it goes.
+#[gpui::test]
+async fn the_torn_off_tab_closes_once_its_window_has_taken_the_shells(cx: &mut TestAppContext) {
+    let origin = new_explorer_page(cx);
+    origin
+        .update(cx, |page, window, cx| {
+            // A second tab, so closing the one that left leaves the pane open.
+            page.test_new_tab(0, window, cx);
+            page.test_placeholder_terminal(0, 0);
+            let tab_id = page.group.tab(0, 0).expect("the tab is there").entity_id();
+            page.finish_tear_off(0, 0, tab_id, None, cx);
+            assert!(page.group.locate_tab(tab_id).is_none(), "the origin tab is closed");
+            assert_eq!(page.group.tab_count(0), 1, "and the tab that stays behind");
+        })
+        .unwrap();
+}
+
 // Nothing takes the tab, so nothing takes its shell: the tab keeps it instead of
 // losing the ownership of a shell that no longer belongs to any tab.
 #[gpui::test]

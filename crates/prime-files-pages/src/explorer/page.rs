@@ -755,6 +755,26 @@ impl ExplorerPage {
         cx.notify();
     }
 
+    /// The other half of the tear-off, once the new window is known. The tab
+    /// that left is closed only when that window exists and took the shells:
+    /// when it did not, nothing owns them, so the tab stays and takes them back
+    /// instead of closing with a shell nowhere to run.
+    pub(crate) fn finish_tear_off(
+        &mut self,
+        pane: usize,
+        tab: usize,
+        tab_id: EntityId,
+        not_taken: Option<(TerminalSet, DockSide, f32)>,
+        cx: &mut Context<Self>,
+    ) {
+        let Some((set, _, _)) = not_taken else {
+            self.close_tab_quiet(pane, tab, cx);
+            return;
+        };
+        self.terminals.insert(tab_id, set);
+        cx.notify();
+    }
+
     /// [`Self::close_tab_in_pane`] without moving focus: the cross-window move
     /// closes a tab in a window it is not standing in.
     fn close_tab_quiet(&mut self, pane_index: usize, tab_index: usize, cx: &mut Context<Self>) {
@@ -1916,10 +1936,17 @@ impl ExplorerPage {
             .terminals
             .remove(&entity.entity_id())
             .map(|set| (set, self.terminal_side, self.fitted_terminal_size()));
-        self.close_tab_in_pane(pane, tab, window, cx);
+        let tab_id = entity.entity_id();
+        let page = cx.entity().downgrade();
         // After this update: a window opened from inside another's update
-        // would borrow the app twice.
-        cx.defer(move |cx| crate::windows::open_window_at(folder, origin, window_size, carried, cx));
+        // would borrow the app twice. The tab is closed only once that window
+        // exists and has taken the shells: if it never opened, the tab stays and
+        // takes its shells back instead of closing with a shell dropped with
+        // nothing left to run it.
+        cx.defer(move |cx| {
+            let not_taken = crate::windows::open_window_at(folder, origin, window_size, carried, cx);
+            page.update(cx, |page, cx| page.finish_tear_off(pane, tab, tab_id, not_taken, cx)).ok();
+        });
     }
 
     fn finish_page_drags(&mut self, window: &mut Window, cx: &mut Context<Self>) {

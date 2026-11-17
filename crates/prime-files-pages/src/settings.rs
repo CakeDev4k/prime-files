@@ -2074,6 +2074,20 @@ impl SettingsPage {
                 ),
             )
             .reset(("ui", "default_sort_descending"), !ui.default_sort_descending, "false"),
+            Row::hint(
+                t!("Formato da data"),
+                t!("Como a coluna Modificado mostra a data: só o dia, ou o dia e a hora."),
+                self.config_choice(
+                    "date-format",
+                    &[
+                        (t!("Só data"), ui.date_format == config::DateFormat::Date, "\"date\""),
+                        (t!("Data e hora"), ui.date_format == config::DateFormat::DateTime, "\"date_time\""),
+                    ],
+                    ("ui", "date_format"),
+                    cx,
+                ),
+            )
+            .reset(("ui", "date_format"), ui.date_format == config::DateFormat::Date, "\"date\""),
         ])]
     }
 

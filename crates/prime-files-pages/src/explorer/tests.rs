@@ -23,6 +23,9 @@ use prime_files_services::fs::trash::Ledger as TrashLedger;
 use prime_files_store::{KvStore, RedbKvStore, StoreLogConfig};
 
 use prime_files_core::config::SplitDirection;
+use prime_files_ui::components::file_list::{
+    COLUMN_PADDING, GLYPH_WIDTH, compact_modified_width, format_date,
+};
 
 use super::types::{SortKey, StatusLevel, ViewMode};
 use super::{ExplorerPage, ExplorerPane};
@@ -139,6 +142,7 @@ async fn apply_config_ui_reflects_ui_section(cx: &mut TestAppContext) {
                 language: "auto".to_string(),
                 default_sort: config::SortOrder::Size,
                 default_sort_descending: false,
+                date_format: config::DateFormat::Date,
                 show_hidden: true,
                 icon_pack: "default".to_string(),
                 name_lines: 0,
@@ -160,6 +164,103 @@ async fn apply_config_ui_reflects_ui_section(cx: &mut TestAppContext) {
             page.apply_config_ui(&ui, cx);
             assert!(page.show_hidden);
             assert!(page.sort_key == SortKey::Size);
+        })
+        .unwrap();
+}
+
+#[gpui::test]
+async fn apply_config_ui_sets_the_date_format(cx: &mut TestAppContext) {
+    let window = new_explorer(cx);
+    window
+        .update(cx, |page, _window, cx| {
+            let ui = config::Ui {
+                date_format: config::DateFormat::DateTime,
+                ..config::Ui::default()
+            };
+            page.apply_config_ui(&ui, cx);
+            assert_eq!(page.date_format, config::DateFormat::DateTime);
+        })
+        .unwrap();
+}
+
+#[gpui::test]
+async fn the_modified_column_refits_when_the_format_gains_the_time(cx: &mut TestAppContext) {
+    let window = new_explorer(cx);
+    window
+        .update(cx, |page, _window, cx| {
+            page.filtered_entries = vec![file("a", "file", 1)]
+                .into_iter()
+                .map(std::sync::Arc::new)
+                .collect();
+            page.fit_column(3);
+            let date_only = page.col_modified_width;
+            let ui = config::Ui {
+                date_format: config::DateFormat::DateTime,
+                ..config::Ui::default()
+            };
+            page.apply_config_ui(&ui, cx);
+            // The column has to fit what the format actually renders.
+            let needed = format_date(&0u64, config::DateFormat::DateTime).chars().count() as f32
+                * GLYPH_WIDTH
+                + COLUMN_PADDING;
+            assert!(
+                page.col_modified_width > date_only && page.col_modified_width >= needed,
+                "{date_only} -> {} (needs {needed})",
+                page.col_modified_width
+            );
+        })
+        .unwrap();
+}
+
+#[gpui::test]
+async fn a_hidden_modified_column_keeps_room_for_the_time(cx: &mut TestAppContext) {
+    let window = new_explorer(cx);
+    window
+        .update(cx, |page, _window, cx| {
+            page.filtered_entries = vec![file("a", "file", 1)]
+                .into_iter()
+                .map(std::sync::Arc::new)
+                .collect();
+            page.fit_column(3);
+            page.toggle_column(3);
+            let ui = config::Ui {
+                date_format: config::DateFormat::DateTime,
+                ..config::Ui::default()
+            };
+            page.apply_config_ui(&ui, cx);
+            assert!(!page.column_visible(3), "a hidden column stays hidden");
+            page.toggle_column(3);
+            let needed = format_date(&0u64, config::DateFormat::DateTime).chars().count() as f32
+                * GLYPH_WIDTH
+                + COLUMN_PADDING;
+            assert!(
+                page.col_modified_width >= needed,
+                "showing it back restored the date-only width: {}",
+                page.col_modified_width
+            );
+        })
+        .unwrap();
+}
+
+#[gpui::test]
+async fn an_empty_listing_still_fits_the_selected_date_format(cx: &mut TestAppContext) {
+    let window = new_explorer(cx);
+    window
+        .update(cx, |page, _window, cx| {
+            // Nothing to measure: only the heading is left.
+            page.filtered_entries.clear();
+            page.toggle_column(3);
+            let ui = config::Ui {
+                date_format: config::DateFormat::DateTime,
+                ..config::Ui::default()
+            };
+            page.apply_config_ui(&ui, cx);
+            assert!(
+                page.hidden_column_widths[3]
+                    >= compact_modified_width(config::DateFormat::DateTime),
+                "the empty listing stored only {}",
+                page.hidden_column_widths[3]
+            );
         })
         .unwrap();
 }
@@ -196,6 +297,7 @@ async fn config_reload_keeps_a_sort_chosen_in_the_session(cx: &mut TestAppContex
                 language: "auto".to_string(),
                 default_sort: config::SortOrder::Name,
                 default_sort_descending: false,
+                date_format: config::DateFormat::Date,
                 show_hidden: false,
                 icon_pack: "default".to_string(),
                 name_lines: 0,
@@ -966,6 +1068,7 @@ async fn split_pane_inherits_applied_ui_config(cx: &mut TestAppContext) {
                 language: "auto".to_string(),
                 default_sort: config::SortOrder::Size,
                 default_sort_descending: false,
+                date_format: config::DateFormat::Date,
                 show_hidden: true,
                 icon_pack: "default".to_string(),
                 name_lines: 0,
@@ -1291,6 +1394,413 @@ async fn reorder_tab_swaps_order_and_follows_active(cx: &mut TestAppContext) {
             assert_eq!(page.active_tab(0), 0, "the active tab follows the reorder");
         })
         .unwrap();
+}
+
+#[gpui::test]
+async fn a_reorder_slot_past_the_end_lands_on_the_last_slot(cx: &mut TestAppContext) {
+    let dir = tempfile::tempdir().unwrap();
+    let first = dir.path().join("first");
+    let second = dir.path().join("second");
+    std::fs::create_dir(&first).unwrap();
+    std::fs::create_dir(&second).unwrap();
+    let first = first.to_string_lossy().to_string();
+    let second = second.to_string_lossy().to_string();
+
+    let window = new_explorer_page(cx);
+    window
+        .update(cx, |page, window, cx| {
+            page.pane(0)
+                .update(cx, |pane, _cx| pane.cwd = first.clone());
+            page.test_new_tab(0, window, cx);
+            page.pane(0)
+                .update(cx, |pane, _cx| pane.cwd = second.clone());
+
+            // The tab being moved is removed before it is inserted, so only the
+            // other tab is left: slot 2 is past what remains and has to read as
+            // the last slot instead of panicking.
+            page.test_reorder_tab(0, 0, 2, cx);
+            assert_eq!(page.tab_cwd(0, 0, cx).as_deref(), Some(second.as_str()));
+            assert_eq!(page.tab_cwd(0, 1, cx).as_deref(), Some(first.as_str()));
+        })
+        .unwrap();
+}
+
+#[gpui::test]
+async fn cross_pane_move_inserts_at_the_slot_and_closes_the_origin(cx: &mut TestAppContext) {
+    let dir = tempfile::tempdir().unwrap();
+    let origin = dir.path().join("origin");
+    let target = dir.path().join("target");
+    std::fs::create_dir(&origin).unwrap();
+    std::fs::create_dir(&target).unwrap();
+    let origin = origin.to_string_lossy().to_string();
+    let target = target.to_string_lossy().to_string();
+
+    let window = new_explorer_page(cx);
+    window.update(cx, |page, window, cx| {
+        page.split(SplitDirection::Vertical, window, cx);
+        page.pane(1).update(cx, |pane, _| pane.cwd = target.clone());
+        page.pane(0).update(cx, |pane, _| pane.cwd = origin.clone());
+        // A second tab in the origin pane, so moving it leaves one behind.
+        page.test_new_tab(0, window, cx);
+        let dropped = origin.clone();
+        // Pane 0's active tab is the new one: the tab the test drags.
+        page.pane(0).update(cx, |pane, _| pane.cwd = dropped.clone());
+        assert_eq!(page.active_tab(1), 0, "the target's active tab before the drop");
+        // `test_new_tab` made pane 0 active, so this is what the drop must not change.
+        let active_pane_before = page.active_index();
+
+        // Let go over pane 1's second slot.
+        page.test_move_tab(page.group.tab(0, 1).expect("the tab is there").entity_id(), window.window_handle(), 1, 1, window, cx);
+
+        assert_eq!(page.tab_cwd(1, 1, cx).as_deref(), Some(origin.as_str()), "inserted where the pointer was");
+        assert_eq!(page.active_tab(1), 0, "the moved tab is not made active in the target");
+        assert_eq!(page.tab_count(0), 1, "the origin tab closed");
+        assert_eq!(page.active_index(), active_pane_before, "the active pane is left as it was");
+        assert_eq!(cx.windows().len(), 1, "no new window");
+    })
+    .unwrap();
+}
+
+#[gpui::test]
+async fn a_window_s_last_tab_does_not_move(cx: &mut TestAppContext) {
+    let window = new_explorer_page(cx);
+    window.update(cx, |page, window, cx| {
+        let before = page.tab_cwd(0, 0, cx);
+        page.test_move_tab(page.group.tab(0, 0).expect("the tab is there").entity_id(), window.window_handle(), 0, 0, window, cx);
+        assert_eq!(page.tab_count(0), 1, "the tab that keeps the pane open stays");
+        assert_eq!(page.tab_cwd(0, 0, cx), before);
+    })
+    .unwrap();
+}
+
+// A tab let go on another window's tab list: it lands there at the slot the
+// pointer was over, the origin's tab closes, no new window opens.
+#[gpui::test]
+async fn a_tab_let_go_on_another_window_lands_there_and_closes_the_origin(cx: &mut TestAppContext) {
+    let dir = tempfile::tempdir().unwrap();
+    let origin_dir = dir.path().join("origin");
+    let target_dir = dir.path().join("target");
+    std::fs::create_dir(&origin_dir).unwrap();
+    std::fs::create_dir(&target_dir).unwrap();
+    let origin = origin_dir.to_string_lossy().to_string();
+    let target = target_dir.to_string_lossy().to_string();
+
+    let origin_window = new_explorer_page(cx);
+    let target_window = new_explorer_page(cx);
+
+    let mut origin_watched = 0;
+    let mut dragged: Option<gpui::EntityId> = None;
+    let origin_handle = origin_window
+        .update(cx, |page, window, cx| {
+            crate::windows::register_page_for_test(window.window_handle(), &cx.entity(), cx);
+            page.pane(0).update(cx, |pane, _| pane.cwd = origin.clone());
+            // A second tab, so the origin window still has one left behind.
+            page.test_new_tab(0, window, cx);
+            origin_watched = page.subscription_count();
+            dragged = Some(page.group.tab(0, 0).expect("the tab is there").entity_id());
+            window.window_handle()
+        })
+        .unwrap();
+
+    let mut target_watched = 0;
+    let _target_handle = target_window
+        .update(cx, |page, window, cx| {
+            crate::windows::register_page_for_test(window.window_handle(), &cx.entity(), cx);
+            page.pane(0).update(cx, |pane, _| pane.cwd = target.clone());
+            assert_eq!(page.tab_count(0), 1, "the target had its own tab");
+            assert_eq!(page.active_tab(0), 0, "the target's active tab before the drop");
+            target_watched = page.subscription_count();
+            window.window_handle()
+        })
+        .unwrap();
+
+    // Let go over the target's second slot, from the other window.
+    target_window
+        .update(cx, |page, window, cx| {
+            page.test_move_tab(dragged.expect("the tab was on the origin"), origin_handle, 0, 1, window, cx);
+            assert_eq!(page.tab_count(0), 2, "the tab landed on the other window");
+            assert_eq!(
+                page.tab_cwd(0, 1, cx).as_deref(),
+                Some(origin.as_str()),
+                "at the slot the pointer was over"
+            );
+            assert_eq!(page.active_tab(0), 0, "the moved tab is not made active there");
+            assert_eq!(page.subscription_count(), target_watched + 1, "the landed tab is watched there");
+            assert_eq!(cx.windows().len(), 2, "no new window");
+        })
+        .unwrap();
+
+    origin_window
+        .update(cx, |page, _window, _cx| {
+            assert_eq!(page.tab_count(0), 1, "the origin tab closed");
+            assert_eq!(page.subscription_count(), origin_watched - 1, "the origin stopped watching it");
+        })
+        .unwrap();
+}
+
+// A tab with a running shell crosses to the other window: the shell is handed
+// over, so a job it is running is not ended by the origin tab closing.
+#[gpui::test]
+async fn a_tab_crossing_windows_carries_its_shell(cx: &mut TestAppContext) {
+    let dir = tempfile::tempdir().unwrap();
+    let origin_dir = dir.path().join("origin");
+    let target_dir = dir.path().join("target");
+    std::fs::create_dir(&origin_dir).unwrap();
+    std::fs::create_dir(&target_dir).unwrap();
+    let origin = origin_dir.to_string_lossy().to_string();
+    let target = target_dir.to_string_lossy().to_string();
+
+    let origin_window = new_explorer_page(cx);
+    let mut dragged: Option<gpui::EntityId> = None;
+    let origin_handle = origin_window
+        .update(cx, |page, window, cx| {
+            crate::windows::register_page_for_test(window.window_handle(), &cx.entity(), cx);
+            page.pane(0).update(cx, |pane, _| pane.cwd = origin.clone());
+            page.test_new_tab(0, window, cx);
+            // The tab being moved owns the shell; the other keeps this window open.
+            page.test_placeholder_terminal(0, 1);
+            assert!(page.holds_terminal(0, 1), "the shell was there before the move");
+            dragged = Some(page.group.tab(0, 1).expect("the tab is there").entity_id());
+            window.window_handle()
+        })
+        .unwrap();
+
+    let target_window = new_explorer_page(cx);
+    target_window
+        .update(cx, |page, window, cx| {
+            crate::windows::register_page_for_test(window.window_handle(), &cx.entity(), cx);
+            page.pane(0).update(cx, |pane, _| pane.cwd = target.clone());
+            window.window_handle()
+        })
+        .unwrap();
+
+    target_window
+        .update(cx, |page, window, cx| {
+            page.test_move_tab(dragged.expect("the tab was on the origin"), origin_handle, 0, 1, window, cx);
+            assert!(
+                page.holds_terminal(0, 1),
+                "the shell came over with the tab instead of being ended"
+            );
+        })
+        .unwrap();
+
+    origin_window
+        .update(cx, |page, _window, _cx| {
+            assert_eq!(page.tab_count(0), 1, "the origin tab closed");
+            assert!(!page.holds_terminal(0, 0), "the origin no longer owns the shell");
+        })
+        .unwrap();
+}
+
+// A cross-window drop the target refuses: the tab is still open on the page it
+// came from, so the shells go back to that page and not to the target, which has
+// no tab for them.
+#[gpui::test]
+async fn a_rejected_cross_window_drop_gives_the_shell_back_to_the_source_page(cx: &mut TestAppContext) {
+    let dir = tempfile::tempdir().unwrap();
+    let origin_dir = dir.path().join("origin");
+    let target_dir = dir.path().join("target");
+    std::fs::create_dir(&origin_dir).unwrap();
+    std::fs::create_dir(&target_dir).unwrap();
+
+    let origin_window = new_explorer_page(cx);
+    let mut dragged: Option<gpui::EntityId> = None;
+    let origin_handle = origin_window
+        .update(cx, |page, window, cx| {
+            crate::windows::register_page_for_test(window.window_handle(), &cx.entity(), cx);
+            page.pane(0).update(cx, |pane, _| pane.cwd = origin_dir.to_string_lossy().to_string());
+            page.test_new_tab(0, window, cx);
+            page.test_placeholder_terminal(0, 1);
+            dragged = Some(page.group.tab(0, 1).expect("the tab is there").entity_id());
+            window.window_handle()
+        })
+        .unwrap();
+
+    let target_window = new_explorer_page(cx);
+    target_window
+        .update(cx, |page, window, cx| {
+            crate::windows::register_page_for_test(window.window_handle(), &cx.entity(), cx);
+            page.pane(0).update(cx, |pane, _| pane.cwd = target_dir.to_string_lossy().to_string());
+            // Pane 1 does not exist on this page, so nothing takes the tab.
+            page.test_move_tab(dragged.expect("the tab was on the origin"), origin_handle, 1, 0, window, cx);
+            assert_eq!(page.tab_count(0), 1, "nothing was added on the target");
+            assert_eq!(page.subscription_count(), 1, "the target never watched it");
+        })
+        .unwrap();
+
+    origin_window
+        .update(cx, |page, _window, _cx| {
+            assert_eq!(page.tab_count(0), 2, "the tab is still open where it came from");
+            assert!(
+                page.holds_terminal(0, 1),
+                "the shell went back to the page that still owns the tab"
+            );
+        })
+        .unwrap();
+}
+
+// A tab torn off to a window of its own takes its shell along: the new page
+// starts with an empty map, so the set taken from the old page has to be put on
+// the tab it opens.
+#[gpui::test]
+async fn a_torn_off_tab_carries_its_shell_into_the_new_window(cx: &mut TestAppContext) {
+    let origin_window = new_explorer_page(cx);
+    let carried = origin_window
+        .update(cx, |page, window, cx| {
+            crate::windows::register_page_for_test(window.window_handle(), &cx.entity(), cx);
+            page.test_placeholder_terminal(0, 0);
+            assert!(page.holds_terminal(0, 0), "the shell was there before the tear-off");
+            page.test_take_terminals(0, 0)
+        })
+        .unwrap();
+
+    // The window that opens has no shell of its own yet, and its panel is shut.
+    let new_window = new_explorer_page(cx);
+    new_window
+        .update(cx, |page, _, cx| {
+            assert!(!page.test_terminal_open(), "the new window starts with the panel shut");
+            page.adopt_terminals(
+                carried.unwrap(),
+                prime_files_core::config::DockSide::Right,
+                300.0,
+                cx,
+            );
+            assert!(
+                page.holds_terminal(0, 0),
+                "the shell came over with the tab instead of being ended"
+            );
+            assert!(page.test_terminal_open(), "and the panel it shows is open too");
+            let tab = page.group.tab(0, 0).expect("the tab is there");
+            assert!(tab.read(cx).terminal_shown, "on the tab that arrived");
+        })
+        .unwrap();
+}
+
+// The window a tear-off opens may never appear, and then the shells must not be
+// dropped with the tab already closed: the tab is closed only after that window
+// exists, so a failure leaves the tab with the shell it was carrying.
+#[gpui::test]
+async fn a_tear_off_that_failed_to_open_its_window_keeps_its_shell(cx: &mut TestAppContext) {
+    let origin = new_explorer_page(cx);
+    origin
+        .update(cx, |page, _, cx| {
+            page.test_placeholder_terminal(0, 0);
+            let tab_id = page.group.tab(0, 0).expect("the tab is there").entity_id();
+            let carried = page.test_take_terminals(0, 0).expect("the shell was taken for the new window");
+            assert!(!page.holds_terminal(0, 0), "nothing owned it while the window was opening");
+            // `open_window_at` hands the shells back when no window took them.
+            page.finish_tear_off(
+                0,
+                0,
+                tab_id,
+                Err(Some((carried, prime_files_core::config::DockSide::Right, 300.0))),
+                cx,
+            );
+            assert_eq!(page.group.tab_count(0), 1, "so the tab was not closed");
+            assert!(page.holds_terminal(0, 0), "and owns its shell again");
+        })
+        .unwrap();
+}
+
+// The other half: when the new window does take the shells, the tab that left
+// can go, and it goes.
+#[gpui::test]
+async fn the_torn_off_tab_closes_once_its_window_has_taken_the_shells(cx: &mut TestAppContext) {
+    let origin = new_explorer_page(cx);
+    origin
+        .update(cx, |page, window, cx| {
+            // A second tab, so closing the one that left leaves the pane open.
+            page.test_new_tab(0, window, cx);
+            page.test_placeholder_terminal(0, 0);
+            let tab_id = page.group.tab(0, 0).expect("the tab is there").entity_id();
+            page.finish_tear_off(0, 0, tab_id, Ok(()), cx);
+            assert!(page.group.locate_tab(tab_id).is_none(), "the origin tab is closed");
+            assert_eq!(page.group.tab_count(0), 1, "and the tab that stays behind");
+        })
+        .unwrap();
+}
+
+// The window a tear-off opens can fail even when the tab carries nothing: the
+// tab has to stay, because nothing took its place.
+#[gpui::test]
+async fn a_tear_off_without_shells_that_failed_to_open_keeps_its_tab(cx: &mut TestAppContext) {
+    let origin = new_explorer_page(cx);
+    origin
+        .update(cx, |page, _, cx| {
+            let tab_id = page.group.tab(0, 0).expect("the tab is there").entity_id();
+            page.finish_tear_off(0, 0, tab_id, Err(None), cx);
+            assert!(
+                page.group.locate_tab(tab_id).is_some(),
+                "the tab with no shell is not closed"
+            );
+        })
+        .unwrap();
+}
+
+// Nothing takes the tab, so nothing takes its shell: the tab keeps it instead of
+// losing the ownership of a shell that no longer belongs to any tab.
+#[gpui::test]
+async fn the_shell_stays_with_the_tab_when_no_pane_takes_it(cx: &mut TestAppContext) {
+    let dir = tempfile::tempdir().unwrap();
+    let origin_dir = dir.path().join("origin");
+    std::fs::create_dir(&origin_dir).unwrap();
+    let origin = origin_dir.to_string_lossy().to_string();
+
+    let origin_window = new_explorer_page(cx);
+    origin_window
+        .update(cx, |page, window, cx| {
+            crate::windows::register_page_for_test(window.window_handle(), &cx.entity(), cx);
+            page.pane(0).update(cx, |pane, _| pane.cwd = origin.clone());
+            page.test_new_tab(0, window, cx);
+            page.test_placeholder_terminal(0, 1);
+            assert!(page.holds_terminal(0, 1), "the shell was there before the move");
+            // No pane at index 1: the tab is nowhere to be added.
+            page.test_move_tab(page.group.tab(0, 1).expect("the tab is there").entity_id(), window.window_handle(), 1, 0, window, cx);
+            assert!(page.holds_terminal(0, 1), "the tab kept its shell");
+            assert_eq!(page.tab_count(0), 2, "the origin tab is still open");
+        })
+        .unwrap();
+}
+
+#[gpui::test]
+async fn the_only_tab_of_a_window_crosses_to_the_other_and_that_window_closes(cx: &mut TestAppContext) {
+    let dir = tempfile::tempdir().unwrap();
+    let origin_dir = dir.path().join("origin");
+    let target_dir = dir.path().join("target");
+    std::fs::create_dir(&origin_dir).unwrap();
+    std::fs::create_dir(&target_dir).unwrap();
+    let origin = origin_dir.to_string_lossy().to_string();
+    let target = target_dir.to_string_lossy().to_string();
+
+    let origin_window = new_explorer_page(cx);
+    let target_window = new_explorer_page(cx);
+
+    let mut dragged: Option<gpui::EntityId> = None;
+    let origin_handle = origin_window
+        .update(cx, |page, window, cx| {
+            crate::windows::register_page_for_test(window.window_handle(), &cx.entity(), cx);
+            page.pane(0).update(cx, |pane, _| pane.cwd = origin.clone());
+            dragged = Some(page.group.tab(0, 0).expect("the tab is there").entity_id());
+            window.window_handle()
+        })
+        .unwrap();
+
+    target_window
+        .update(cx, |page, window, cx| {
+            crate::windows::register_page_for_test(window.window_handle(), &cx.entity(), cx);
+            page.pane(0).update(cx, |pane, _| pane.cwd = target.clone());
+            // The origin has one tab and one pane, so it is emptied by the move.
+            page.test_move_tab(dragged.expect("the tab was on the origin"), origin_handle, 0, 1, window, cx);
+            assert_eq!(page.tab_count(0), 2, "the only tab of the other window crossed over");
+            assert_eq!(
+                page.tab_cwd(0, 1, cx).as_deref(),
+                Some(origin.as_str()),
+                "at the slot the pointer was over"
+            );
+        })
+        .unwrap();
+
+    assert_eq!(cx.windows().len(), 1, "the window left with no tab is gone");
 }
 
 #[gpui::test]
@@ -2994,6 +3504,7 @@ async fn each_folder_opens_with_the_zoom_and_sort_it_was_left_with(cx: &mut Test
                 language: "auto".to_string(),
                 default_sort: config::SortOrder::Name,
                 default_sort_descending: true,
+                date_format: config::DateFormat::Date,
                 show_hidden: false,
                 icon_pack: "default".to_string(),
                 name_lines: 0,
@@ -3687,4 +4198,240 @@ async fn a_video_in_the_preview_goes_full_screen_and_back(cx: &mut TestAppContex
         pane.toggle_media_fullscreen(window, cx);
     });
     assert_eq!(state(&mut cx), (false, true), "the window's own full screen was undone");
+}
+// The release is delivered to the window the drag started in, so the window the
+// pointer is over is hit-tested from the areas its tab rows measured at paint.
+#[gpui::test]
+async fn the_slot_hit_tested_for_another_window_is_the_row_under_the_pointer(
+    cx: &mut TestAppContext,
+) {
+    let window = new_explorer_page(cx);
+    window
+        .update(cx, |page, window, cx| page.test_new_tab(0, window, cx))
+        .unwrap();
+    let mut cx = gpui::VisualTestContext::from_window(window.into(), cx);
+    cx.update(|window, cx| window.draw(cx).clear());
+
+    let first = window
+        .read_with(&cx, |page, _| page.group.tab_area(0, 0))
+        .unwrap()
+        .expect("the row was measured");
+    let landing = |point: gpui::Point<gpui::Pixels>| {
+        window
+            .read_with(&cx, |page, _| page.group.landing(point))
+            .unwrap()
+    };
+
+    assert_eq!(landing(first.center()), Some((0, 0)), "over the first tab");
+    let second = window
+        .read_with(&cx, |page, _| page.group.tab_area(0, 1))
+        .unwrap()
+        .expect("the second row was measured");
+    assert_eq!(landing(second.center()), Some((0, 1)), "over the second tab");
+
+    // Empty space at the end of the row takes the end, as a drop there does.
+    // Measured past the last tab: 40 px past the first one can fall inside the
+    // second tab, whose minimum width is 84 px.
+    let empty = point(px(f32::from(second.right()) + 40.0), px(f32::from(first.origin.y)));
+    assert_eq!(landing(empty), Some((0, 2)), "empty space past the last tab appends");
+
+    // In the pane but not on its row: still the end of that row.
+    let body = point(px(f32::from(first.origin.x) + 20.0), px(f32::from(first.bottom()) + 60.0));
+    assert_eq!(landing(body), Some((0, 2)), "not on a row: the end of it");
+
+    // Over nothing: no slot, so the release is a new window.
+    assert_eq!(landing(point(px(-10.0), px(-10.0))), None);
+}
+
+// The drag names the tab by its entity: a tab closed while the drag is still
+// going must not move whatever now sits at the index it had at the press.
+#[gpui::test]
+async fn a_drop_after_the_dragged_tab_was_closed_does_nothing(cx: &mut TestAppContext) {
+    let dir = tempfile::tempdir().unwrap();
+    let origin_dir = dir.path().join("origin");
+    let target_dir = dir.path().join("target");
+    std::fs::create_dir(&origin_dir).unwrap();
+    std::fs::create_dir(&target_dir).unwrap();
+    let target = target_dir.to_string_lossy().to_string();
+
+    let origin_window = new_explorer_page(cx);
+    let (dragged, stayed, origin_handle) = origin_window
+        .update(cx, |page, window, cx| {
+            crate::windows::register_page_for_test(window.window_handle(), &cx.entity(), cx);
+            page.pane(0).update(cx, |pane, _| pane.cwd = origin_dir.to_string_lossy().to_string());
+            page.test_new_tab(0, window, cx);
+            // The dragged tab is the one that gets closed during the drag; the
+            // other stays open at index 1, so an index taken at the press would
+            // name the wrong tab by the time of the drop.
+            let dragged = page.group.tab(0, 0).expect("the tab is there").entity_id();
+            let stayed = page.group.tab(0, 1).expect("the other tab is there").entity_id();
+            page.test_close_tab(0, 0, window, cx);
+            (dragged, stayed, window.window_handle())
+        })
+        .unwrap();
+
+    let target_window = new_explorer_page(cx);
+    target_window
+        .update(cx, |page, window, cx| {
+            crate::windows::register_page_for_test(window.window_handle(), &cx.entity(), cx);
+            page.pane(0).update(cx, |pane, _| pane.cwd = target.clone());
+            let source = crate::windows::page_for(origin_handle, cx).expect("the origin page is registered");
+            page.test_move_tab(dragged, origin_handle, 0, 1, window, cx);
+            assert_eq!(page.tab_count(0), 1, "the target received nothing");
+            assert_eq!(
+                page.tab_cwd(0, 0, cx).as_deref(),
+                Some(target.as_str()),
+                "the target's own tab is still the one there"
+            );
+            assert_eq!(source.read(cx).group.tab_count(0), 1, "the source keeps only the tab that stayed");
+            assert_eq!(
+                source.read(cx).group.tab(0, 0).expect("the tab that stayed").entity_id(),
+                stayed,
+                "and it is the same tab, not the one that was closed"
+            );
+        })
+        .unwrap();
+}
+
+// Inserting at or before the active slot moves the active tab along with the tab
+// it points at; past it, the active tab is left alone.
+#[gpui::test]
+async fn a_drop_before_the_active_slot_keeps_the_active_tab_on_the_same_tab(cx: &mut TestAppContext) {
+    let dir = tempfile::tempdir().unwrap();
+    let origin_dir = dir.path().join("origin");
+    let target_dir = dir.path().join("target");
+    std::fs::create_dir(&origin_dir).unwrap();
+    std::fs::create_dir(&target_dir).unwrap();
+    let origin = origin_dir.to_string_lossy().to_string();
+    let target = target_dir.to_string_lossy().to_string();
+
+    let origin_window = new_explorer_page(cx);
+    let dragged_and_handle = origin_window
+        .update(cx, |page, window, cx| {
+            crate::windows::register_page_for_test(window.window_handle(), &cx.entity(), cx);
+            page.pane(0).update(cx, |pane, _| pane.cwd = origin.clone());
+            page.test_new_tab(0, window, cx);
+            let id = page.group.tab(0, 1).expect("the tab is there").entity_id();
+            (id, window.window_handle())
+        })
+        .unwrap();
+    let (dragged, origin_handle) = dragged_and_handle;
+    let target_window = new_explorer_page(cx);
+    target_window
+        .update(cx, |page, window, cx| {
+            crate::windows::register_page_for_test(window.window_handle(), &cx.entity(), cx);
+            page.split(SplitDirection::Vertical, window, cx);
+            page.pane(1).update(cx, |pane, _| pane.cwd = target.clone());
+            // A second tab here, so this pane is not the one the drop comes from,
+            // and the new tab is the active one.
+            page.test_new_tab(1, window, cx);
+            let active_before = page.group.tab(1, 1).expect("the tab is there").entity_id();
+            assert_eq!(page.active_tab(1), 1, "the active tab before the drop");
+
+            page.test_move_tab(dragged, origin_handle, 1, 0, window, cx);
+
+            assert_eq!(page.tab_count(1), 3, "the tab landed at the slot the pointer was over");
+            assert_eq!(page.active_tab(1), 2, "the active tab followed the tab it pointed at");
+            assert_eq!(
+                page.group.tab(1, 2).expect("the tab is there").entity_id(),
+                active_before,
+                "still the same tab, one slot over"
+            );
+        })
+        .unwrap();
+}
+
+// Unsaved edits live only in the pane's editor, which the move does not carry to
+// another page, so the drop is refused with a message rather than losing them.
+#[gpui::test]
+async fn a_drop_of_a_tab_with_unsaved_edits_is_refused(cx: &mut TestAppContext) {
+    let dir = tempfile::tempdir().unwrap();
+    let origin_dir = dir.path().join("origin");
+    let target_dir = dir.path().join("target");
+    std::fs::create_dir(&origin_dir).unwrap();
+    std::fs::create_dir(&target_dir).unwrap();
+    let origin = origin_dir.to_string_lossy().to_string();
+    let target = target_dir.to_string_lossy().to_string();
+
+    let origin_window = new_explorer_page(cx);
+    let dragged_and_handle = origin_window
+        .update(cx, |page, window, cx| {
+            crate::windows::register_page_for_test(window.window_handle(), &cx.entity(), cx);
+            page.pane(0).update(cx, |pane, _| pane.cwd = origin.clone());
+            page.test_new_tab(0, window, cx);
+            let tab = page.group.tab(0, 1).expect("the tab is there");
+            (tab.entity_id(), window.window_handle())
+        })
+        .unwrap();
+    let (dragged, origin_handle) = dragged_and_handle;
+    let target_window = new_explorer_page(cx);
+    target_window
+        .update(cx, |page, window, cx| {
+            crate::windows::register_page_for_test(window.window_handle(), &cx.entity(), cx);
+            page.pane(0).update(cx, |pane, _| pane.cwd = target.clone());
+            // Marked here, so no pending preview work runs in between and clears it.
+            let origin_page = crate::windows::page_for(origin_handle, cx).expect("the origin page is registered");
+            let origin_tab = origin_page.read(cx).group.tab(0, 1).expect("the tab is there");
+            origin_tab.update(cx, |pane, _cx| pane.preview_dirty = true);
+            page.test_move_tab(dragged, origin_handle, 0, 1, window, cx);
+            assert_eq!(page.tab_count(0), 1, "nothing was added on the target");
+        })
+        .unwrap();
+
+    origin_window
+        .update(cx, |page, _window, cx| {
+            assert_eq!(page.tab_count(0), 2, "the tab with the edits is still open where it was");
+            let tab = page.group.tab(0, 1).expect("the tab is there");
+            let (text, level) = tab.read(cx).status_for_footer().expect("the refusal is said");
+            assert_eq!(level, StatusLevel::Error, "the refusal reads as a failure");
+            assert!(text.contains("não salvas"), "the message says why: {text}");
+        })
+        .unwrap();
+}
+
+// A tear-off takes the tab out of the page, so it would also throw away
+// unsaved edits: the same refusal applies there.
+#[gpui::test]
+async fn a_tear_off_of_a_tab_with_unsaved_edits_keeps_the_tab_where_it_is(cx: &mut TestAppContext) {
+    let origin = new_explorer_page(cx);
+    origin
+        .update(cx, |page, window, cx| {
+            page.test_new_tab(0, window, cx);
+            let tab = page.group.tab(0, 0).expect("the tab is there");
+            let tab_id = tab.entity_id();
+            tab.update(cx, |pane, _cx| pane.preview_dirty = true);
+            // The new window took the copy, which is when the origin tab would close.
+            page.finish_tear_off(0, 0, tab_id, Ok(()), cx);
+            assert!(page.group.locate_tab(tab_id).is_some(), "the tab with the edits is not closed");
+            let (text, level) = tab.read(cx).status_for_footer().expect("the refusal is said");
+            assert_eq!(level, StatusLevel::Error, "the refusal reads as a failure");
+            assert!(text.contains("não salvas"), "the message says why: {text}");
+        })
+        .unwrap();
+}
+
+// The guard in `tear_off_tab` itself, not only the one in `finish_tear_off`:
+// the release outside the window is the point where a dirty tab would be taken
+// out of the page, so it has to be refused before anything is placed and before
+// a window of its own opens.
+#[gpui::test]
+async fn a_dirty_tab_let_go_outside_the_window_never_leaves_it(cx: &mut TestAppContext) {
+    let origin = new_explorer_page(cx);
+    origin
+        .update(cx, |page, window, cx| {
+            page.test_new_tab(0, window, cx);
+            let tab = page.group.tab(0, 0).expect("the tab is there");
+            let tab_id = tab.entity_id();
+            tab.update(cx, |pane, _cx| pane.preview_dirty = true);
+            page.test_placeholder_terminal(0, 0);
+            // Past the window, where a tear-off would open a window of its own.
+            page.test_tear_off(tab_id, point(px(5000.0), px(5000.0)), window, cx);
+            assert_eq!(cx.windows().len(), 1, "no window opened");
+            assert!(page.group.locate_tab(tab_id).is_some(), "the tab with the edits is still here");
+            assert!(page.holds_terminal(0, 0), "and still owns its shell");
+            let (text, level) = tab.read(cx).status_for_footer().expect("the refusal is said");
+            assert_eq!(level, StatusLevel::Error, "the refusal reads as a failure");
+            assert!(text.contains("não salvas"), "the message says why: {text}");
+        })
+        .unwrap();
 }

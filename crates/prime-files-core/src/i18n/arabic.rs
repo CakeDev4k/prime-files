@@ -3,6 +3,10 @@
 //! survive.
 
 pub(super) static ARABIC: &[(&str, &str)] = &[
+    ("Formato da data", "تنسيق التاريخ"),
+    ("Como a coluna Modificado mostra a data: só o dia, ou o dia e a hora.", "كيف يعرض عمود التعديل التاريخ: اليوم فقط، أو اليوم والوقت."),
+    ("Só data", "التاريخ فقط"),
+    ("Data e hora", "التاريخ والوقت"),
     ("Converter com Filee", "تحويل باستخدام Filee"),
     ("Selecione ao menos um arquivo para converter", "حدد ملفًا واحدًا على الأقل لتحويله"),
     ("O Filee não está instalado", "Filee غير مثبّت"),
@@ -653,7 +657,7 @@ pub(super) static ARABIC: &[(&str, &str)] = &[
     ("Compartilhar", "مشاركة"),
     ("Enviar para", "إرسال إلى"),
     ("Escondido. Ele volta pela lista \"Escondidos\" mais abaixo.", "تم الإخفاء. يعود من قائمة \"المخفية\" في الأسفل."),
-    ("Ir para a aba nova", "الانتقال إلى علامة التبويب الجديدة"),
+    ("Ir para a aba nova", "الانتقال إلى علامة التبويب الجديدة"),    ("A aba tem edições não salvas; a mudança foi cancelada", "العلامة التبويب تحتوي تغييرات غير محفوظة؛ تم إلغاء النقل."),
     ("Muda na hora conforme as opções abaixo.", "تتغير فوراً مع الخيارات أدناه."),
     ("O botão do meio abre a pasta numa aba nova e já mostra ela. Desligado, a aba abre atrás da atual, como num navegador.", "يفتح الزر الأوسط المجلد في علامة تبويب جديدة ويعرضها فوراً. عند الإيقاف، تُفتح علامة التبويب خلف الحالية، كما في المتصفح."),
     ("O modo está desligado, mas dá para testar: passe o mouse nas bordas da janela de exemplo.", "الوضع متوقف، لكن يمكنك تجربته: مرّر الفأرة على حواف النافذة التجريبية."),

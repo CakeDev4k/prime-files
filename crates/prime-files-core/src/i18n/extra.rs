@@ -4,6 +4,10 @@
 //! that every key has a row here and that placeholders survive.
 
 pub(super) static EXTRA: &[(&str, [&str; 6])] = &[
+    ("Formato da data", ["Format de la date", "Datumsformat", "Formato data", "Формат даты", "日付の形式", "日期格式"]),
+    ("Como a coluna Modificado mostra a data: só o dia, ou o dia e a hora.", ["Comment la colonne Modifié affiche la date : le jour seul, ou le jour et l'heure.", "Wie die Spalte Geändert ein Datum anzeigt: nur der Tag oder Tag und Uhrzeit.", "Come la colonna Modificato mostra la data: solo il giorno o il giorno e l'ora.", "Как столбец «Изменено» показывает дату: только день или день и время.", "「更新日時」列の日付の表示形式: 日付のみ、または日付と時刻。", "“修改时间”列的日期显示方式：仅日期，或日期和时间。"]),
+    ("Só data", ["Date seule", "Nur Datum", "Solo data", "Только дата", "日付のみ", "仅日期"]),
+    ("Data e hora", ["Date et heure", "Datum und Uhrzeit", "Data e ora", "Дата и время", "日付と時刻", "日期和时间"]),
     ("Data de criação", ["Date de création", "Erstelldatum", "Data di creazione", "Дата создания", "作成日時", "创建日期"]),
     ("Converter com Filee", ["Convertir avec Filee", "Mit Filee konvertieren", "Converti con Filee", "Конвертировать в Filee", "Filee で変換", "使用 Filee 转换"]),
     ("Selecione ao menos um arquivo para converter", ["Sélectionnez au moins un fichier à convertir", "Wählen Sie mindestens eine Datei zum Konvertieren aus", "Seleziona almeno un file da convertire", "Выберите хотя бы один файл для конвертации", "変換するファイルを 1 つ以上選択してください", "请至少选择一个要转换的文件"]),
@@ -7105,6 +7109,17 @@ pub(super) static EXTRA: &[(&str, [&str; 6])] = &[
             "Скрыто. Вернуть можно в списке «Скрытые» ниже.",
             "非表示にしました。下の「非表示」リストから戻せます。",
             "已隐藏。可在下方的“已隐藏”列表中恢复。",
+        ],
+    ),
+    (
+        "A aba tem edições não salvas; a mudança foi cancelada",
+        [
+            "L’onglet a des modifications non enregistrées ; le déplacement a été annulé.",
+            "Der Tab hat ungespeicherte Änderungen; die Verschiebung wurde abgebrochen.",
+            "La scheda ha modifiche non salvate; lo spostamento è stato annullato.",
+            "Во вкладке есть несохранённые изменения; перемещение отменено.",
+            "タブに未保存の変更があります；移動は取り消されました",
+            "该标签页有未保存的修改；移动已取消。",
         ],
     ),
     (

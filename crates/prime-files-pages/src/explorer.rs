@@ -55,6 +55,7 @@ mod tests;
 
 pub(crate) use context_menu::note_theme_mode;
 pub use page::{ExplorerPage, rebind_shortcuts};
+pub(crate) use page::TerminalSet;
 pub use state::ExplorerPane;
 // Part of `status_for_footer`'s signature, so it has to travel with it. The rest
 // of `types` stays internal.

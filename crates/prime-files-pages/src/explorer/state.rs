@@ -167,6 +167,8 @@ pub struct ExplorerPane {
     pub col_size_width: f32,
     /// Width of the modified-time column.
     pub col_modified_width: f32,
+    /// How the modified-time column writes its date (`ui.date_format`).
+    pub date_format: config::DateFormat,
     /// Width of the action column.
     pub col_action_width: f32,
     // The width each column had before it was hidden from the header's menu
@@ -644,6 +646,7 @@ impl ExplorerPane {
             col_type_width: config::COL_TYPE_WIDTH,
             col_size_width: config::COL_SIZE_WIDTH,
             col_modified_width: config::COL_MODIFIED_WIDTH,
+            date_format: prime_files_core::config::Ui::default().date_format,
             col_action_width: config::COL_ACTION_WIDTH,
             hidden_column_widths: [0.0; 4],
             resizing_column: None,
@@ -1430,6 +1433,18 @@ impl ExplorerPane {
             self.name_lines = ui.name_lines;
             // Every tile row's height follows its longest name.
             self.rows_generation += 1;
+            cx.notify();
+        }
+        if self.date_format != ui.date_format {
+            self.date_format = ui.date_format;
+            if self.column_visible(3) {
+                // The column has to fit the longer value, or the time is ellipsed.
+                self.fit_column(3);
+            } else {
+                // A hidden column keeps its saved width in step with the format,
+                // so showing it again does not clip the time.
+                self.hidden_column_widths[3] = self.fitted_width(3);
+            }
             cx.notify();
         }
         if changed {

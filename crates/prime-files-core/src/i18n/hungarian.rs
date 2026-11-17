@@ -3,6 +3,10 @@
 //! survive.
 
 pub(super) static HUNGARIAN: &[(&str, &str)] = &[
+    ("Formato da data", "Dátum formátuma"),
+    ("Como a coluna Modificado mostra a data: só o dia, ou o dia e a hora.", "Hogyan jeleníti meg a Módosítva oszlop a dátumot: csak a nap, vagy a nap és az idő."),
+    ("Só data", "Csak dátum"),
+    ("Data e hora", "Dátum és idő"),
     ("Converter com Filee", "Konvertálás a Filee-vel"),
     ("Selecione ao menos um arquivo para converter", "Jelöljön ki legalább egy konvertálandó fájlt"),
     ("O Filee não está instalado", "A Filee nincs telepítve"),
@@ -654,6 +658,7 @@ pub(super) static HUNGARIAN: &[(&str, &str)] = &[
     ("Enviar para", "Küldés"),
     ("Escondido. Ele volta pela lista \"Escondidos\" mais abaixo.", "Elrejtve. A lenti „Elrejtettek” listából hozható vissza."),
     ("Ir para a aba nova", "Ugrás az új lapra"),
+    ("A aba tem edições não salvas; a mudança foi cancelada", "A lapnak mentetlen módosításai vannak; az áthelyezés megszakítva."),
     ("Muda na hora conforme as opções abaixo.", "Azonnal változik a lenti beállításokkal."),
     ("O botão do meio abre a pasta numa aba nova e já mostra ela. Desligado, a aba abre atrás da atual, como num navegador.", "A középső gomb új lapon nyitja meg a mappát, és rögtön meg is mutatja. Kikapcsolva a lap a mostani mögött nyílik meg, mint egy böngészőben."),
     ("O modo está desligado, mas dá para testar: passe o mouse nas bordas da janela de exemplo.", "A mód ki van kapcsolva, de kipróbálhatod: vidd az egeret a mintaablak széleire."),

@@ -131,7 +131,16 @@ pub fn open_window(request: WindowRequest, cx: &mut App) -> anyhow::Result<AnyWi
 
 /// Opens `folder` in a window of its own near `origin` (screen pixels): a tab
 /// dragged out of its window and let go there.
-pub fn open_window_at(folder: String, origin: gpui::Point<Pixels>, window_size: gpui::Size<Pixels>, cx: &mut App) {
+/// Returns the shells that were not taken: the window failed to open, or has no
+/// page to hold them, so the tab they came from must keep them instead of losing
+/// them with nothing left to run.
+pub(crate) fn open_window_at(
+    folder: String,
+    origin: gpui::Point<Pixels>,
+    window_size: gpui::Size<Pixels>,
+    carried: Option<(crate::explorer::TerminalSet, config::DockSide, f32)>,
+    cx: &mut App,
+) -> Result<(), Option<(crate::explorer::TerminalSet, config::DockSide, f32)>> {
     let width = (window_size.width * 0.85).max(px(640.0));
     let height = (window_size.height * 0.85).max(px(420.0));
     // The pointer lands on the new window's tab row, as when a browser tab is
@@ -148,7 +157,19 @@ pub fn open_window_at(folder: String, origin: gpui::Point<Pixels>, window_size: 
     }
     let request =
         WindowRequest { path: Some(PathBuf::from(folder)), bounds: Some(WindowBounds::Windowed(bounds)), background: false };
-    open_window(request, cx).log_err();
+    let Some(handle) = open_window(request, cx).log_err() else {
+        return Err(carried);
+    };
+    // The shells come with the tab. They were taken off the window it left, so the
+    // page that opened the folder must own them now, with its own handlers, and
+    // must show the panel they belong to.
+    let Some(page) = page_for(handle, cx) else {
+        return Err(carried);
+    };
+    if let Some((set, side, size)) = carried {
+        page.update(cx, |page, cx| page.adopt_terminals(set, side, size, cx));
+    }
+    Ok(())
 }
 
 /// The explorer windows open, and which was used last.
@@ -174,6 +195,43 @@ pub(crate) fn touch(window: &Window, cx: &mut App) {
     if open.windows.iter().any(|(known, _)| *known == handle) {
         open.last = Some(handle);
     }
+}
+
+/// The explorer page of one open window, for a tab let go onto its tab list
+/// from another window (`pane_group` routes the drop to the window it lands on).
+pub(crate) fn page_for(handle: AnyWindowHandle, cx: &mut App) -> Option<Entity<crate::explorer::ExplorerPage>> {
+    let open = cx.default_global::<OpenWindows>();
+    if let Some(root) = open.windows.iter().find(|(known, _)| *known == handle).and_then(|(_, root)| root.upgrade()) {
+        return Some(root.read(cx).explorer_entity());
+    }
+    // Tests build a page straight on a window, with no `RootView` in front of it.
+    #[cfg(test)]
+    {
+        let built = cx.default_global::<TestPages>();
+        return built.pages.iter().find(|(known, _)| *known == handle).and_then(|(_, page)| page.upgrade());
+    }
+    #[cfg(not(test))]
+    None
+}
+
+#[cfg(test)]
+#[derive(Default)]
+struct TestPages {
+    pages: Vec<(AnyWindowHandle, WeakEntity<crate::explorer::ExplorerPage>)>,
+}
+
+#[cfg(test)]
+impl Global for TestPages {}
+
+/// Records a page built by a test as belonging to `handle`, so a drop that
+/// lands on that window can find its page.
+#[cfg(test)]
+pub(crate) fn register_page_for_test(
+    handle: AnyWindowHandle,
+    page: &Entity<crate::explorer::ExplorerPage>,
+    cx: &mut App,
+) {
+    cx.default_global::<TestPages>().pages.push((handle, page.downgrade()));
 }
 
 // The window used last that is still open, else any open one.

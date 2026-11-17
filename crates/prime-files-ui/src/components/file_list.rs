@@ -1,3 +1,4 @@
+use prime_files_core::config::DateFormat;
 use prime_files_core::t;
 use crate::theme::theme;
 use gpui::{ParentElement, Styled, Window, div, px, rgb};
@@ -5,6 +6,23 @@ use gpui_component::list::{ListDelegate, ListItem, ListState};
 use gpui_component::{Icon, IconName, IndexPath};
 use prime_files_models::file_entry::FileEntryDto;
 use std::sync::Arc;
+
+/// Average glyph width used to size the compact columns without text layout,
+/// the same estimate `fit_column` makes.
+pub const GLYPH_WIDTH: f32 = 7.2;
+/// Padding a measured column adds around its text.
+pub const COLUMN_PADDING: f32 = 20.0;
+
+/// Width of the compact Modified cell. A date fits in the width the cell has
+/// always had; the date plus the hour does not, and `text_ellipsis` would cut
+/// the time off.
+pub fn compact_modified_width(format: DateFormat) -> f32 {
+    match format {
+        DateFormat::Date => 90.0,
+        // "2026/11/15 18:46" is 16 glyphs.
+        DateFormat::DateTime => (16.0 * GLYPH_WIDTH + COLUMN_PADDING).max(90.0),
+    }
+}
 
 /// Callback invoked when a file list entry is confirmed (clicked or activated).
 pub type ConfirmCallback = Arc<dyn Fn(&FileEntryDto) + 'static>;
@@ -18,6 +36,8 @@ pub struct FileListDelegate {
     // Callback hooks
     /// Callback invoked when an entry is confirmed.
     pub on_confirm: Option<ConfirmCallback>,
+    /// How the Modificado column writes its date.
+    pub date_format: DateFormat,
 }
 
 impl Default for FileListDelegate {
@@ -33,6 +53,7 @@ impl FileListDelegate {
             items: Vec::new(),
             selected: None,
             on_confirm: None,
+            date_format: DateFormat::Date,
         }
     }
 
@@ -141,14 +162,14 @@ impl ListDelegate for FileListDelegate {
                     .child(
                         // Modified column - compact
                         div()
-                            .w(px(90.0))
+                            .w(px(compact_modified_width(self.date_format)))
                             .flex_shrink_0()
                             .text_sm()
                             .text_color(rgb(theme::fg_secondary()))
                             .overflow_hidden()
                             .text_ellipsis()
                             .whitespace_nowrap()
-                            .child(format_date(&item.modified)),
+                            .child(format_date(&item.modified, self.date_format)),
                     )
                     .child(
                         // Actions column - compact
@@ -218,14 +239,28 @@ pub fn human_bytes(size: u64) -> String {
     }
 }
 
-/// Format a Unix timestamp (seconds) as a `year/month/day` date, or `-` if invalid.
-pub fn format_date(timestamp: &u64) -> String {
+/// Format a Unix timestamp (seconds) for the Modificado column: the day, or the
+/// day and the hour, as `date_format` asks. `-` when the stamp is invalid.
+pub fn format_date(timestamp: &u64, date_format: DateFormat) -> String {
     use time::OffsetDateTime;
+    use time::UtcOffset;
     use time::macros::format_description;
 
-    let format = format_description!("[year]/[month]/[day]");
+    let format = match date_format {
+        DateFormat::Date => format_description!("[year]/[month]/[day]"),
+        DateFormat::DateTime => format_description!("[year]/[month]/[day] [hour]:[minute]"),
+    };
     match OffsetDateTime::from_unix_timestamp(*timestamp as i64) {
-        Ok(datetime) => datetime.format(&format).unwrap_or_else(|_| "-".to_string()),
+        // Group headers use the local offset, so the hour here has to be the
+        // local hour too, taken at that moment (a file from winter shows the
+        // winter hour, not today's). When the zone cannot be read, stay in UTC.
+        Ok(datetime) => {
+            // `to_offset` panics when the shift goes past the year 9999 limit
+            // (a stamp of 253402300799 is 9999-12-31). Checked: stay in UTC.
+            let offset = UtcOffset::local_offset_at(datetime).unwrap_or(UtcOffset::UTC);
+            let shifted = datetime.checked_to_offset(offset).unwrap_or(datetime);
+            shifted.format(&format).unwrap_or_else(|_| "-".to_string())
+        }
         Err(_) => "-".to_string(),
     }
 }
@@ -251,7 +286,11 @@ pub fn get_file_type(name: &str, kind: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{FileListDelegate, format_date, get_file_type, human_bytes};
+    use super::{
+        COLUMN_PADDING, GLYPH_WIDTH, FileListDelegate, compact_modified_width, format_date,
+        get_file_type, human_bytes,
+    };
+    use prime_files_core::config::DateFormat;
     use gpui::TestAppContext;
     use gpui_component::IndexPath;
     use gpui_component::list::{ListDelegate, ListState};
@@ -324,7 +363,60 @@ mod tests {
 
     #[test]
     fn format_date_is_stable_for_the_epoch() {
-        assert_eq!(format_date(&0), "1970/01/01");
+        // Both formats are checked against the offset at that moment, so a
+        // machine in another zone still passes.
+        use time::{OffsetDateTime, UtcOffset, macros::format_description};
+        let epoch = OffsetDateTime::from_unix_timestamp(0).unwrap();
+        let offset = UtcOffset::local_offset_at(epoch).unwrap_or(UtcOffset::UTC);
+        let local = epoch.to_offset(offset);
+        assert_eq!(
+            format_date(&0, DateFormat::Date),
+            local.format(&format_description!("[year]/[month]/[day]")).unwrap()
+        );
+        assert_eq!(
+            format_date(&0, DateFormat::DateTime),
+            local
+                .format(&format_description!("[year]/[month]/[day] [hour]:[minute]"))
+                .unwrap()
+        );
+    }
+
+    #[test]
+    fn the_last_day_of_the_calendar_does_not_panic_on_a_positive_offset() {
+        use time::{OffsetDateTime, UtcOffset, macros::format_description};
+        // 9999-12-31 23:59:59 UTC is the last instant the type can hold, so any
+        // positive offset pushes it past the limit. `to_offset` panicked there;
+        // the checked one says no and the formatter stays in UTC.
+        let stamp = 253402300799u64;
+        let last_day = OffsetDateTime::from_unix_timestamp(stamp as i64).unwrap();
+        let east_of_utc = UtcOffset::from_hms(14, 0, 0).unwrap();
+        assert!(last_day.checked_to_offset(east_of_utc).is_none(), "the shift is the overflow");
+
+        // Lisbon is UTC at this date, so the hour shown is the UTC hour. If the
+        // machine sits east of UTC the shift is applied where it is still possible.
+        let offset = UtcOffset::local_offset_at(last_day).unwrap_or(UtcOffset::UTC);
+        let shown = last_day.checked_to_offset(offset).unwrap_or(last_day);
+        assert_eq!(
+            format_date(&stamp, DateFormat::DateTime),
+            shown
+                .format(&format_description!("[year]/[month]/[day] [hour]:[minute]"))
+                .unwrap(),
+            "the formatter answered instead of panicking"
+        );
+        assert_ne!(format_date(&stamp, DateFormat::DateTime), "-");
+    }
+
+    #[test]
+    fn the_compact_modified_cell_fits_the_time() {
+        // Measured from what `format_date` really renders, not from a guess.
+        let glyphs = format_date(&0, DateFormat::DateTime).chars().count();
+        assert_eq!(glyphs, 16);
+        assert_eq!(compact_modified_width(DateFormat::Date), 90.0);
+        assert!(
+            compact_modified_width(DateFormat::DateTime)
+                >= glyphs as f32 * GLYPH_WIDTH + COLUMN_PADDING,
+            "the hour and minute would be ellipsed"
+        );
     }
 
     proptest! {

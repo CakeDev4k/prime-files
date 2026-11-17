@@ -133,6 +133,9 @@ pub struct Ui {
     pub default_sort: SortOrder,
     /// Whether that default runs from Z to A, largest or newest first.
     pub default_sort_descending: bool,
+    /// How the Modificado column writes a date: `date` (the default, the day
+    /// alone) or `date_time` (day and hour).
+    pub date_format: DateFormat,
     /// Whether dotfiles are shown in listings.
     pub show_hidden: bool,
     /// Identifier of the icon pack used to render entries.
@@ -185,6 +188,7 @@ impl Default for Ui {
             language: "auto".to_string(),
             default_sort: SortOrder::Name,
             default_sort_descending: false,
+            date_format: DateFormat::Date,
             show_hidden: false,
             icon_pack: "default".to_string(),
             name_lines: 0,
@@ -1017,6 +1021,29 @@ impl SortOrder {
     }
 }
 
+/// How the Modificado column writes a date.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum DateFormat {
+    /// `2026/11/15`: the day alone, the way the column always showed it.
+    #[default]
+    Date,
+    /// `2026/11/15 18:46`: the day and the hour, for telling apart two renders
+    /// (or two saves) from the same day.
+    DateTime,
+}
+
+impl DateFormat {
+    /// Parse the `config.toml` spelling (`date`/`date_time`).
+    pub fn parse(value: &str) -> Option<Self> {
+        match value {
+            "date" => Some(Self::Date),
+            "date_time" => Some(Self::DateTime),
+            _ => None,
+        }
+    }
+}
+
 /// Severity of a configuration [`Diagnostic`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DiagnosticLevel {
@@ -1426,6 +1453,15 @@ fn read_ui(table: &toml::Table, ui: &mut Ui, diagnostics: &mut Vec<Diagnostic>) 
             ))),
         }
     }
+    if let Some(value) = table.get("date_format") {
+        match value.as_str().and_then(DateFormat::parse) {
+            Some(format) => ui.date_format = format,
+            None => diagnostics.push(Diagnostic::warn(format!(
+                "invalid ui.date_format {value}; using {:?}",
+                ui.date_format
+            ))),
+        }
+    }
     if let Some(value) = table.get("show_hidden") {
         match value.as_bool() {
             Some(flag) => ui.show_hidden = flag,
@@ -1576,6 +1612,7 @@ fn read_ui(table: &toml::Table, ui: &mut Ui, diagnostics: &mut Vec<Diagnostic>) 
             "language",
             "default_sort",
             "default_sort_descending",
+            "date_format",
             "show_hidden",
             "icon_pack",
             "name_lines",
@@ -2211,8 +2248,23 @@ mod tests {
         assert_eq!(config.theme.mode, ThemeMode::Dark);
         assert_eq!(config.theme.accent, "orange");
         assert_eq!(config.ui.default_sort, SortOrder::Name);
+        assert_eq!(config.ui.date_format, DateFormat::Date);
         assert!(!config.ui.show_hidden);
         assert_eq!(config.ui.icon_pack, "default");
+    }
+
+    #[test]
+    fn date_format_parses_and_rejects_the_unknown() {
+        let (config, diagnostics) = Config::from_toml_str("[ui]\ndate_format = \"date_time\"\n");
+        assert!(diagnostics.is_empty(), "{diagnostics:?}");
+        assert_eq!(config.ui.date_format, DateFormat::DateTime);
+
+        let (config, diagnostics) = Config::from_toml_str("[ui]\ndate_format = \"hora\"\n");
+        assert_eq!(config.ui.date_format, DateFormat::Date);
+        assert!(
+            diagnostics.iter().any(|d| d.message.contains("ui.date_format")),
+            "{diagnostics:?}"
+        );
     }
 
     #[test]

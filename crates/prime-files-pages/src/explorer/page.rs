@@ -580,6 +580,291 @@ impl ExplorerPage {
         }
     }
 
+    /// A tab let go onto this page's tab list from another pane, or from another
+    /// window's page: a tab at the same path opens here at the slot the pointer
+    /// was over, and the tab it came from closes. The moved tab is not made
+    /// active, and this pane's active tab is left where it was.
+    ///
+    /// The dragged tab is named by its entity: the position it had when the drag
+    /// started can be a different tab by the time of the drop (a tab can be
+    /// closed while the drag is still going), so the current position is resolved
+    /// here and the move is cancelled when the tab is gone. A drop inside the
+    /// same pane is a reorder.
+    fn move_tab(
+        &mut self,
+        dragged: EntityId,
+        from_window: AnyWindowHandle,
+        to_pane: usize,
+        to_index: usize,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let here = window.window_handle();
+        let same_window = from_window == here;
+        let source = if same_window {
+            None
+        } else {
+            crate::windows::page_for(from_window, cx)
+        };
+        // Where the dragged tab is now. Reading the other page from inside its
+        // own update would panic, so the same page answers for itself.
+        let position = match (same_window, source.as_ref()) {
+            (true, _) => self.group.locate_tab(dragged),
+            (false, Some(other)) => other.read(cx).group.locate_tab(dragged),
+            (false, None) => None,
+        };
+        let Some((from_pane, from_tab)) = position else {
+            tracing::info!("drop cancelled: the tab dragged ({dragged}) is no longer open");
+            return;
+        };
+        // Same pane in the same window: a reorder, not a move.
+        if same_window && from_pane == to_pane {
+            self.reorder_tab(to_pane, from_tab, to_index, cx);
+            return;
+        }
+        // Unsaved edits in the preview live only in the pane's editor, which the
+        // move does not carry across pages; the tab that holds them is closed by
+        // the move, so the edits would be lost. Refuse the move and say so where
+        // the tab still is.
+        let dirty = match (same_window, source.as_ref()) {
+            (true, _) => self.group.tab(from_pane, from_tab).map(|tab| tab.read(cx).preview_dirty),
+            (false, Some(other)) => other.read(cx).group.tab(from_pane, from_tab).map(|tab| tab.read(cx).preview_dirty),
+            (false, None) => None,
+        };
+        if dirty == Some(true) {
+            match source.as_ref() {
+                Some(other) => other.update(cx, |page, cx| {
+                    if let Some(tab) = page.group.tab(from_pane, from_tab) {
+                        page.refuse_unsaved_edits(&tab, cx);
+                    }
+                }),
+                None => {
+                    if let Some(tab) = self.group.tab(from_pane, from_tab) {
+                        self.refuse_unsaved_edits(&tab, cx);
+                    }
+                }
+            }
+            return;
+        }
+        // Reading this page from inside its own update would panic, so the
+        // origin is read through `self` when the drop landed on the same window.
+        let counts = if same_window {
+            (self.group.tab_count(from_pane), self.group.pane_count())
+        } else {
+            let Some(other) = source.as_ref() else {
+                return;
+            };
+            let other = other.read(cx);
+            (other.group.tab_count(from_pane), other.group.pane_count())
+        };
+        // In the same window the last pane cannot be emptied, so a pane's only
+        // tab stays where it is. Across windows the last tab may leave: the
+        // window it came from has nothing to show afterwards and closes.
+        if same_window && counts.0 <= 1 {
+            return;
+        }
+        let origin_empty = !same_window && counts.0 <= 1 && counts.1 == 1;
+        let tab = if same_window {
+            self.group.tab(from_pane, from_tab)
+        } else {
+            let Some(other) = source.as_ref() else {
+                return;
+            };
+            other.read(cx).group.tab(from_pane, from_tab)
+        };
+        let Some(tab) = tab else { return };
+        let start = tab.read(cx).cwd.clone();
+        let sidebar = tab.read(cx).sidebar_visible;
+        // The shells are taken from the page that holds them now so they travel
+        // with the tab instead of being ended when the origin tab closes.
+        let origin_id = tab.entity_id();
+        let carried = if same_window {
+            self.terminals.remove(&origin_id)
+        } else {
+            let Some(other) = source.as_ref() else {
+                return;
+            };
+            other.update(cx, |page, _cx| page.terminals.remove(&origin_id))
+        };
+        match self.place_tab(start, sidebar, to_pane, to_index, carried, window, cx) {
+            Placement::Rejected(set) => {
+                // Nothing was added there, so the shells go back to the page that
+                // still owns the tab. In this window that is this page; across
+                // windows the tab is still open on the page it came from, so the
+                // shells have to go back there and not stay here.
+                if let Some(set) = set {
+                    match source.as_ref() {
+                        Some(other) => {
+                            other.update(cx, |page, _cx| page.terminals.insert(origin_id, set));
+                        }
+                        None => {
+                            self.terminals.insert(origin_id, set);
+                        }
+                    }
+                }
+                return;
+            }
+            Placement::Placed => {}
+        }
+        // The tab it came from closes; its pane goes with it when it was the
+        // pane's last tab, and the origin's active tab falls to a neighbour.
+        if same_window {
+            self.close_tab_in_pane(from_pane, from_tab, window, cx);
+        } else {
+            let Some(other) = source else {
+                return;
+            };
+            other.update(cx, |page, cx| page.close_tab_quiet(from_pane, from_tab, cx));
+            // Its only pane is left with no tab, so there is nothing to show:
+            // the window it came from closes.
+            if origin_empty {
+                from_window.update(cx, |_, w, _| w.remove_window()).ok();
+            }
+        }
+    }
+
+    /// Opens a tab on the receiving page at the slot it was dropped on, at the
+    /// same path, and leaves this pane's active tab where it was before.
+    /// `Rejected` carries the shells that could not be attached, which is only
+    /// when the tab was not added there; the caller gives them back to the tab
+    /// they came from.
+    fn place_tab(
+        &mut self,
+        start: String,
+        sidebar: bool,
+        to_pane: usize,
+        to_index: usize,
+        carried: Option<TerminalSet>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Placement {
+        // The active tab is kept by identity, not by the number it had before:
+        // the moved tab can land on that same slot, and then an index taken
+        // beforehand would activate the moved tab instead.
+        let active_id = self
+            .group
+            .tab(to_pane, self.group.active_tab(to_pane))
+            .map(|tab| tab.entity_id());
+        let Some(new_tab) = self.group.add_tab(to_pane, window, cx) else {
+            return Placement::Rejected(carried);
+        };
+        self.subscribe_tab(&new_tab, cx);
+        self.configure_tab(&new_tab, Some(start), sidebar, cx);
+        let added = self.group.tab_count(to_pane) - 1;
+        self.group.reorder_tab(to_pane, added, to_index.min(added));
+        if let Some((_, position)) = active_id.and_then(|id| self.group.locate_tab(id)) {
+            self.group.restore_active_tab(to_pane, position);
+        }
+        // The shells travel with the tab: the same views, only listened to by the
+        // page that owns the tab now. Dropping the origin's entry would end them.
+        if let Some(mut set) = carried {
+            self.rebind_terminals(&new_tab, &mut set, cx);
+            self.terminals.insert(new_tab.entity_id(), set);
+        }
+        self.schedule_save(cx);
+        cx.notify();
+        Placement::Placed
+    }
+
+    // A moved tab's terminal events must reach the page that owns it now, so the
+    // handlers are re-registered for the tab it landed in.
+    fn rebind_terminals(&mut self, tab: &Entity<ExplorerPane>, set: &mut TerminalSet, cx: &mut Context<Self>) {
+        let tab_id = tab.entity_id();
+        for slot in &mut set.terminals {
+            let terminal = slot.0.clone();
+            slot.1 = cx.subscribe(&terminal, move |page, terminal, event, cx| match event {
+                TerminalEvent::RestartRequested => {
+                    page.replace_terminal(tab_id, terminal.entity_id(), true, cx)
+                }
+            });
+        }
+    }
+
+    /// Shells for a tab that was torn off into a window of its own. They arrive
+    /// after that window opened, so the handlers are re-registered here before
+    /// the shells run: the page that owns the tab now must receive its events.
+    // Owning the shells is not enough: the panel that shows them is open only
+    // when this page says so, so the tab that arrived also has to be marked as
+    // showing one, on the side the tab was taken from.
+    pub(crate) fn adopt_terminals(
+        &mut self,
+        mut set: TerminalSet,
+        side: DockSide,
+        size: f32,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(tab) = (0..self.group.pane_count())
+            .flat_map(|pane| (0..self.group.tab_count(pane)).map(move |tab| (pane, tab)))
+            .find_map(|(pane, tab)| self.group.tab(pane, tab))
+        else {
+            return;
+        };
+        self.rebind_terminals(&tab, &mut set, cx);
+        self.terminals.insert(tab.entity_id(), set);
+        self.terminal_side = side;
+        self.terminal_open = true;
+        if size > 0.0 {
+            self.set_terminal_size(size);
+        }
+        tab.update(cx, |pane, _| pane.terminal_shown = true);
+        cx.notify();
+    }
+
+    /// A tab whose preview has unsaved edits cannot leave its page: the editor
+    /// is not carried across pages, so the move is refused and said on the tab
+    /// that still holds it.
+    fn refuse_unsaved_edits(&mut self, tab: &gpui::Entity<ExplorerPane>, cx: &mut Context<Self>) {
+        tracing::info!("drop refused: tab {} has unsaved preview edits", tab.entity_id());
+        let message = prime_files_core::t!("A aba tem edições não salvas; a mudança foi cancelada").to_string();
+        tab.update(cx, |pane, _cx| pane.set_status(StatusLevel::Error, message));
+    }
+
+    /// The other half of the tear-off, once the new window is known. The tab
+    /// that left is closed only when that window exists and took the shells:
+    /// when it did not, nothing owns them, so the tab stays and takes them back
+    /// instead of closing with a shell nowhere to run.
+    pub(crate) fn finish_tear_off(
+        &mut self,
+        pane: usize,
+        tab: usize,
+        tab_id: EntityId,
+        outcome: Result<(), Option<(TerminalSet, DockSide, f32)>>,
+        cx: &mut Context<Self>,
+    ) {
+        match outcome {
+            Ok(()) => {
+                // A tab with unsaved edits is never closed by a move, so the copy
+                // that landed elsewhere is the one to remove instead.
+                if let Some(origin) = self.group.tab(pane, tab)
+                    && origin.read(cx).preview_dirty
+                {
+                    self.refuse_unsaved_edits(&origin, cx);
+                    return;
+                }
+                self.close_tab_quiet(pane, tab, cx);
+            }
+            Err(Some((set, _, _))) => {
+                // The window never opened: the tab takes its shells back.
+                self.terminals.insert(tab_id, set);
+                cx.notify();
+            }
+            // The window never opened and the tab had no shell: keep the tab.
+            Err(None) => {}
+        }
+    }
+
+    /// [`Self::close_tab_in_pane`] without moving focus: the cross-window move
+    /// closes a tab in a window it is not standing in.
+    fn close_tab_quiet(&mut self, pane_index: usize, tab_index: usize, cx: &mut Context<Self>) {
+        let outcome = self.group.close_tab_quiet(pane_index, tab_index);
+        for id in &outcome.removed {
+            self.tab_subscriptions.remove(id);
+            self.terminals.remove(id);
+        }
+        self.schedule_save(cx);
+        cx.notify();
+    }
+
     // Mirrors a tab's navigation into the other panes while syncing is enabled.
     fn on_pane_event(
         &mut self,
@@ -1120,8 +1405,8 @@ impl ExplorerPage {
             on_close_tab: Rc::new(|this: &mut Self, pane, tab, window, cx| {
                 this.close_tab_in_pane(pane, tab, window, cx)
             }),
-            on_reorder_tab: Rc::new(|this: &mut Self, pane, from, to, _window, cx| {
-                this.reorder_tab(pane, from, to, cx)
+            on_move_tab: Rc::new(|this: &mut Self, dragged, from_window, to_pane, to_index, window, cx| {
+                this.move_tab(dragged, from_window, to_pane, to_index, window, cx)
             }),
             on_group_drag: Rc::new(|this: &mut Self, drag, _window, cx| {
                 this.group.begin_drag(drag);
@@ -1135,9 +1420,15 @@ impl ExplorerPage {
 }
 
 /// One explorer tab's terminals: the panel's own tabs, one shown.
-struct TerminalSet {
+pub(crate) struct TerminalSet {
     terminals: Vec<(Entity<TerminalView>, Subscription)>,
     active: usize,
+}
+
+/// Whether a dropped tab was taken by the receiving page.
+enum Placement {
+    Placed,
+    Rejected(Option<TerminalSet>),
 }
 
 impl TerminalSet {
@@ -1570,9 +1861,22 @@ impl ExplorerPage {
     // here and opens in a new window under the pointer. The last tab of the
     // window stays: tearing it off would leave this window empty.
     fn tear_off_tab(&mut self, event: &MouseUpEvent, window: &mut Window, cx: &mut Context<Self>) {
-        let Some((pane, tab)) = crate::pane_group::take_dragged_tab() else {
+        let Some((dragged, _from_window)) = crate::pane_group::take_dragged_tab() else {
             return;
         };
+        // The tab can be closed while the drag is still going, so its position is
+        // read now, not the one it had when the button was pressed.
+        let Some((pane, tab)) = self.group.locate_tab(dragged) else {
+            return;
+        };
+        // The same rule as the drop on another page: unsaved edits live only in
+        // this page's editor, so a tear-off would throw them away.
+        if let Some(origin_tab) = self.group.tab(pane, tab)
+            && origin_tab.read(cx).preview_dirty
+        {
+            self.refuse_unsaved_edits(&origin_tab, cx);
+            return;
+        }
         if !cx.has_active_drag() {
             return;
         }
@@ -1583,7 +1887,126 @@ impl ExplorerPage {
             || position.x > viewport.width
             || position.y > viewport.height;
         let tabs: usize = (0..self.group.pane_count()).map(|index| self.group.tab_count(index)).sum();
-        if !outside || tabs <= 1 {
+        if !outside {
+            return;
+        }
+        // A window with a single tab can still cross over, but only into another
+        // window: let go over empty space it would leave this window with nothing
+        // to show, so the tab stays.
+        let only_tab = tabs <= 1;
+        // gpui gives the release to the window the drag started in, so a tab let
+        // go over another Prime Files window is seen here rather than on that
+        // window's tab row. Hit-test the other windows: over one of their tab
+        // rows the tab moves there; over nothing at all it opens a window.
+        let here = window.window_handle();
+        let origin = window.bounds().origin;
+        let global = point(
+            px(f32::from(origin.x) + f32::from(position.x)),
+            px(f32::from(origin.y) + f32::from(position.y)),
+        );
+        tracing::info!(
+            "tab let go at ({}, {}); {} other windows",
+            f32::from(global.x),
+            f32::from(global.y),
+            cx.windows().len() - 1,
+        );
+        // The window's own root view is not `RootView` (it is wrapped), so
+        // `downcast` never matched: the page of another window comes from the
+        // registry in `windows.rs`. The pointer is taken from that window
+        // itself, which is where gpui keeps the live position.
+        let Some(origin_tab) = self.group.tab(pane, tab) else {
+            return;
+        };
+        let start = origin_tab.read(cx).cwd.clone();
+        let sidebar = origin_tab.read(cx).sidebar_visible;
+        // Front to back, so a window that is covered cannot answer for a pointer
+        // that is over the window on top of it. `cx.windows()` is creation order,
+        // not the order on screen.
+        let front_to_back = cx.window_stack().unwrap_or_else(|| cx.windows());
+        let mut landing = None;
+        for handle in front_to_back {
+            if handle == here {
+                continue;
+            }
+            let Some(page) = crate::windows::page_for(handle, cx) else {
+                continue;
+            };
+            let Ok((bounds, pointer)) = handle.update(cx, |_, w, _| (w.bounds(), w.mouse_position())) else {
+                continue;
+            };
+            tracing::info!(
+                "window other: ({}, {}) {}x{}, pointer ({}, {})",
+                f32::from(bounds.origin.x),
+                f32::from(bounds.origin.y),
+                f32::from(bounds.size.width),
+                f32::from(bounds.size.height),
+                f32::from(pointer.x),
+                f32::from(pointer.y),
+            );
+            // Only the window the pointer is actually inside. Without this the
+            // first window in the list wins on its last-known pointer, so a tab
+            // let go over empty space lands in whichever window gpui painted
+            // last. `mouse_position` is stale for a window the pointer is not
+            // over, so the local point comes from the release point, as the
+            // pointer would be inside this window's own coordinates.
+            if !bounds.contains(&global) {
+                continue;
+            }
+            let local = point(
+                px(f32::from(global.x) - f32::from(bounds.origin.x)),
+                px(f32::from(global.y) - f32::from(bounds.origin.y)),
+            );
+            let on_row = page.read(cx).group.landing(local);
+            let Some((to_pane, to_index)) = on_row else {
+                // The pointer is inside the window on top, so the tab was meant
+                // for it: a window behind does not answer for that spot.
+                tracing::info!("the pointer was inside that window but not on a measured tab row");
+                break;
+            };
+            tracing::info!("landing at pane {to_pane}, slot {to_index}");
+            landing = Some((handle, page, to_pane, to_index));
+            break;
+        }
+        if let Some((target, page, to_pane, to_index)) = landing {
+            // Only hand the shells over once a window actually takes the tab;
+            // on a path where nothing takes it, this tab keeps them.
+            let carried = self.terminals.remove(&origin_tab.entity_id());
+            let outcome = target
+                .update(cx, move |_, w, app| {
+                    page.update(app, |page, app| {
+                        page.place_tab(start.clone(), sidebar, to_pane, to_index, carried, w, app)
+                    })
+                })
+                .ok();
+            let placed = match outcome {
+                Some(Placement::Placed) => true,
+                Some(Placement::Rejected(set)) => {
+                    // The tab was not added there, so the shells stay with this tab.
+                    if let Some(set) = set {
+                        self.terminals.insert(origin_tab.entity_id(), set);
+                    }
+                    false
+                }
+                // The receiving page is gone, so the placement never ran and
+                // nothing landed; the shells went with that page.
+                None => false,
+            };
+            if placed {
+                self.close_tab_in_pane(pane, tab, window, cx);
+                // This window is left with no tab, so it closes. Deferred: this
+                // page is the one being updated here, and a window cannot be
+                // removed from inside its own update.
+                if only_tab {
+                    cx.defer(move |cx| {
+                        here.update(cx, |_, w, _| w.remove_window()).ok();
+                    });
+                }
+                return;
+            }
+        }
+        // Its only tab, let go over empty space: it stays where it is, otherwise
+        // this window would have nothing left to show.
+        if only_tab {
             return;
         }
         let Some(entity) = self.group.tab(pane, tab) else {
@@ -1593,10 +2016,25 @@ impl ExplorerPage {
         let window_bounds = window.bounds();
         let origin = window_bounds.origin + position;
         let window_size = window_bounds.size;
-        self.close_tab_in_pane(pane, tab, window, cx);
+        // Shells taken before the tab closes, so they can be handed to the window
+        // that opens; the old page keeps nothing of its own once the tab is gone.
+        // The side and size travel with them: the new window draws the panel only
+        // when it is told to, and where.
+        let carried = self
+            .terminals
+            .remove(&entity.entity_id())
+            .map(|set| (set, self.terminal_side, self.fitted_terminal_size()));
+        let tab_id = entity.entity_id();
+        let page = cx.entity().downgrade();
         // After this update: a window opened from inside another's update
-        // would borrow the app twice.
-        cx.defer(move |cx| crate::windows::open_window_at(folder, origin, window_size, cx));
+        // would borrow the app twice. The tab is closed only once that window
+        // exists and has taken the shells: if it never opened, the tab stays and
+        // takes its shells back instead of closing with a shell dropped with
+        // nothing left to run it.
+        cx.defer(move |cx| {
+            let outcome = crate::windows::open_window_at(folder, origin, window_size, carried, cx);
+            page.update(cx, |page, cx| page.finish_tear_off(pane, tab, tab_id, outcome, cx)).ok();
+        });
     }
 
     fn finish_page_drags(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -1939,10 +2377,77 @@ impl ExplorerPage {
         self.reorder_tab(pane_index, from, to, cx);
     }
 
+    /// A tab let go onto this page's tab list, for a test: `from_window` is the
+    /// window it was picked up in, so the same page answers for a cross-pane drop.
+    pub(crate) fn test_move_tab(
+        &mut self,
+        dragged: gpui::EntityId,
+        from_window: gpui::AnyWindowHandle,
+        to_pane: usize,
+        to_index: usize,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.move_tab(dragged, from_window, to_pane, to_index, window, cx);
+    }
+
+    /// Lets go a tab outside the window, as the release that opens a window of
+    /// its own does. Point inside the viewport would be a move to another row.
+    #[cfg(test)]
+    pub(crate) fn test_tear_off(
+        &mut self,
+        dragged: gpui::EntityId,
+        position: gpui::Point<gpui::Pixels>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        crate::pane_group::test_set_dragged_tab(dragged, window.window_handle());
+        let event = gpui::MouseUpEvent {
+            button: gpui::MouseButton::Left,
+            position,
+            modifiers: Default::default(),
+            click_count: 1,
+        };
+        self.tear_off_tab(&event, window, cx);
+    }
+
     /// Number of live per-tab subscriptions; used to assert the subscription map
     /// stays consistent across splits/closes/new tabs.
     pub(crate) fn subscription_count(&self) -> usize {
         self.tab_subscriptions.len()
+    }
+
+    /// Whether this page owns the shells of a tab; used to assert a moved tab
+    /// carries them to the page that owns it now.
+    pub(crate) fn holds_terminal(&self, pane_index: usize, tab_index: usize) -> bool {
+        let Some(tab) = self.group.tab(pane_index, tab_index) else {
+            return false;
+        };
+        self.terminals.contains_key(&tab.entity_id())
+    }
+
+    /// Puts an empty shell set on a tab without starting a shell: the ownership
+    /// of the map is what a test checks with it.
+    #[cfg(test)]
+    pub(crate) fn test_placeholder_terminal(&mut self, pane_index: usize, tab_index: usize) {
+        let tab = self.group.tab(pane_index, tab_index).expect("the tab is there");
+        self.terminals
+            .entry(tab.entity_id())
+            .or_insert_with(|| TerminalSet { terminals: Vec::new(), active: 0 });
+    }
+
+    /// Whether this page shows the terminal panel.
+    #[cfg(test)]
+    pub(crate) fn test_terminal_open(&self) -> bool {
+        self.terminal_open
+    }
+
+    /// Takes the shell set a tab owns, as the tear-off does before the window
+    /// opens. Nothing is left on the page it was taken from.
+    #[cfg(test)]
+    pub(crate) fn test_take_terminals(&mut self, pane_index: usize, tab_index: usize) -> Option<TerminalSet> {
+        let tab = self.group.tab(pane_index, tab_index).expect("the tab is there");
+        self.terminals.remove(&tab.entity_id())
     }
 }
 

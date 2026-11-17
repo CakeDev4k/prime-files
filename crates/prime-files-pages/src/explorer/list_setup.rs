@@ -80,16 +80,14 @@ impl ExplorerPane {
         self.update_item_sizes();
     }
 
-    /// Sizes `column` to its widest value among the entries on screen, as
-    /// Explorer's "Size column to fit". Text is measured by an average glyph
-    /// width: close enough for a column, and needs no text layout.
-    pub(crate) fn fit_column(&mut self, column: usize) {
-        use prime_files_ui::components::file_list::{format_date, get_file_type, human_bytes};
-        const GLYPH: f32 = 7.2;
-        const PADDING: f32 = 20.0;
-        if !self.column_visible(column) {
-            return;
-        }
+    /// The width `column` would take from the values on screen. Text is
+    /// measured by an average glyph: close enough for a column, and needs no
+    /// text layout.
+    pub(crate) fn fitted_width(&self, column: usize) -> f32 {
+        use prime_files_ui::components::file_list::{
+            COLUMN_PADDING, GLYPH_WIDTH, compact_modified_width, format_date, get_file_type,
+            human_bytes,
+        };
         let longest = |text: String| text.chars().count();
         let widest = self
             .filtered_entries
@@ -98,7 +96,7 @@ impl ExplorerPane {
                 0 => longest(entry.name.clone()),
                 1 => longest(get_file_type(&entry.name, &entry.kind)),
                 2 => longest(human_bytes(entry.size)),
-                _ => longest(format_date(&entry.modified)),
+                _ => longest(format_date(&entry.modified, self.date_format)),
             })
             .max()
             .unwrap_or(0);
@@ -106,8 +104,24 @@ impl ExplorerPane {
             .get(column)
             .map_or(0, |label| label.chars().count() + 2);
         let indent = if column == 0 { view_name_indent() } else { 0.0 };
-        let fitted = (indent + widest.max(heading) as f32 * GLYPH + PADDING)
+        let fitted = (indent + widest.max(heading) as f32 * GLYPH_WIDTH + COLUMN_PADDING)
             .clamp(config::MIN_COLUMN_WIDTH, 900.0);
+        // An empty listing measures nothing but the heading, so the Modified
+        // column keeps at least what the selected format needs.
+        if column == 3 {
+            fitted.max(compact_modified_width(self.date_format))
+        } else {
+            fitted
+        }
+    }
+
+    /// Sizes `column` to its widest value among the entries on screen, as
+    /// Explorer's "Size column to fit".
+    pub(crate) fn fit_column(&mut self, column: usize) {
+        if !self.column_visible(column) {
+            return;
+        }
+        let fitted = self.fitted_width(column);
         if let Some(width) = self.column_width_mut(column) {
             *width = fitted;
         }

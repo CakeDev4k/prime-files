@@ -632,17 +632,15 @@ impl ExplorerPage {
             (false, None) => None,
         };
         if dirty == Some(true) {
-            tracing::info!("drop refused: tab {dragged} has unsaved preview edits");
-            let message = prime_files_core::t!("A aba tem edições não salvas; a mudança foi cancelada").to_string();
             match source.as_ref() {
                 Some(other) => other.update(cx, |page, cx| {
                     if let Some(tab) = page.group.tab(from_pane, from_tab) {
-                        tab.update(cx, |pane, _cx| pane.set_status(StatusLevel::Error, message));
+                        page.refuse_unsaved_edits(&tab, cx);
                     }
                 }),
                 None => {
                     if let Some(tab) = self.group.tab(from_pane, from_tab) {
-                        tab.update(cx, |pane, _cx| pane.set_status(StatusLevel::Error, message));
+                        self.refuse_unsaved_edits(&tab, cx);
                     }
                 }
             }
@@ -812,6 +810,15 @@ impl ExplorerPage {
         cx.notify();
     }
 
+    /// A tab whose preview has unsaved edits cannot leave its page: the editor
+    /// is not carried across pages, so the move is refused and said on the tab
+    /// that still holds it.
+    fn refuse_unsaved_edits(&mut self, tab: &gpui::Entity<ExplorerPane>, cx: &mut Context<Self>) {
+        tracing::info!("drop refused: tab {} has unsaved preview edits", tab.entity_id());
+        let message = prime_files_core::t!("A aba tem edições não salvas; a mudança foi cancelada").to_string();
+        tab.update(cx, |pane, _cx| pane.set_status(StatusLevel::Error, message));
+    }
+
     /// The other half of the tear-off, once the new window is known. The tab
     /// that left is closed only when that window exists and took the shells:
     /// when it did not, nothing owns them, so the tab stays and takes them back
@@ -825,7 +832,17 @@ impl ExplorerPage {
         cx: &mut Context<Self>,
     ) {
         match outcome {
-            Ok(()) => self.close_tab_quiet(pane, tab, cx),
+            Ok(()) => {
+                // A tab with unsaved edits is never closed by a move, so the copy
+                // that landed elsewhere is the one to remove instead.
+                if let Some(origin) = self.group.tab(pane, tab)
+                    && origin.read(cx).preview_dirty
+                {
+                    self.refuse_unsaved_edits(&origin, cx);
+                    return;
+                }
+                self.close_tab_quiet(pane, tab, cx);
+            }
             Err(Some((set, _, _))) => {
                 // The window never opened: the tab takes its shells back.
                 self.terminals.insert(tab_id, set);
@@ -1852,6 +1869,14 @@ impl ExplorerPage {
         let Some((pane, tab)) = self.group.locate_tab(dragged) else {
             return;
         };
+        // The same rule as the drop on another page: unsaved edits live only in
+        // this page's editor, so a tear-off would throw them away.
+        if let Some(origin_tab) = self.group.tab(pane, tab)
+            && origin_tab.read(cx).preview_dirty
+        {
+            self.refuse_unsaved_edits(&origin_tab, cx);
+            return;
+        }
         if !cx.has_active_drag() {
             return;
         }

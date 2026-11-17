@@ -4255,15 +4255,18 @@ async fn a_drop_after_the_dragged_tab_was_closed_does_nothing(cx: &mut TestAppCo
     let target = target_dir.to_string_lossy().to_string();
 
     let origin_window = new_explorer_page(cx);
-    let (dragged, origin_handle) = origin_window
+    let (dragged, stayed, origin_handle) = origin_window
         .update(cx, |page, window, cx| {
             crate::windows::register_page_for_test(window.window_handle(), &cx.entity(), cx);
             page.pane(0).update(cx, |pane, _| pane.cwd = origin_dir.to_string_lossy().to_string());
             page.test_new_tab(0, window, cx);
-            let id = page.group.tab(0, 1).expect("the tab is there").entity_id();
-            // Closed while the drag is still going.
-            page.test_close_tab(0, 1, window, cx);
-            (id, window.window_handle())
+            // The dragged tab is the one that gets closed during the drag; the
+            // other stays open at index 1, so an index taken at the press would
+            // name the wrong tab by the time of the drop.
+            let dragged = page.group.tab(0, 0).expect("the tab is there").entity_id();
+            let stayed = page.group.tab(0, 1).expect("the other tab is there").entity_id();
+            page.test_close_tab(0, 0, window, cx);
+            (dragged, stayed, window.window_handle())
         })
         .unwrap();
 
@@ -4272,12 +4275,19 @@ async fn a_drop_after_the_dragged_tab_was_closed_does_nothing(cx: &mut TestAppCo
         .update(cx, |page, window, cx| {
             crate::windows::register_page_for_test(window.window_handle(), &cx.entity(), cx);
             page.pane(0).update(cx, |pane, _| pane.cwd = target.clone());
+            let source = crate::windows::page_for(origin_handle, cx).expect("the origin page is registered");
             page.test_move_tab(dragged, origin_handle, 0, 1, window, cx);
-            assert_eq!(page.tab_count(0), 1, "nothing landed: the tab was closed mid-drag");
+            assert_eq!(page.tab_count(0), 1, "the target received nothing");
             assert_eq!(
                 page.tab_cwd(0, 0, cx).as_deref(),
                 Some(target.as_str()),
                 "the target's own tab is still the one there"
+            );
+            assert_eq!(source.read(cx).group.tab_count(0), 1, "the source keeps only the tab that stayed");
+            assert_eq!(
+                source.read(cx).group.tab(0, 0).expect("the tab that stayed").entity_id(),
+                stayed,
+                "and it is the same tab, not the one that was closed"
             );
         })
         .unwrap();
@@ -4372,6 +4382,27 @@ async fn a_drop_of_a_tab_with_unsaved_edits_is_refused(cx: &mut TestAppContext) 
         .update(cx, |page, _window, cx| {
             assert_eq!(page.tab_count(0), 2, "the tab with the edits is still open where it was");
             let tab = page.group.tab(0, 1).expect("the tab is there");
+            let (text, level) = tab.read(cx).status_for_footer().expect("the refusal is said");
+            assert_eq!(level, StatusLevel::Error, "the refusal reads as a failure");
+            assert!(text.contains("não salvas"), "the message says why: {text}");
+        })
+        .unwrap();
+}
+
+// A tear-off takes the tab out of the page, so it would also throw away
+// unsaved edits: the same refusal applies there.
+#[gpui::test]
+async fn a_tear_off_of_a_tab_with_unsaved_edits_keeps_the_tab_where_it_is(cx: &mut TestAppContext) {
+    let origin = new_explorer_page(cx);
+    origin
+        .update(cx, |page, window, cx| {
+            page.test_new_tab(0, window, cx);
+            let tab = page.group.tab(0, 0).expect("the tab is there");
+            let tab_id = tab.entity_id();
+            tab.update(cx, |pane, _cx| pane.preview_dirty = true);
+            // The new window took the copy, which is when the origin tab would close.
+            page.finish_tear_off(0, 0, tab_id, Ok(()), cx);
+            assert!(page.group.locate_tab(tab_id).is_some(), "the tab with the edits is not closed");
             let (text, level) = tab.read(cx).status_for_footer().expect("the refusal is said");
             assert_eq!(level, StatusLevel::Error, "the refusal reads as a failure");
             assert!(text.contains("não salvas"), "the message says why: {text}");

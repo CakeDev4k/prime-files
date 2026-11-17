@@ -140,7 +140,7 @@ pub(crate) fn open_window_at(
     window_size: gpui::Size<Pixels>,
     carried: Option<(crate::explorer::TerminalSet, config::DockSide, f32)>,
     cx: &mut App,
-) -> Option<(crate::explorer::TerminalSet, config::DockSide, f32)> {
+) -> Result<(), Option<(crate::explorer::TerminalSet, config::DockSide, f32)>> {
     let width = (window_size.width * 0.85).max(px(640.0));
     let height = (window_size.height * 0.85).max(px(420.0));
     // The pointer lands on the new window's tab row, as when a browser tab is
@@ -158,17 +158,18 @@ pub(crate) fn open_window_at(
     let request =
         WindowRequest { path: Some(PathBuf::from(folder)), bounds: Some(WindowBounds::Windowed(bounds)), background: false };
     let Some(handle) = open_window(request, cx).log_err() else {
-        return carried;
+        return Err(carried);
     };
     // The shells come with the tab. They were taken off the window it left, so the
     // page that opened the folder must own them now, with its own handlers, and
     // must show the panel they belong to.
     let Some(page) = page_for(handle, cx) else {
-        return carried;
+        return Err(carried);
     };
-    let (set, side, size) = carried?;
-    page.update(cx, |page, cx| page.adopt_terminals(set, side, size, cx));
-    None
+    if let Some((set, side, size)) = carried {
+        page.update(cx, |page, cx| page.adopt_terminals(set, side, size, cx));
+    }
+    Ok(())
 }
 
 /// The explorer windows open, and which was used last.

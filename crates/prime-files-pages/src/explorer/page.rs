@@ -764,15 +764,19 @@ impl ExplorerPage {
         pane: usize,
         tab: usize,
         tab_id: EntityId,
-        not_taken: Option<(TerminalSet, DockSide, f32)>,
+        outcome: Result<(), Option<(TerminalSet, DockSide, f32)>>,
         cx: &mut Context<Self>,
     ) {
-        let Some((set, _, _)) = not_taken else {
-            self.close_tab_quiet(pane, tab, cx);
-            return;
-        };
-        self.terminals.insert(tab_id, set);
-        cx.notify();
+        match outcome {
+            Ok(()) => self.close_tab_quiet(pane, tab, cx),
+            Err(Some((set, _, _))) => {
+                // The window never opened: the tab takes its shells back.
+                self.terminals.insert(tab_id, set);
+                cx.notify();
+            }
+            // The window never opened and the tab had no shell: keep the tab.
+            Err(None) => {}
+        }
     }
 
     /// [`Self::close_tab_in_pane`] without moving focus: the cross-window move
@@ -1944,8 +1948,8 @@ impl ExplorerPage {
         // takes its shells back instead of closing with a shell dropped with
         // nothing left to run it.
         cx.defer(move |cx| {
-            let not_taken = crate::windows::open_window_at(folder, origin, window_size, carried, cx);
-            page.update(cx, |page, cx| page.finish_tear_off(pane, tab, tab_id, not_taken, cx)).ok();
+            let outcome = crate::windows::open_window_at(folder, origin, window_size, carried, cx);
+            page.update(cx, |page, cx| page.finish_tear_off(pane, tab, tab_id, outcome, cx)).ok();
         });
     }
 

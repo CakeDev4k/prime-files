@@ -584,10 +584,15 @@ impl ExplorerPage {
     /// window's page: a tab at the same path opens here at the slot the pointer
     /// was over, and the tab it came from closes. The moved tab is not made
     /// active, and this pane's active tab is left where it was.
+    ///
+    /// The dragged tab is named by its entity: the position it had when the drag
+    /// started can be a different tab by the time of the drop (a tab can be
+    /// closed while the drag is still going), so the current position is resolved
+    /// here and the move is cancelled when the tab is gone. A drop inside the
+    /// same pane is a reorder.
     fn move_tab(
         &mut self,
-        from_pane: usize,
-        from_tab: usize,
+        dragged: EntityId,
         from_window: AnyWindowHandle,
         to_pane: usize,
         to_index: usize,
@@ -1383,11 +1388,8 @@ impl ExplorerPage {
             on_close_tab: Rc::new(|this: &mut Self, pane, tab, window, cx| {
                 this.close_tab_in_pane(pane, tab, window, cx)
             }),
-            on_reorder_tab: Rc::new(|this: &mut Self, pane, from, to, _window, cx| {
-                this.reorder_tab(pane, from, to, cx)
-            }),
-            on_move_tab: Rc::new(|this: &mut Self, from_pane, from_tab, from_window, to_pane, to_index, window, cx| {
-                this.move_tab(from_pane, from_tab, from_window, to_pane, to_index, window, cx)
+            on_move_tab: Rc::new(|this: &mut Self, dragged, from_window, to_pane, to_index, window, cx| {
+                this.move_tab(dragged, from_window, to_pane, to_index, window, cx)
             }),
             on_group_drag: Rc::new(|this: &mut Self, drag, _window, cx| {
                 this.group.begin_drag(drag);
@@ -1842,7 +1844,12 @@ impl ExplorerPage {
     // here and opens in a new window under the pointer. The last tab of the
     // window stays: tearing it off would leave this window empty.
     fn tear_off_tab(&mut self, event: &MouseUpEvent, window: &mut Window, cx: &mut Context<Self>) {
-        let Some((pane, tab)) = crate::pane_group::take_dragged_tab() else {
+        let Some((dragged, _from_window)) = crate::pane_group::take_dragged_tab() else {
+            return;
+        };
+        // The tab can be closed while the drag is still going, so its position is
+        // read now, not the one it had when the button was pressed.
+        let Some((pane, tab)) = self.group.locate_tab(dragged) else {
             return;
         };
         if !cx.has_active_drag() {
@@ -2349,15 +2356,14 @@ impl ExplorerPage {
     /// window it was picked up in, so the same page answers for a cross-pane drop.
     pub(crate) fn test_move_tab(
         &mut self,
-        from_pane: usize,
-        from_tab: usize,
+        dragged: gpui::EntityId,
         from_window: gpui::AnyWindowHandle,
         to_pane: usize,
         to_index: usize,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.move_tab(from_pane, from_tab, from_window, to_pane, to_index, window, cx);
+        self.move_tab(dragged, from_window, to_pane, to_index, window, cx);
     }
 
     /// Number of live per-tab subscriptions; used to assert the subscription map

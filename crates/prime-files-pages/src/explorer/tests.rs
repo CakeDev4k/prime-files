@@ -1450,7 +1450,7 @@ async fn cross_pane_move_inserts_at_the_slot_and_closes_the_origin(cx: &mut Test
         let active_pane_before = page.active_index();
 
         // Let go over pane 1's second slot.
-        page.test_move_tab(0, 1, window.window_handle(), 1, 1, window, cx);
+        page.test_move_tab(page.group.tab(0, 1).expect("the tab is there").entity_id(), window.window_handle(), 1, 1, window, cx);
 
         assert_eq!(page.tab_cwd(1, 1, cx).as_deref(), Some(origin.as_str()), "inserted where the pointer was");
         assert_eq!(page.active_tab(1), 0, "the moved tab is not made active in the target");
@@ -1466,7 +1466,7 @@ async fn a_window_s_last_tab_does_not_move(cx: &mut TestAppContext) {
     let window = new_explorer_page(cx);
     window.update(cx, |page, window, cx| {
         let before = page.tab_cwd(0, 0, cx);
-        page.test_move_tab(0, 0, window.window_handle(), 0, 0, window, cx);
+        page.test_move_tab(page.group.tab(0, 0).expect("the tab is there").entity_id(), window.window_handle(), 0, 0, window, cx);
         assert_eq!(page.tab_count(0), 1, "the tab that keeps the pane open stays");
         assert_eq!(page.tab_cwd(0, 0, cx), before);
     })
@@ -1489,6 +1489,7 @@ async fn a_tab_let_go_on_another_window_lands_there_and_closes_the_origin(cx: &m
     let target_window = new_explorer_page(cx);
 
     let mut origin_watched = 0;
+    let mut dragged: Option<gpui::EntityId> = None;
     let origin_handle = origin_window
         .update(cx, |page, window, cx| {
             crate::windows::register_page_for_test(window.window_handle(), &cx.entity(), cx);
@@ -1496,6 +1497,7 @@ async fn a_tab_let_go_on_another_window_lands_there_and_closes_the_origin(cx: &m
             // A second tab, so the origin window still has one left behind.
             page.test_new_tab(0, window, cx);
             origin_watched = page.subscription_count();
+            dragged = Some(page.group.tab(0, 0).expect("the tab is there").entity_id());
             window.window_handle()
         })
         .unwrap();
@@ -1515,7 +1517,7 @@ async fn a_tab_let_go_on_another_window_lands_there_and_closes_the_origin(cx: &m
     // Let go over the target's second slot, from the other window.
     target_window
         .update(cx, |page, window, cx| {
-            page.test_move_tab(0, 0, origin_handle, 0, 1, window, cx);
+            page.test_move_tab(dragged.expect("the tab was on the origin"), origin_handle, 0, 1, window, cx);
             assert_eq!(page.tab_count(0), 2, "the tab landed on the other window");
             assert_eq!(
                 page.tab_cwd(0, 1, cx).as_deref(),
@@ -1549,6 +1551,7 @@ async fn a_tab_crossing_windows_carries_its_shell(cx: &mut TestAppContext) {
     let target = target_dir.to_string_lossy().to_string();
 
     let origin_window = new_explorer_page(cx);
+    let mut dragged: Option<gpui::EntityId> = None;
     let origin_handle = origin_window
         .update(cx, |page, window, cx| {
             crate::windows::register_page_for_test(window.window_handle(), &cx.entity(), cx);
@@ -1557,6 +1560,7 @@ async fn a_tab_crossing_windows_carries_its_shell(cx: &mut TestAppContext) {
             // The tab being moved owns the shell; the other keeps this window open.
             page.test_placeholder_terminal(0, 1);
             assert!(page.holds_terminal(0, 1), "the shell was there before the move");
+            dragged = Some(page.group.tab(0, 1).expect("the tab is there").entity_id());
             window.window_handle()
         })
         .unwrap();
@@ -1572,7 +1576,7 @@ async fn a_tab_crossing_windows_carries_its_shell(cx: &mut TestAppContext) {
 
     target_window
         .update(cx, |page, window, cx| {
-            page.test_move_tab(0, 1, origin_handle, 0, 1, window, cx);
+            page.test_move_tab(dragged.expect("the tab was on the origin"), origin_handle, 0, 1, window, cx);
             assert!(
                 page.holds_terminal(0, 1),
                 "the shell came over with the tab instead of being ended"
@@ -1600,12 +1604,14 @@ async fn a_rejected_cross_window_drop_gives_the_shell_back_to_the_source_page(cx
     std::fs::create_dir(&target_dir).unwrap();
 
     let origin_window = new_explorer_page(cx);
+    let mut dragged: Option<gpui::EntityId> = None;
     let origin_handle = origin_window
         .update(cx, |page, window, cx| {
             crate::windows::register_page_for_test(window.window_handle(), &cx.entity(), cx);
             page.pane(0).update(cx, |pane, _| pane.cwd = origin_dir.to_string_lossy().to_string());
             page.test_new_tab(0, window, cx);
             page.test_placeholder_terminal(0, 1);
+            dragged = Some(page.group.tab(0, 1).expect("the tab is there").entity_id());
             window.window_handle()
         })
         .unwrap();
@@ -1616,7 +1622,7 @@ async fn a_rejected_cross_window_drop_gives_the_shell_back_to_the_source_page(cx
             crate::windows::register_page_for_test(window.window_handle(), &cx.entity(), cx);
             page.pane(0).update(cx, |pane, _| pane.cwd = target_dir.to_string_lossy().to_string());
             // Pane 1 does not exist on this page, so nothing takes the tab.
-            page.test_move_tab(0, 1, origin_handle, 1, 0, window, cx);
+            page.test_move_tab(dragged.expect("the tab was on the origin"), origin_handle, 1, 0, window, cx);
             assert_eq!(page.tab_count(0), 1, "nothing was added on the target");
             assert_eq!(page.subscription_count(), 1, "the target never watched it");
         })
@@ -1749,7 +1755,7 @@ async fn the_shell_stays_with_the_tab_when_no_pane_takes_it(cx: &mut TestAppCont
             page.test_placeholder_terminal(0, 1);
             assert!(page.holds_terminal(0, 1), "the shell was there before the move");
             // No pane at index 1: the tab is nowhere to be added.
-            page.test_move_tab(0, 1, window.window_handle(), 1, 0, window, cx);
+            page.test_move_tab(page.group.tab(0, 1).expect("the tab is there").entity_id(), window.window_handle(), 1, 0, window, cx);
             assert!(page.holds_terminal(0, 1), "the tab kept its shell");
             assert_eq!(page.tab_count(0), 2, "the origin tab is still open");
         })
@@ -1769,10 +1775,12 @@ async fn the_only_tab_of_a_window_crosses_to_the_other_and_that_window_closes(cx
     let origin_window = new_explorer_page(cx);
     let target_window = new_explorer_page(cx);
 
+    let mut dragged: Option<gpui::EntityId> = None;
     let origin_handle = origin_window
         .update(cx, |page, window, cx| {
             crate::windows::register_page_for_test(window.window_handle(), &cx.entity(), cx);
             page.pane(0).update(cx, |pane, _| pane.cwd = origin.clone());
+            dragged = Some(page.group.tab(0, 0).expect("the tab is there").entity_id());
             window.window_handle()
         })
         .unwrap();
@@ -1782,7 +1790,7 @@ async fn the_only_tab_of_a_window_crosses_to_the_other_and_that_window_closes(cx
             crate::windows::register_page_for_test(window.window_handle(), &cx.entity(), cx);
             page.pane(0).update(cx, |pane, _| pane.cwd = target.clone());
             // The origin has one tab and one pane, so it is emptied by the move.
-            page.test_move_tab(0, 0, origin_handle, 0, 1, window, cx);
+            page.test_move_tab(dragged.expect("the tab was on the origin"), origin_handle, 0, 1, window, cx);
             assert_eq!(page.tab_count(0), 2, "the only tab of the other window crossed over");
             assert_eq!(
                 page.tab_cwd(0, 1, cx).as_deref(),
@@ -4233,4 +4241,140 @@ async fn the_slot_hit_tested_for_another_window_is_the_row_under_the_pointer(
 
     // Over nothing: no slot, so the release is a new window.
     assert_eq!(landing(point(px(-10.0), px(-10.0))), None);
+}
+
+// The drag names the tab by its entity: a tab closed while the drag is still
+// going must not move whatever now sits at the index it had at the press.
+#[gpui::test]
+async fn a_drop_after_the_dragged_tab_was_closed_does_nothing(cx: &mut TestAppContext) {
+    let dir = tempfile::tempdir().unwrap();
+    let origin_dir = dir.path().join("origin");
+    let target_dir = dir.path().join("target");
+    std::fs::create_dir(&origin_dir).unwrap();
+    std::fs::create_dir(&target_dir).unwrap();
+    let target = target_dir.to_string_lossy().to_string();
+
+    let origin_window = new_explorer_page(cx);
+    let (dragged, origin_handle) = origin_window
+        .update(cx, |page, window, cx| {
+            crate::windows::register_page_for_test(window.window_handle(), &cx.entity(), cx);
+            page.pane(0).update(cx, |pane, _| pane.cwd = origin_dir.to_string_lossy().to_string());
+            page.test_new_tab(0, window, cx);
+            let id = page.group.tab(0, 1).expect("the tab is there").entity_id();
+            // Closed while the drag is still going.
+            page.test_close_tab(0, 1, window, cx);
+            (id, window.window_handle())
+        })
+        .unwrap();
+
+    let target_window = new_explorer_page(cx);
+    target_window
+        .update(cx, |page, window, cx| {
+            crate::windows::register_page_for_test(window.window_handle(), &cx.entity(), cx);
+            page.pane(0).update(cx, |pane, _| pane.cwd = target.clone());
+            page.test_move_tab(dragged, origin_handle, 0, 1, window, cx);
+            assert_eq!(page.tab_count(0), 1, "nothing landed: the tab was closed mid-drag");
+            assert_eq!(
+                page.tab_cwd(0, 0, cx).as_deref(),
+                Some(target.as_str()),
+                "the target's own tab is still the one there"
+            );
+        })
+        .unwrap();
+}
+
+// Inserting at or before the active slot moves the active tab along with the tab
+// it points at; past it, the active tab is left alone.
+#[gpui::test]
+async fn a_drop_before_the_active_slot_keeps_the_active_tab_on_the_same_tab(cx: &mut TestAppContext) {
+    let dir = tempfile::tempdir().unwrap();
+    let origin_dir = dir.path().join("origin");
+    let target_dir = dir.path().join("target");
+    std::fs::create_dir(&origin_dir).unwrap();
+    std::fs::create_dir(&target_dir).unwrap();
+    let origin = origin_dir.to_string_lossy().to_string();
+    let target = target_dir.to_string_lossy().to_string();
+
+    let origin_window = new_explorer_page(cx);
+    let dragged_and_handle = origin_window
+        .update(cx, |page, window, cx| {
+            crate::windows::register_page_for_test(window.window_handle(), &cx.entity(), cx);
+            page.pane(0).update(cx, |pane, _| pane.cwd = origin.clone());
+            page.test_new_tab(0, window, cx);
+            let id = page.group.tab(0, 1).expect("the tab is there").entity_id();
+            (id, window.window_handle())
+        })
+        .unwrap();
+    let (dragged, origin_handle) = dragged_and_handle;
+    let target_window = new_explorer_page(cx);
+    target_window
+        .update(cx, |page, window, cx| {
+            crate::windows::register_page_for_test(window.window_handle(), &cx.entity(), cx);
+            page.split(SplitDirection::Vertical, window, cx);
+            page.pane(1).update(cx, |pane, _| pane.cwd = target.clone());
+            // A second tab here, so this pane is not the one the drop comes from,
+            // and the new tab is the active one.
+            page.test_new_tab(1, window, cx);
+            let active_before = page.group.tab(1, 1).expect("the tab is there").entity_id();
+            assert_eq!(page.active_tab(1), 1, "the active tab before the drop");
+
+            page.test_move_tab(dragged, origin_handle, 1, 0, window, cx);
+
+            assert_eq!(page.tab_count(1), 3, "the tab landed at the slot the pointer was over");
+            assert_eq!(page.active_tab(1), 2, "the active tab followed the tab it pointed at");
+            assert_eq!(
+                page.group.tab(1, 2).expect("the tab is there").entity_id(),
+                active_before,
+                "still the same tab, one slot over"
+            );
+        })
+        .unwrap();
+}
+
+// Unsaved edits live only in the pane's editor, which the move does not carry to
+// another page, so the drop is refused with a message rather than losing them.
+#[gpui::test]
+async fn a_drop_of_a_tab_with_unsaved_edits_is_refused(cx: &mut TestAppContext) {
+    let dir = tempfile::tempdir().unwrap();
+    let origin_dir = dir.path().join("origin");
+    let target_dir = dir.path().join("target");
+    std::fs::create_dir(&origin_dir).unwrap();
+    std::fs::create_dir(&target_dir).unwrap();
+    let origin = origin_dir.to_string_lossy().to_string();
+    let target = target_dir.to_string_lossy().to_string();
+
+    let origin_window = new_explorer_page(cx);
+    let dragged_and_handle = origin_window
+        .update(cx, |page, window, cx| {
+            crate::windows::register_page_for_test(window.window_handle(), &cx.entity(), cx);
+            page.pane(0).update(cx, |pane, _| pane.cwd = origin.clone());
+            page.test_new_tab(0, window, cx);
+            let tab = page.group.tab(0, 1).expect("the tab is there");
+            (tab.entity_id(), window.window_handle())
+        })
+        .unwrap();
+    let (dragged, origin_handle) = dragged_and_handle;
+    let target_window = new_explorer_page(cx);
+    target_window
+        .update(cx, |page, window, cx| {
+            crate::windows::register_page_for_test(window.window_handle(), &cx.entity(), cx);
+            page.pane(0).update(cx, |pane, _| pane.cwd = target.clone());
+            // Marked here, so no pending preview work runs in between and clears it.
+            let origin_page = crate::windows::page_for(origin_handle, cx).expect("the origin page is registered");
+            let origin_tab = origin_page.read(cx).group.tab(0, 1).expect("the tab is there");
+            origin_tab.update(cx, |pane, _cx| pane.preview_dirty = true);
+            page.test_move_tab(dragged, origin_handle, 0, 1, window, cx);
+            assert_eq!(page.tab_count(0), 1, "nothing was added on the target");
+        })
+        .unwrap();
+
+    origin_window
+        .update(cx, |page, _window, cx| {
+            assert_eq!(page.tab_count(0), 2, "the tab with the edits is still open where it was");
+            let tab = page.group.tab(0, 1).expect("the tab is there");
+            let (text, level) = tab.read(cx).status_for_footer().expect("the refusal is said");
+            assert_eq!(level, StatusLevel::Error, "the refusal reads as a failure");
+            assert!(text.contains("não salvas"), "the message says why: {text}");
+        })
+        .unwrap();
 }

@@ -1603,15 +1603,24 @@ async fn a_torn_off_tab_carries_its_shell_into_the_new_window(cx: &mut TestAppCo
         })
         .unwrap();
 
-    // The window that opens has no shell of its own yet.
+    // The window that opens has no shell of its own yet, and its panel is shut.
     let new_window = new_explorer_page(cx);
     new_window
         .update(cx, |page, _, cx| {
-            page.adopt_terminals(carried.unwrap(), cx);
+            assert!(!page.test_terminal_open(), "the new window starts with the panel shut");
+            page.adopt_terminals(
+                carried.unwrap(),
+                prime_files_core::config::DockSide::Right,
+                300.0,
+                cx,
+            );
             assert!(
                 page.holds_terminal(0, 0),
                 "the shell came over with the tab instead of being ended"
             );
+            assert!(page.test_terminal_open(), "and the panel it shows is open too");
+            let tab = page.group.tab(0, 0).expect("the tab is there");
+            assert!(tab.read(cx).terminal_shown, "on the tab that arrived");
         })
         .unwrap();
 }

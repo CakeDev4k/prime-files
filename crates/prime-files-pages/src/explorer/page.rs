@@ -728,7 +728,16 @@ impl ExplorerPage {
     /// Shells for a tab that was torn off into a window of its own. They arrive
     /// after that window opened, so the handlers are re-registered here before
     /// the shells run: the page that owns the tab now must receive its events.
-    pub(crate) fn adopt_terminals(&mut self, mut set: TerminalSet, cx: &mut Context<Self>) {
+    // Owning the shells is not enough: the panel that shows them is open only
+    // when this page says so, so the tab that arrived also has to be marked as
+    // showing one, on the side the tab was taken from.
+    pub(crate) fn adopt_terminals(
+        &mut self,
+        mut set: TerminalSet,
+        side: DockSide,
+        size: f32,
+        cx: &mut Context<Self>,
+    ) {
         let Some(tab) = (0..self.group.pane_count())
             .flat_map(|pane| (0..self.group.tab_count(pane)).map(move |tab| (pane, tab)))
             .find_map(|(pane, tab)| self.group.tab(pane, tab))
@@ -737,6 +746,13 @@ impl ExplorerPage {
         };
         self.rebind_terminals(&tab, &mut set, cx);
         self.terminals.insert(tab.entity_id(), set);
+        self.terminal_side = side;
+        self.terminal_open = true;
+        if size > 0.0 {
+            self.set_terminal_size(size);
+        }
+        tab.update(cx, |pane, _| pane.terminal_shown = true);
+        cx.notify();
     }
 
     /// [`Self::close_tab_in_pane`] without moving focus: the cross-window move
@@ -1894,7 +1910,12 @@ impl ExplorerPage {
         let window_size = window_bounds.size;
         // Shells taken before the tab closes, so they can be handed to the window
         // that opens; the old page keeps nothing of its own once the tab is gone.
-        let carried = self.terminals.remove(&entity.entity_id());
+        // The side and size travel with them: the new window draws the panel only
+        // when it is told to, and where.
+        let carried = self
+            .terminals
+            .remove(&entity.entity_id())
+            .map(|set| (set, self.terminal_side, self.fitted_terminal_size()));
         self.close_tab_in_pane(pane, tab, window, cx);
         // After this update: a window opened from inside another's update
         // would borrow the app twice.
@@ -2279,6 +2300,12 @@ impl ExplorerPage {
         self.terminals
             .entry(tab.entity_id())
             .or_insert_with(|| TerminalSet { terminals: Vec::new(), active: 0 });
+    }
+
+    /// Whether this page shows the terminal panel.
+    #[cfg(test)]
+    pub(crate) fn test_terminal_open(&self) -> bool {
+        self.terminal_open
     }
 
     /// Takes the shell set a tab owns, as the tear-off does before the window

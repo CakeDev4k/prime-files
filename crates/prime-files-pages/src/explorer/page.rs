@@ -601,6 +601,48 @@ impl ExplorerPage {
         } else {
             crate::windows::page_for(from_window, cx)
         };
+        // Where the dragged tab is now. Reading the other page from inside its
+        // own update would panic, so the same page answers for itself.
+        let position = match (same_window, source.as_ref()) {
+            (true, _) => self.group.locate_tab(dragged),
+            (false, Some(other)) => other.read(cx).group.locate_tab(dragged),
+            (false, None) => None,
+        };
+        let Some((from_pane, from_tab)) = position else {
+            tracing::info!("drop cancelled: the tab dragged ({dragged}) is no longer open");
+            return;
+        };
+        // Same pane in the same window: a reorder, not a move.
+        if same_window && from_pane == to_pane {
+            self.reorder_tab(to_pane, from_tab, to_index, cx);
+            return;
+        }
+        // Unsaved edits in the preview live only in the pane's editor, which the
+        // move does not carry across pages; the tab that holds them is closed by
+        // the move, so the edits would be lost. Refuse the move and say so where
+        // the tab still is.
+        let dirty = match (same_window, source.as_ref()) {
+            (true, _) => self.group.tab(from_pane, from_tab).map(|tab| tab.read(cx).preview_dirty),
+            (false, Some(other)) => other.read(cx).group.tab(from_pane, from_tab).map(|tab| tab.read(cx).preview_dirty),
+            (false, None) => None,
+        };
+        if dirty == Some(true) {
+            tracing::info!("drop refused: tab {dragged} has unsaved preview edits");
+            let message = prime_files_core::t!("A aba tem edições não salvas; a mudança foi cancelada").to_string();
+            match source.as_ref() {
+                Some(other) => other.update(cx, |page, cx| {
+                    if let Some(tab) = page.group.tab(from_pane, from_tab) {
+                        tab.update(cx, |pane, _cx| pane.set_status(StatusLevel::Error, message));
+                    }
+                }),
+                None => {
+                    if let Some(tab) = self.group.tab(from_pane, from_tab) {
+                        tab.update(cx, |pane, _cx| pane.set_status(StatusLevel::Error, message));
+                    }
+                }
+            }
+            return;
+        }
         // Reading this page from inside its own update would panic, so the
         // origin is read through `self` when the drop landed on the same window.
         let counts = if same_window {

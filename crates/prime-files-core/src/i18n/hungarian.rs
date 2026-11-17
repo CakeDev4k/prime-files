@@ -658,6 +658,7 @@ pub(super) static HUNGARIAN: &[(&str, &str)] = &[
     ("Enviar para", "Küldés"),
     ("Escondido. Ele volta pela lista \"Escondidos\" mais abaixo.", "Elrejtve. A lenti „Elrejtettek” listából hozható vissza."),
     ("Ir para a aba nova", "Ugrás az új lapra"),
+    ("A aba tem edições não salvas; a mudança foi cancelada", "A lapnak mentetlen módosításai vannak; az áthelyezés meg lett szentelve."),
     ("Muda na hora conforme as opções abaixo.", "Azonnal változik a lenti beállításokkal."),
     ("O botão do meio abre a pasta numa aba nova e já mostra ela. Desligado, a aba abre atrás da atual, como num navegador.", "A középső gomb új lapon nyitja meg a mappát, és rögtön meg is mutatja. Kikapcsolva a lap a mostani mögött nyílik meg, mint egy böngészőben."),
     ("O modo está desligado, mas dá para testar: passe o mouse nas bordas da janela de exemplo.", "A mód ki van kapcsolva, de kipróbálhatod: vidd az egeret a mintaablak széleire."),

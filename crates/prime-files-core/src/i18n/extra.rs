@@ -7112,6 +7112,17 @@ pub(super) static EXTRA: &[(&str, [&str; 6])] = &[
         ],
     ),
     (
+        "A aba tem edições não salvas; a mudança foi cancelada",
+        [
+            "L’onglet a des modifications non enregistrées ; le déplacement a été annulé.",
+            "Der Tab hat ungespeicherte Änderungen; die Verschiebung wurde abgebrochen.",
+            "La scheda ha modifiche non salvate; lo spostamento è stato annullato.",
+            "Во вкладке есть несохранённые изменения; перемещение отменено.",
+            "タブに未保存の変更があります；移動は取り消されました",
+            "该标签页有未保存的修改；移动已取消。",
+        ],
+    ),
+    (
         "Ir para a aba nova",
         [
             "Aller au nouvel onglet",

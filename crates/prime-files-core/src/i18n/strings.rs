@@ -1103,6 +1103,7 @@ pub(super) static STRINGS: &[(&str, &str, &str)] = &[
     ("Enviar para", "Send to", "Enviar a"),
     ("Escondido. Ele volta pela lista \"Escondidos\" mais abaixo.", "Hidden. It comes back from the \"Hidden\" list further down.", "Oculto. Vuelve desde la lista \"Ocultos\" más abajo."),
     ("Ir para a aba nova", "Go to the new tab", "Ir a la pestaña nueva"),
+    ("A aba tem edições não salvas; a mudança foi cancelada", "The tab has unsaved edits; the move was cancelled", "La pestaña tiene cambios sin guardar; el movimiento fue cancelado"),
     ("Muda na hora conforme as opções abaixo.", "Changes right away with the options below.", "Cambia al instante con las opciones de abajo."),
     ("O botão do meio abre a pasta numa aba nova e já mostra ela. Desligado, a aba abre atrás da atual, como num navegador.", "The middle button opens the folder in a new tab and shows it right away. Off, the tab opens behind the current one, as in a browser.", "El botón central abre la carpeta en una pestaña nueva y la muestra enseguida. Desactivado, la pestaña se abre detrás de la actual, como en un navegador."),
     ("O modo está desligado, mas dá para testar: passe o mouse nas bordas da janela de exemplo.", "The mode is off, but you can try it: move the mouse to the edges of the sample window.", "El modo está desactivado, pero puedes probarlo: pasa el ratón por los bordes de la ventana de ejemplo."),

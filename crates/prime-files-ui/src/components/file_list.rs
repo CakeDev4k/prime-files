@@ -254,10 +254,13 @@ pub fn format_date(timestamp: &u64, date_format: DateFormat) -> String {
         // Group headers use the local offset, so the hour here has to be the
         // local hour too, taken at that moment (a file from winter shows the
         // winter hour, not today's). When the zone cannot be read, stay in UTC.
-        Ok(datetime) => datetime
-            .to_offset(UtcOffset::local_offset_at(datetime).unwrap_or(UtcOffset::UTC))
-            .format(&format)
-            .unwrap_or_else(|_| "-".to_string()),
+        Ok(datetime) => {
+            // `to_offset` panics when the shift goes past the year 9999 limit
+            // (a stamp of 253402300799 is 9999-12-31). Checked: stay in UTC.
+            let offset = UtcOffset::local_offset_at(datetime).unwrap_or(UtcOffset::UTC);
+            let shifted = datetime.checked_to_offset(offset).unwrap_or(datetime);
+            shifted.format(&format).unwrap_or_else(|_| "-".to_string())
+        }
         Err(_) => "-".to_string(),
     }
 }
@@ -376,6 +379,31 @@ mod tests {
                 .format(&format_description!("[year]/[month]/[day] [hour]:[minute]"))
                 .unwrap()
         );
+    }
+
+    #[test]
+    fn the_last_day_of_the_calendar_does_not_panic_on_a_positive_offset() {
+        use time::{OffsetDateTime, UtcOffset, macros::format_description};
+        // 9999-12-31 23:59:59 UTC is the last instant the type can hold, so any
+        // positive offset pushes it past the limit. `to_offset` panicked there;
+        // the checked one says no and the formatter stays in UTC.
+        let stamp = 253402300799u64;
+        let last_day = OffsetDateTime::from_unix_timestamp(stamp as i64).unwrap();
+        let east_of_utc = UtcOffset::from_hms(14, 0, 0).unwrap();
+        assert!(last_day.checked_to_offset(east_of_utc).is_none(), "the shift is the overflow");
+
+        // Lisbon is UTC at this date, so the hour shown is the UTC hour. If the
+        // machine sits east of UTC the shift is applied where it is still possible.
+        let offset = UtcOffset::local_offset_at(last_day).unwrap_or(UtcOffset::UTC);
+        let shown = last_day.checked_to_offset(offset).unwrap_or(last_day);
+        assert_eq!(
+            format_date(&stamp, DateFormat::DateTime),
+            shown
+                .format(&format_description!("[year]/[month]/[day] [hour]:[minute]"))
+                .unwrap(),
+            "the formatter answered instead of panicking"
+        );
+        assert_ne!(format_date(&stamp, DateFormat::DateTime), "-");
     }
 
     #[test]

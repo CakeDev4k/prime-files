@@ -2391,6 +2391,26 @@ impl ExplorerPage {
         self.move_tab(dragged, from_window, to_pane, to_index, window, cx);
     }
 
+    /// Lets go a tab outside the window, as the release that opens a window of
+    /// its own does. Point inside the viewport would be a move to another row.
+    #[cfg(test)]
+    pub(crate) fn test_tear_off(
+        &mut self,
+        dragged: gpui::EntityId,
+        position: gpui::Point<gpui::Pixels>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        crate::pane_group::test_set_dragged_tab(dragged, window.window_handle());
+        let event = gpui::MouseUpEvent {
+            button: gpui::MouseButton::Left,
+            position,
+            modifiers: Default::default(),
+            click_count: 1,
+        };
+        self.tear_off_tab(&event, window, cx);
+    }
+
     /// Number of live per-tab subscriptions; used to assert the subscription map
     /// stays consistent across splits/closes/new tabs.
     pub(crate) fn subscription_count(&self) -> usize {

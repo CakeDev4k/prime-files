@@ -4409,3 +4409,29 @@ async fn a_tear_off_of_a_tab_with_unsaved_edits_keeps_the_tab_where_it_is(cx: &m
         })
         .unwrap();
 }
+
+// The guard in `tear_off_tab` itself, not only the one in `finish_tear_off`:
+// the release outside the window is the point where a dirty tab would be taken
+// out of the page, so it has to be refused before anything is placed and before
+// a window of its own opens.
+#[gpui::test]
+async fn a_dirty_tab_let_go_outside_the_window_never_leaves_it(cx: &mut TestAppContext) {
+    let origin = new_explorer_page(cx);
+    origin
+        .update(cx, |page, window, cx| {
+            page.test_new_tab(0, window, cx);
+            let tab = page.group.tab(0, 0).expect("the tab is there");
+            let tab_id = tab.entity_id();
+            tab.update(cx, |pane, _cx| pane.preview_dirty = true);
+            page.test_placeholder_terminal(0, 0);
+            // Past the window, where a tear-off would open a window of its own.
+            page.test_tear_off(tab_id, point(px(5000.0), px(5000.0)), window, cx);
+            assert_eq!(cx.windows().len(), 1, "no window opened");
+            assert!(page.group.locate_tab(tab_id).is_some(), "the tab with the edits is still here");
+            assert!(page.holds_terminal(0, 0), "and still owns its shell");
+            let (text, level) = tab.read(cx).status_for_footer().expect("the refusal is said");
+            assert_eq!(level, StatusLevel::Error, "the refusal reads as a failure");
+            assert!(text.contains("não salvas"), "the message says why: {text}");
+        })
+        .unwrap();
+}

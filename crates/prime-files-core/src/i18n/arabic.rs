@@ -3,6 +3,7 @@
 //! survive.
 
 pub(super) static ARABIC: &[(&str, &str)] = &[
+    ("Nome de arquivo inválido no arquivo compactado", "اسم ملف غير صالح داخل الأرشيف"),
     ("Converter com Filee", "تحويل باستخدام Filee"),
     ("Selecione ao menos um arquivo para converter", "حدد ملفًا واحدًا على الأقل لتحويله"),
     ("O Filee não está instalado", "Filee غير مثبّت"),

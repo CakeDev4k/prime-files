@@ -55,6 +55,11 @@ fn main() {
         std::process::exit(code);
     }
 
+    if let Some(cli::Command::InitLanguage { language }) = &cli.command {
+        prime_files_core::telemetry::logging::init_logging();
+        std::process::exit(cli::run_init_language(language));
+    }
+
     // One window per user: a running instance takes the path (or just comes
     // forward), which is what Listary and "Open with" expect of a file
     // manager. Only when nobody answers does this process open a window.

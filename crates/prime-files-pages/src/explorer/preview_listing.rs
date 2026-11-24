@@ -422,7 +422,7 @@ pub(crate) fn stage_for_drag(member: &str, is_dir: bool) -> Result<DragStage, St
     let relative = safe_archive_path(member)?;
     let basename = relative
         .file_name()
-        .ok_or_else(|| "Nome de arquivo inválido no arquivo compactado".to_string())?
+        .ok_or_else(|| t!("Nome de arquivo inválido no arquivo compactado").to_string())?
         .to_owned();
     let directory = new_drag_directory()?;
     // A folder keeps its path inside the drag's folder, where `7z x` and

@@ -4,6 +4,8 @@
 //! has a row here. Sorted by key to keep duplicates easy to spot.
 
 pub(super) static STRINGS: &[(&str, &str, &str)] = &[
+    ("Caminho inválido dentro do arquivo compactado", "Invalid path inside archive", "Ruta no válida dentro del archivo comprimido"),
+    ("Caminho vazio dentro do arquivo compactado", "Empty path inside archive", "Ruta vacía dentro del archivo comprimido"),
     ("Nome de arquivo inválido no arquivo compactado", "Invalid file name in archive", "Nombre de archivo no válido en el archivo comprimido"),
     ("Converter com Filee", "Convert with Filee", "Convertir con Filee"),
     ("Selecione ao menos um arquivo para converter", "Select at least one file to convert", "Selecciona al menos un archivo para convertir"),

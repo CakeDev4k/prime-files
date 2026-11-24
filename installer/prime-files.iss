@@ -114,7 +114,7 @@ Filename: "{tmp}\vc_redist.x64.exe"; Parameters: "/install /quiet /norestart"; S
 Filename: "{tmp}\7zip-setup.exe"; Parameters: "/S"; StatusMsg: "{cm:InstallingSevenZip}"; Flags: shellexec waituntilterminated; Check: SevenZipDownloaded
 Filename: "{sys}\Dism.exe"; Parameters: "/Online /Add-Capability /CapabilityName:Media.MediaFeaturePack~~~~0.0.1.0 /NoRestart"; StatusMsg: "{cm:InstallingMedia}"; Verb: "runas"; Flags: shellexec waituntilterminated runhidden; Check: MediaFoundationMissing; AfterInstall: TellMediaRestart
 ; Start the app in the language chosen in the installer (skipped on silent auto-updates).
-Filename: "{app}\{#AppExe}"; Parameters: "init-language {code:InstallerLanguage}"; Flags: runhidden waituntilterminated skipifsilent
+Filename: "{app}\{#AppExe}"; Parameters: "init-language {code:InstallerLanguage}"; Flags: runhidden waituntilterminated skipifsilent runasoriginaluser
 Filename: "{app}\{#AppExe}"; Description: "{cm:LaunchProgram,{#AppName}}"; Flags: nowait postinstall skipifsilent; Check: not MediaFoundationMissing
 ; An update started from the app's "Atualizar agora" runs silently with
 ; /RELAUNCH=1: the app closed itself for it, so it is opened again.

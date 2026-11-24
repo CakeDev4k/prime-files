@@ -117,7 +117,7 @@ fn without_value(text: &str, section: &str, key: &str) -> String {
     for line in text.lines() {
         let trimmed = line.trim_start();
         if trimmed.starts_with('[') {
-            in_section = line.trim() == header;
+            in_section = section_header_matches(line, &header);
         } else if in_section
             && trimmed.strip_prefix(key).is_some_and(|rest| rest.trim_start().starts_with('='))
         {
@@ -138,7 +138,7 @@ fn with_value(text: &str, section: &str, key: &str, value: &str) -> String {
     let header = format!("[{section}]");
     let mut lines: Vec<String> = text.lines().map(str::to_string).collect();
     let is_header = |line: &str| line.trim_start().starts_with('[');
-    let Some(start) = lines.iter().position(|line| line.trim() == header) else {
+    let Some(start) = lines.iter().position(|line| section_header_matches(line, &header)) else {
         if lines.last().is_some_and(|line| !line.trim().is_empty()) {
             lines.push(String::new());
         }
@@ -180,6 +180,15 @@ fn with_value(text: &str, section: &str, key: &str, value: &str) -> String {
     lines.join("
 ") + "
 "
+}
+
+/// Whether `line` is `[section]` optionally followed by whitespace and a `#` comment.
+fn section_header_matches(line: &str, header: &str) -> bool {
+    let without_comment = match comment_start(line) {
+        Some(at) => &line[..at],
+        None => line,
+    };
+    without_comment.trim() == header
 }
 
 /// Where the trailing comment of a `key = value` line begins, counting the
@@ -238,6 +247,20 @@ mode = \"dark\"   # \"system\" | \"dark\"
 mode = \"auto\"
 "
         );
+    }
+
+    #[test]
+    fn with_value_matches_section_headers_with_trailing_comments() {
+        let text = "[ui] # interface settings\nshow_hidden = true\n";
+        let out = with_value(text, "ui", "language", "\"es\"");
+        assert_eq!(
+            out,
+            "[ui] # interface settings\nshow_hidden = true\nlanguage = \"es\"\n"
+        );
+        let (config, diagnostics) = Config::from_toml_str(&out);
+        assert!(diagnostics.is_empty(), "{diagnostics:?}");
+        assert!(config.ui.show_hidden);
+        assert_eq!(config.ui.language, "es");
     }
 
     #[test]

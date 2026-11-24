@@ -280,6 +280,16 @@ mod tests {
         assert_eq!(loaded.ui.language, "pt-BR");
         assert_eq!(loaded.theme.mode, ThemeMode::Light);
 
+        // A commented `[ui]` header reuses the same table instead of duplicating it.
+        std::fs::write(&path, "[ui] # interface settings\nshow_hidden = true\n").expect("write commented header");
+        assert_eq!(init_language_at(&path, "es"), Ok(()));
+        let raw = std::fs::read_to_string(&path).expect("read config");
+        assert_eq!(raw.matches("[ui]").count(), 1, "unexpected duplicate [ui] in:\n{raw}");
+        let (loaded, diagnostics) = config::load_from_path(&path);
+        assert!(diagnostics.is_empty(), "{diagnostics:?}");
+        assert_eq!(loaded.ui.language, "es");
+        assert!(loaded.ui.show_hidden);
+
         let _ = std::fs::remove_dir_all(&dir);
     }
 

@@ -4,6 +4,8 @@
 //! that every key has a row here and that placeholders survive.
 
 pub(super) static EXTRA: &[(&str, [&str; 6])] = &[
+    ("Caminho inválido dentro do arquivo compactado", ["Chemin invalide dans l’archive", "Ungültiger Pfad im Archiv", "Percorso non valido nell’archivio", "Недопустимый путь в архиве", "アーカイブ内のパスが無効です", "压缩包中的路径无效"]),
+    ("Caminho vazio dentro do arquivo compactado", ["Chemin vide dans l’archive", "Leerer Pfad im Archiv", "Percorso vuoto nell’archivio", "Пустой путь в архиве", "アーカイブ内のパスが空です", "压缩包中的路径为空"]),
     ("Nome de arquivo inválido no arquivo compactado", ["Nom de fichier invalide dans l’archive", "Ungültiger Dateiname im Archiv", "Nome file non valido nell’archivio", "Недопустимое имя файла в архиве", "アーカイブ内のファイル名が無効です", "压缩包中的文件名无效"]),
     ("Data de criação", ["Date de création", "Erstelldatum", "Data di creazione", "Дата создания", "作成日時", "创建日期"]),
     ("Converter com Filee", ["Convertir avec Filee", "Mit Filee konvertieren", "Converti con Filee", "Конвертировать в Filee", "Filee で変換", "使用 Filee 转换"]),

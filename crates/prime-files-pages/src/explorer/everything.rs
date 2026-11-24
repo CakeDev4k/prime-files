@@ -457,16 +457,16 @@ const PROJECTS: &[&str] =
 
 fn category(value: &str) -> Parsed {
     let exts = match value {
-        "imagem" | "imagens" | "image" | "images" | "img" | "foto" | "fotos" | "photo" | "picture" => IMAGES,
+        "imagem" | "imagens" | "imagen" | "imagenes" | "imágenes" | "image" | "images" | "img" | "foto" | "fotos" | "photo" | "picture" => IMAGES,
         "video" | "vídeo" | "videos" | "vídeos" => VIDEOS,
-        "audio" | "áudio" | "audios" | "áudios" | "som" | "sons" | "sound" | "music" | "musica" | "música" => SOUNDS,
+        "audio" | "áudio" | "audios" | "áudios" | "som" | "sons" | "sonido" | "sonidos" | "sound" | "music" | "musica" | "música" => SOUNDS,
         "doc" | "docs" | "documento" | "documentos" | "document" | "documents" => DOCUMENTS,
-        "compactado" | "compactados" | "zip" | "archive" | "archives" => ARCHIVES,
+        "compactado" | "compactados" | "comprimido" | "comprimidos" | "zip" | "archive" | "archives" => ARCHIVES,
         "codigo" | "código" | "code" => CODE,
         "programa" | "programas" | "app" | "apps" | "exe" | "program" => PROGRAMS,
-        "projeto" | "projetos" | "project" | "projects" => PROJECTS,
-        "pasta" | "pastas" | "folder" | "folders" | "dir" => return Parsed::Filter(Filter::Kind(true)),
-        "arquivo" | "arquivos" | "file" | "files" => return Parsed::Filter(Filter::Kind(false)),
+        "projeto" | "projetos" | "proyecto" | "proyectos" | "project" | "projects" => PROJECTS,
+        "pasta" | "pastas" | "carpeta" | "carpetas" | "folder" | "folders" | "dir" => return Parsed::Filter(Filter::Kind(true)),
+        "arquivo" | "arquivos" | "archivo" | "archivos" | "file" | "files" => return Parsed::Filter(Filter::Kind(false)),
         _ => return Parsed::Incomplete,
     };
     Parsed::Filter(Filter::Exts(exts.iter().map(|ext| (*ext).to_string()).collect()))
@@ -474,7 +474,7 @@ fn category(value: &str) -> Parsed {
 
 fn parse_filter(key: &str, value: &str, cwd: &str, now: time::OffsetDateTime) -> Parsed {
     let parsed = match key {
-        "ext" | "extensão" | "extensao" => {
+        "ext" | "extensão" | "extensao" | "extensión" | "extension" => {
             let exts: Vec<String> = value
                 .split([',', ';', '|'])
                 .map(|ext| ext.trim().trim_start_matches('.').to_string())
@@ -483,13 +483,13 @@ fn parse_filter(key: &str, value: &str, cwd: &str, now: time::OffsetDateTime) ->
             (!exts.is_empty()).then_some(Filter::Exts(exts))
         }
         "tipo" | "type" | "is" => return category(value),
-        "pasta" | "folder" | "dir" if value.is_empty() => Some(Filter::Kind(true)),
-        "arquivo" | "file" if value.is_empty() => Some(Filter::Kind(false)),
-        "tamanho" | "size" | "tam" => size_range(value).map(|(low, high)| Filter::Size(low, high)),
-        "data" | "date" | "modificado" | "modified" | "dm" | "mod" => {
+        "pasta" | "carpeta" | "folder" | "dir" if value.is_empty() => Some(Filter::Kind(true)),
+        "arquivo" | "archivo" | "file" if value.is_empty() => Some(Filter::Kind(false)),
+        "tamanho" | "tamaño" | "tamano" | "size" | "tam" => size_range(value).map(|(low, high)| Filter::Size(low, high)),
+        "data" | "date" | "fecha" | "modificado" | "modified" | "dm" | "mod" => {
             date_range(value, now).map(|(from, to)| Filter::Modified(from, to))
         }
-        "em" | "in" | "dentro" | "caminho" | "path" => scope(value, cwd),
+        "em" | "en" | "in" | "dentro" | "caminho" | "path" | "ruta" => scope(value, cwd),
         _ => return Parsed::Unknown,
     };
     parsed.map_or(Parsed::Incomplete, Parsed::Filter)
@@ -523,10 +523,10 @@ fn bytes_or_plain(text: &str) -> Option<u64> {
 // size alone means at least that much.
 fn size_range(value: &str) -> Option<(u64, u64)> {
     let named = match value {
-        "vazio" | "empty" => Some((0, 0)),
-        "minusculo" | "minúsculo" | "tiny" => Some((0, 10 * KB)),
-        "pequeno" | "small" => Some((10 * KB, 100 * KB)),
-        "medio" | "médio" | "medium" => Some((100 * KB, MB)),
+        "vazio" | "vacio" | "vacío" | "empty" => Some((0, 0)),
+        "minusculo" | "minúsculo" | "diminuto" | "tiny" => Some((0, 10 * KB)),
+        "pequeno" | "pequeño" | "small" => Some((10 * KB, 100 * KB)),
+        "medio" | "médio" | "mediano" | "medium" => Some((100 * KB, MB)),
         "grande" | "large" => Some((MB, 16 * MB)),
         "enorme" | "huge" => Some((16 * MB, 128 * MB)),
         "gigante" | "gigantic" => Some((128 * MB, u64::MAX)),
@@ -569,11 +569,11 @@ fn date_range(value: &str, now: time::OffsetDateTime) -> Option<(u32, u32)> {
     let now_seconds = now.unix_timestamp();
     let midnight = now.replace_time(time::Time::MIDNIGHT).unix_timestamp();
     let named = match value {
-        "hoje" | "today" => Some((midnight, i64::MAX)),
-        "ontem" | "yesterday" => Some((midnight - DAY, midnight - 1)),
+        "hoje" | "hoy" | "today" => Some((midnight, i64::MAX)),
+        "ontem" | "ayer" | "yesterday" => Some((midnight - DAY, midnight - 1)),
         "semana" | "week" => Some((now_seconds - 7 * DAY, i64::MAX)),
         "mes" | "mês" | "month" => Some((now_seconds - 30 * DAY, i64::MAX)),
-        "ano" | "year" => Some((now_seconds - 365 * DAY, i64::MAX)),
+        "ano" | "año" | "year" => Some((now_seconds - 365 * DAY, i64::MAX)),
         _ => None,
     };
     if let Some((from, to)) = named {
@@ -615,8 +615,8 @@ fn span_seconds(text: &str) -> Option<i64> {
         "h" => 3_600,
         "d" => DAY,
         "s" | "sem" | "w" => 7 * DAY,
-        "m" | "mes" | "mês" | "mo" => 30 * DAY,
-        "a" | "ano" | "anos" | "y" => 365 * DAY,
+        "m" | "mes" | "mês" | "meses" | "mo" => 30 * DAY,
+        "a" | "ano" | "anos" | "año" | "años" | "y" => 365 * DAY,
         _ => return None,
     };
     number.checked_mul(unit)
@@ -661,7 +661,7 @@ fn scope(value: &str, cwd: &str) -> Option<Filter> {
     if value.is_empty() {
         return None;
     }
-    let absolute = if value == "." || value == "aqui" || value == "here" {
+    let absolute = if value == "." || value == "aqui" || value == "aquí" || value == "here" {
         Some(cwd.to_lowercase())
     } else if value.as_bytes().get(1) == Some(&b':') || value.starts_with("\\\\") {
         Some(value.clone())
@@ -2863,6 +2863,26 @@ mod tests {
         assert_eq!(search(&index, "wav -big em:users"), ["C:\\Users\\SFX\\Bonk.wav"]);
         assert_eq!(search(&index, "\"big bonk\""), ["C:\\Users\\SFX\\Big Bonk.wav"]);
         assert_eq!(search(&index, "bonk -ext:wav"), ["C:\\Users\\SFX\\bonk notes.md"]);
+    }
+
+    #[test]
+    fn spanish_filters_work_like_portuguese_and_english() {
+        let index = detailed();
+        assert_eq!(search(&index, "bonk extensión:md"), ["C:\\Users\\SFX\\bonk notes.md"]);
+        assert_eq!(search(&index, "tipo:sonido tamaño:>10mb"), ["C:\\Users\\SFX\\Big Bonk.wav"]);
+        assert_eq!(search(&index, "bonk fecha:<7d en:aquí"), ["C:\\Users\\SFX\\Bonk.wav"]);
+        assert_eq!(search(&index, "carpeta: s"), ["C:\\Users\\SFX", "C:\\Users", "C:\\Windows"]);
+        assert_eq!(search(&index, "archivo: bonk"), [
+            "C:\\Users\\SFX\\Bonk.wav",
+            "C:\\Users\\SFX\\bonk notes.md",
+            "C:\\Windows\\Media\\bonk.wav",
+            "C:\\Users\\SFX\\Big Bonk.wav",
+        ]);
+        assert_eq!(size_range("vacío"), Some((0, 0)));
+        assert_eq!(size_range("pequeño"), Some((10 * KB, 100 * KB)));
+        assert!(date_range("hoy", now()).is_some_and(|(from, _)| from <= clamp_seconds(NOW)));
+        assert!(date_range("ayer", now()).is_some());
+        assert_eq!(date_range(">2años", now()), Some((0, clamp_seconds(NOW - 2 * 365 * DAY))));
     }
 
     #[test]

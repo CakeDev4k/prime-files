@@ -111,13 +111,12 @@ pub fn remove_value(path: &Path, section: &str, key: &str) -> io::Result<()> {
 
 /// The text of [`remove_value`], without the file.
 fn without_value(text: &str, section: &str, key: &str) -> String {
-    let header = format!("[{section}]");
     let mut in_section = false;
     let mut kept = Vec::new();
     for line in text.lines() {
         let trimmed = line.trim_start();
-        if trimmed.starts_with('[') {
-            in_section = line.trim() == header;
+        if is_table_header(line) {
+            in_section = section_header_matches(line, section);
         } else if in_section
             && trimmed.strip_prefix(key).is_some_and(|rest| rest.trim_start().starts_with('='))
         {
@@ -135,10 +134,20 @@ fn without_value(text: &str, section: &str, key: &str) -> String {
 
 /// The text of [`set_value`], without the file.
 fn with_value(text: &str, section: &str, key: &str, value: &str) -> String {
+    let out = with_value_lines(text, section, key, value);
+    if text.parse::<toml::Table>().is_ok()
+        && out.parse::<toml::Table>().is_err()
+        && let Some(valid) = fallback_toml_set(text, section, key, value)
+    {
+        return valid;
+    }
+    out
+}
+
+fn with_value_lines(text: &str, section: &str, key: &str, value: &str) -> String {
     let header = format!("[{section}]");
     let mut lines: Vec<String> = text.lines().map(str::to_string).collect();
-    let is_header = |line: &str| line.trim_start().starts_with('[');
-    let Some(start) = lines.iter().position(|line| line.trim() == header) else {
+    let Some(start) = lines.iter().position(|line| section_header_matches(line, section)) else {
         if lines.last().is_some_and(|line| !line.trim().is_empty()) {
             lines.push(String::new());
         }
@@ -150,7 +159,7 @@ fn with_value(text: &str, section: &str, key: &str, value: &str) -> String {
     };
     let end = lines[start + 1..]
         .iter()
-        .position(|line| is_header(line))
+        .position(|line| is_table_header(line))
         .map_or(lines.len(), |offset| start + 1 + offset);
     let found = (start + 1..end).find(|&ix| {
         let line = lines[ix].trim_start();
@@ -182,18 +191,61 @@ fn with_value(text: &str, section: &str, key: &str, value: &str) -> String {
 "
 }
 
+fn fallback_toml_set(text: &str, section: &str, key: &str, value: &str) -> Option<String> {
+    let mut root: toml::Table = text.parse().ok()?;
+    let parsed_value = format!("v = {value}").parse::<toml::Table>().ok()?.remove("v")?;
+    let entry = root
+        .entry(section.to_string())
+        .or_insert_with(|| toml::Value::Table(toml::Table::new()));
+    let table = entry.as_table_mut()?;
+    table.insert(key.to_string(), parsed_value);
+    toml::to_string_pretty(&root).ok()
+}
+
+fn without_trailing_comment(line: &str) -> &str {
+    match comment_start(line) {
+        Some(at) => &line[..at],
+        None => line,
+    }
+}
+
+fn is_table_header(line: &str) -> bool {
+    let trimmed = without_trailing_comment(line).trim();
+    trimmed.starts_with('[') && trimmed.ends_with(']')
+}
+
+/// Whether `line` is a `[section]` header (including inner spaces, quotes, or trailing `#` comment).
+fn section_header_matches(line: &str, section: &str) -> bool {
+    let trimmed = without_trailing_comment(line).trim();
+    let Some(inner) = trimmed.strip_prefix('[').and_then(|rest| rest.strip_suffix(']')) else {
+        return false;
+    };
+    if inner.starts_with('[') || inner.ends_with(']') {
+        return false;
+    }
+    let name = inner.trim();
+    let unquoted = name
+        .strip_prefix('"')
+        .and_then(|rest| rest.strip_suffix('"'))
+        .or_else(|| name.strip_prefix('\'').and_then(|rest| rest.strip_suffix('\'')))
+        .unwrap_or(name);
+    unquoted == section
+}
+
 /// Where the trailing comment of a `key = value` line begins, counting the
 /// whitespace before the `#`. A `#` inside a string (an accent like
 /// `"#ff8800"`) is part of the value.
 fn comment_start(line: &str) -> Option<usize> {
-    let mut in_string = false;
+    let mut in_double = false;
+    let mut in_single = false;
     let mut escaped = false;
     for (at, character) in line.char_indices() {
         match character {
             _ if escaped => escaped = false,
-            '\\' if in_string => escaped = true,
-            '"' => in_string = !in_string,
-            '#' if !in_string => return Some(line[..at].trim_end().len()),
+            '\\' if in_double => escaped = true,
+            '"' if !in_single => in_double = !in_double,
+            '\'' if !in_double => in_single = !in_single,
+            '#' if !in_double && !in_single => return Some(line[..at].trim_end().len()),
             _ => {}
         }
     }
@@ -238,6 +290,33 @@ mode = \"dark\"   # \"system\" | \"dark\"
 mode = \"auto\"
 "
         );
+    }
+
+    #[test]
+    fn with_value_matches_section_headers_with_trailing_comments() {
+        let text = "[ui] # interface settings\nshow_hidden = true\n";
+        let out = with_value(text, "ui", "language", "\"es\"");
+        assert_eq!(
+            out,
+            "[ui] # interface settings\nshow_hidden = true\nlanguage = \"es\"\n"
+        );
+        let (config, diagnostics) = Config::from_toml_str(&out);
+        assert!(diagnostics.is_empty(), "{diagnostics:?}");
+        assert!(config.ui.show_hidden);
+        assert_eq!(config.ui.language, "es");
+
+        for variant in [
+            "[ ui ] # spaced header\nshow_hidden = true\n",
+            "[\"ui\"] # quoted header\nshow_hidden = true\n",
+            "ui.show_hidden = true\n",
+            "ui = { show_hidden = true }\n",
+        ] {
+            let out = with_value(variant, "ui", "language", "\"es\"");
+            let (config, diagnostics) = Config::from_toml_str(&out);
+            assert!(diagnostics.is_empty(), "variant {variant:?} produced diagnostics: {diagnostics:?}");
+            assert!(config.ui.show_hidden, "variant {variant:?} lost show_hidden");
+            assert_eq!(config.ui.language, "es", "variant {variant:?} lost language");
+        }
     }
 
     #[test]

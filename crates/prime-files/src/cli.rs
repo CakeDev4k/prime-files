@@ -62,6 +62,15 @@ pub enum Command {
     /// uninstaller, which cannot edit Listary's JSON itself.
     #[command(hide = true)]
     ForgetListary,
+    /// Records the language chosen in the interactive installer in
+    /// `config.toml` (creating it from defaults if missing, or updating only
+    /// `ui.language` while preserving all other settings; silent updates skip
+    /// it).
+    #[command(hide = true)]
+    InitLanguage {
+        /// Language code (e.g. `es`, `pt-BR`, `en`).
+        language: String,
+    },
 }
 
 #[derive(Subcommand, Debug)]
@@ -174,6 +183,33 @@ pub fn run_config_command(action: &ConfigAction, cli: &Cli) -> i32 {
     }
 }
 
+/// Records the language chosen in the interactive installer in `config.toml`,
+/// creating it from defaults if missing or updating only `ui.language` while
+/// preserving all other settings. Returns the process exit code.
+pub fn run_init_language(language: &str) -> i32 {
+    let path = config::paths::config_file();
+    match init_language_at(&path, language) {
+        Ok(()) => 0,
+        Err(error) => {
+            tracing::error!("could not initialize language in {}: {error}", path.display());
+            eprintln!("failed to initialize language: {error}");
+            1
+        }
+    }
+}
+
+fn init_language_at(path: &std::path::Path, language: &str) -> Result<(), String> {
+    let lang = prime_files_core::i18n::Lang::parse(language)
+        .ok_or_else(|| format!("unknown language {language:?}"))?;
+    config::set_value(path, "ui", "language", &format!("\"{}\"", lang.code()))
+        .map_err(|error| error.to_string())?;
+    let (loaded, diagnostics) = config::load_from_path(path);
+    if loaded.ui.language != lang.code() {
+        return Err(format!("could not persist ui.language ({diagnostics:?})"));
+    }
+    Ok(())
+}
+
 fn edit_config(path: &std::path::Path) -> i32 {
     if let Err(error) = config::ensure_exists(path) {
         eprintln!("failed to create {}: {error}", path.display());
@@ -216,11 +252,65 @@ fn parse_path(argument: &str) -> Result<std::path::PathBuf, std::convert::Infall
 mod tests {
     use super::*;
 
+    fn unique_test_dir(name: &str) -> std::path::PathBuf {
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|duration| duration.as_nanos())
+            .unwrap_or(0);
+        std::env::temp_dir().join(format!("prime-files-cli-{name}-{}-{nanos}", std::process::id()))
+    }
+
     #[test]
     fn a_drive_root_whose_quote_was_escaped_is_repaired() {
         let cli = Cli::parse_from(["prime-files", "C:\""]);
         assert_eq!(cli.path, Some(std::path::PathBuf::from("C:\\")));
         let cli = Cli::parse_from(["prime-files", r"C:\Users"]);
         assert_eq!(cli.path, Some(std::path::PathBuf::from(r"C:\Users")));
+    }
+
+    #[test]
+    fn init_language_writes_and_updates_ui_language_preserving_other_settings() {
+        let dir = unique_test_dir("fresh");
+        let path = dir.join("config.toml");
+
+        assert_eq!(init_language_at(&path, "es"), Ok(()));
+        let (loaded, diagnostics) = config::load_from_path(&path);
+        assert!(diagnostics.is_empty(), "{diagnostics:?}");
+        assert_eq!(loaded.ui.language, "es");
+
+        config::set_value(&path, "theme", "mode", "\"light\"").expect("set theme.mode");
+        assert_eq!(init_language_at(&path, "pt-BR"), Ok(()));
+        let (loaded, diagnostics) = config::load_from_path(&path);
+        assert!(diagnostics.is_empty(), "{diagnostics:?}");
+        assert_eq!(loaded.ui.language, "pt-BR");
+        assert_eq!(loaded.theme.mode, ThemeMode::Light);
+
+        // A commented `[ui]` header reuses the same table instead of duplicating it.
+        for sample in [
+            "[ui] # interface settings\nshow_hidden = true\n",
+            "[ ui ] # spaced header\nshow_hidden = true\n",
+            "ui.show_hidden = true\n",
+            "ui = { show_hidden = true }\n",
+        ] {
+            std::fs::write(&path, sample).expect("write sample config");
+            assert_eq!(init_language_at(&path, "es"), Ok(()));
+            let (loaded, diagnostics) = config::load_from_path(&path);
+            assert!(diagnostics.is_empty(), "{diagnostics:?}");
+            assert_eq!(loaded.ui.language, "es");
+            assert!(loaded.ui.show_hidden);
+        }
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn init_language_rejects_unknown_language_without_creating_file() {
+        let dir = unique_test_dir("unknown");
+        let path = dir.join("config.toml");
+
+        assert!(init_language_at(&path, "xx").is_err());
+        assert!(!path.exists());
+
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

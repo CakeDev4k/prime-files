@@ -422,7 +422,7 @@ pub(crate) fn stage_for_drag(member: &str, is_dir: bool) -> Result<DragStage, St
     let relative = safe_archive_path(member)?;
     let basename = relative
         .file_name()
-        .ok_or_else(|| "Nome de arquivo inválido no arquivo compactado".to_string())?
+        .ok_or_else(|| t!("Nome de arquivo inválido no arquivo compactado").to_string())?
         .to_owned();
     let directory = new_drag_directory()?;
     // A folder keeps its path inside the drag's folder, where `7z x` and
@@ -710,12 +710,12 @@ fn safe_archive_path(member: &str) -> Result<PathBuf, String> {
     let mut path = PathBuf::new();
     for component in member.replace('\\', "/").split('/') {
         if component.is_empty() || component == "." || component == ".." || component.contains(':') {
-            return Err("Caminho inválido dentro do arquivo compactado".to_string());
+            return Err(t!("Caminho inválido dentro do arquivo compactado").to_string());
         }
         path.push(component);
     }
     if path.as_os_str().is_empty() {
-        return Err("Caminho vazio dentro do arquivo compactado".to_string());
+        return Err(t!("Caminho vazio dentro do arquivo compactado").to_string());
     }
     Ok(path)
 }
@@ -1013,6 +1013,14 @@ mod tests {
             parse_tar_listing(text),
             [("pasta/ação teste.txt".to_string(), false, 3), ("pasta/".to_string(), true, 0)]
         );
+    }
+
+    #[test]
+    fn safe_archive_path_rejects_empty_and_traversal_paths() {
+        assert!(safe_archive_path("").is_err());
+        assert!(safe_archive_path("../secret.txt").is_err());
+        assert!(safe_archive_path("docs/../../secret.txt").is_err());
+        assert_eq!(safe_archive_path("docs/a.txt").unwrap(), PathBuf::from("docs").join("a.txt"));
     }
 }
 

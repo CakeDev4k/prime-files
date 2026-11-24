@@ -3,6 +3,9 @@
 //! survive.
 
 pub(super) static HUNGARIAN: &[(&str, &str)] = &[
+    ("Caminho inválido dentro do arquivo compactado", "Érvénytelen elérési út az archívumban"),
+    ("Caminho vazio dentro do arquivo compactado", "Üres elérési út az archívumban"),
+    ("Nome de arquivo inválido no arquivo compactado", "Érvénytelen fájlnév az archívumban"),
     ("Converter com Filee", "Konvertálás a Filee-vel"),
     ("Selecione ao menos um arquivo para converter", "Jelöljön ki legalább egy konvertálandó fájlt"),
     ("O Filee não está instalado", "A Filee nincs telepítve"),

@@ -65,22 +65,33 @@ RestartApplications=no
 [Languages]
 Name: "ptbr"; MessagesFile: "compiler:Languages\BrazilianPortuguese.isl"
 Name: "en"; MessagesFile: "compiler:Default.isl"
+Name: "es"; MessagesFile: "compiler:Languages\Spanish.isl"
 
 [CustomMessages]
 ptbr.SevenZipTask=Instalar o 7-Zip (para ver .rar, .7z e .iso no visualizador)
 en.SevenZipTask=Install 7-Zip (to see .rar, .7z and .iso files in the preview)
+es.SevenZipTask=Instalar 7-Zip (para ver archivos .rar, .7z e .iso en la vista previa)
 ptbr.Extras=Extras:
 en.Extras=Extras:
+es.Extras=Extras:
 ptbr.InstallingVc=Instalando o Visual C++ Runtime da Microsoft...
 en.InstallingVc=Installing Microsoft's Visual C++ Runtime...
+es.InstallingVc=Instalando Visual C++ Runtime de Microsoft...
 ptbr.InstallingSevenZip=Instalando o 7-Zip...
 en.InstallingSevenZip=Installing 7-Zip...
+es.InstallingSevenZip=Instalando 7-Zip...
 ptbr.InstallingMedia=Ativando o Media Feature Pack do Windows (pode demorar)...
 en.InstallingMedia=Turning on Windows' Media Feature Pack (this can take a while)...
+es.InstallingMedia=Activando el Media Feature Pack de Windows (puede tardar)...
 ptbr.DownloadFailed=Não foi possível baixar %1.%n%n%2%n%nVerifique a internet e tente de novo.
 en.DownloadFailed=Could not download %1.%n%n%2%n%nCheck the connection and try again.
+es.DownloadFailed=No se pudo descargar %1.%n%n%2%n%nVerifique la conexión e inténtelo de nuevo.
 ptbr.MediaRestart=O Media Feature Pack foi ativado. Reinicie o Windows antes de abrir o Prime Files.
 en.MediaRestart=The Media Feature Pack was turned on. Restart Windows before opening Prime Files.
+es.MediaRestart=Se activó el Media Feature Pack. Reinicie Windows antes de abrir Prime Files.
+ptbr.LanguageInitFailed=Não foi possível salvar o idioma escolhido. Você pode trocá-lo depois em Configurações › Geral.
+en.LanguageInitFailed=Could not save the chosen language. You can change it later in Settings › General.
+es.LanguageInitFailed=No se pudo guardar el idioma elegido. Puede cambiarlo después en Configuración › General.
 
 [Tasks]
 Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{cm:AdditionalIcons}"; Flags: unchecked
@@ -105,7 +116,7 @@ Name: "{autodesktop}\{#AppName}"; Filename: "{app}\{#AppExe}"; Tasks: desktopico
 Filename: "{tmp}\vc_redist.x64.exe"; Parameters: "/install /quiet /norestart"; StatusMsg: "{cm:InstallingVc}"; Flags: shellexec waituntilterminated; Check: VcRedistDownloaded
 Filename: "{tmp}\7zip-setup.exe"; Parameters: "/S"; StatusMsg: "{cm:InstallingSevenZip}"; Flags: shellexec waituntilterminated; Check: SevenZipDownloaded
 Filename: "{sys}\Dism.exe"; Parameters: "/Online /Add-Capability /CapabilityName:Media.MediaFeaturePack~~~~0.0.1.0 /NoRestart"; StatusMsg: "{cm:InstallingMedia}"; Verb: "runas"; Flags: shellexec waituntilterminated runhidden; Check: MediaFoundationMissing; AfterInstall: TellMediaRestart
-Filename: "{app}\{#AppExe}"; Description: "{cm:LaunchProgram,{#AppName}}"; Flags: nowait postinstall skipifsilent; Check: not MediaFoundationMissing
+Filename: "{app}\{#AppExe}"; Description: "{cm:LaunchProgram,{#AppName}}"; Flags: nowait postinstall skipifsilent; Check: not MediaFoundationMissing and not MediaRestartNeeded
 ; An update started from the app's "Atualizar agora" runs silently with
 ; /RELAUNCH=1: the app closed itself for it, so it is opened again.
 Filename: "{app}\{#AppExe}"; Flags: nowait; Check: Relaunch
@@ -120,6 +131,7 @@ var
   DownloadPage: TDownloadWizardPage;
   VcDownloaded: Boolean;
   SevenDownloaded: Boolean;
+  MediaPackAdded: Boolean;
 
 // The Visual C++ 2015-2022 runtime registers itself here when installed.
 function VcRedistMissing: Boolean;
@@ -157,6 +169,16 @@ begin
   Result := WizardSilent and (ExpandConstant('{param:RELAUNCH|0}') = '1');
 end;
 
+function InstallerLanguage(Param: String): String;
+begin
+  if ActiveLanguage = 'ptbr' then
+    Result := 'pt-BR'
+  else if ActiveLanguage = 'es' then
+    Result := 'es'
+  else
+    Result := 'en';
+end;
+
 function VcRedistDownloaded: Boolean;
 begin
   Result := VcDownloaded;
@@ -167,10 +189,42 @@ begin
   Result := SevenDownloaded;
 end;
 
+function MediaRestartNeeded: Boolean;
+begin
+  Result := MediaPackAdded;
+end;
+
 procedure TellMediaRestart;
 begin
+  MediaPackAdded := True;
   if not WizardSilent then
     MsgBox(CustomMessage('MediaRestart'), mbInformation, MB_OK);
+end;
+
+procedure ApplyInstallerLanguage;
+var
+  Lang: String;
+  RunOnceCmd: String;
+  ResultCode: Integer;
+begin
+  if WizardSilent then
+    Exit;
+  Lang := InstallerLanguage('');
+  if MediaFoundationMissing or MediaRestartNeeded then
+  begin
+    RunOnceCmd := 'add "HKCU\Software\Microsoft\Windows\CurrentVersion\RunOnce" /v "Prime Files Language" /t REG_SZ /d "\"' + ExpandConstant('{app}\{#AppExe}') + '\" init-language ' + Lang + '" /f';
+    if (not ExecAsOriginalUser(ExpandConstant('{sys}\reg.exe'), RunOnceCmd, '', SW_HIDE, ewWaitUntilTerminated, ResultCode)) or (ResultCode <> 0) then
+      SuppressibleMsgBox(CustomMessage('LanguageInitFailed'), mbInformation, MB_OK, IDOK);
+    Exit;
+  end;
+  if (not ExecAsOriginalUser(ExpandConstant('{app}\{#AppExe}'), 'init-language ' + Lang, '', SW_HIDE, ewWaitUntilTerminated, ResultCode)) or (ResultCode <> 0) then
+    SuppressibleMsgBox(CustomMessage('LanguageInitFailed'), mbInformation, MB_OK, IDOK);
+end;
+
+procedure CurStepChanged(CurStep: TSetupStep);
+begin
+  if CurStep = ssPostInstall then
+    ApplyInstallerLanguage;
 end;
 
 procedure InitializeWizard;
@@ -241,6 +295,7 @@ begin
   else if ResultCode <> 0 then
     Log(Format('forget-listary ended with %d.', [ResultCode]));
   RegDeleteValue(HKCU, 'Software\Microsoft\Windows\CurrentVersion\Run', 'Prime Files');
+  RegDeleteValue(HKCU, 'Software\Microsoft\Windows\CurrentVersion\RunOnce', 'Prime Files Language');
   // The resident watch (issue #60) holds the program open: it ends first.
   RegDeleteValue(HKCU, 'Software\Microsoft\Windows\CurrentVersion\Run', 'Prime Files Watch');
   Exec(ExpandConstant('{app}\{#AppExe}'), '--stop-watching', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);

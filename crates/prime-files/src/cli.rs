@@ -202,7 +202,12 @@ fn init_language_at(path: &std::path::Path, language: &str) -> Result<(), String
     let lang = prime_files_core::i18n::Lang::parse(language)
         .ok_or_else(|| format!("unknown language {language:?}"))?;
     config::set_value(path, "ui", "language", &format!("\"{}\"", lang.code()))
-        .map_err(|error| error.to_string())
+        .map_err(|error| error.to_string())?;
+    let (loaded, diagnostics) = config::load_from_path(path);
+    if loaded.ui.language != lang.code() {
+        return Err(format!("could not persist ui.language ({diagnostics:?})"));
+    }
+    Ok(())
 }
 
 fn edit_config(path: &std::path::Path) -> i32 {
@@ -281,14 +286,19 @@ mod tests {
         assert_eq!(loaded.theme.mode, ThemeMode::Light);
 
         // A commented `[ui]` header reuses the same table instead of duplicating it.
-        std::fs::write(&path, "[ui] # interface settings\nshow_hidden = true\n").expect("write commented header");
-        assert_eq!(init_language_at(&path, "es"), Ok(()));
-        let raw = std::fs::read_to_string(&path).expect("read config");
-        assert_eq!(raw.matches("[ui]").count(), 1, "unexpected duplicate [ui] in:\n{raw}");
-        let (loaded, diagnostics) = config::load_from_path(&path);
-        assert!(diagnostics.is_empty(), "{diagnostics:?}");
-        assert_eq!(loaded.ui.language, "es");
-        assert!(loaded.ui.show_hidden);
+        for sample in [
+            "[ui] # interface settings\nshow_hidden = true\n",
+            "[ ui ] # spaced header\nshow_hidden = true\n",
+            "ui.show_hidden = true\n",
+            "ui = { show_hidden = true }\n",
+        ] {
+            std::fs::write(&path, sample).expect("write sample config");
+            assert_eq!(init_language_at(&path, "es"), Ok(()));
+            let (loaded, diagnostics) = config::load_from_path(&path);
+            assert!(diagnostics.is_empty(), "{diagnostics:?}");
+            assert_eq!(loaded.ui.language, "es");
+            assert!(loaded.ui.show_hidden);
+        }
 
         let _ = std::fs::remove_dir_all(&dir);
     }
